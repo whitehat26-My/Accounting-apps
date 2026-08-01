@@ -1,0 +1,28 @@
+{
+  "name": "emil-accounting",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.33.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "typecheck": "pnpm -r --parallel typecheck",
+    "test": "pnpm -r test",
+    "test:domain": "pnpm --filter @emil/domain test",
+    "test:db": "pnpm --filter @emil/db test",
+    "db:up": "./scripts/pg-dev.sh start",
+    "db:down": "./scripts/pg-dev.sh stop",
+    "db:migrate": "pnpm --filter @emil/db migrate"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "pnpm": {
+    "overrides": {
+      "fastify": "5.11.0"
+    }
+  }
+}
