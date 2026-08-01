@@ -30,6 +30,7 @@ import { GATEWAYS } from '../tokens.js';
 import type { GatewayRegistry } from '../gateways/registry.js';
 import { NoIdempotencyKey, Public } from '../guards/decorators.js';
 import { NotFoundError, ValidationError } from '../errors.js';
+import { actorContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
 
 /**
@@ -70,12 +71,12 @@ export class PublicPayController {
   /** What the pay page renders. */
   @Public()
   @Get('public/pay/:token')
-  async view(@Param('token') token: string) {
+  async view(@Param('token') token: string, @Req() request: FastifyRequest) {
     const link = await this.requireLink(token);
 
     // Advisory only, and after the 404 decision so a probe cannot inflate the
     // view count of a link it is not entitled to see.
-    const ctx = { tenantId: link.tenantId };
+    const ctx = { tenantId: link.tenantId, ...actorContextOf(request) };
     await withTenant(this.sql, ctx, (tx) => markPaymentLinkViewed(tx, ctx, link.id));
 
     return {
@@ -113,6 +114,7 @@ export class PublicPayController {
     @Param('token') token: string,
     @Body() body: unknown,
     @Headers('idempotency-key') _idempotencyKey: string,
+    @Req() request: FastifyRequest,
   ) {
     const link = await this.requireLink(token);
     const input = parse(
@@ -156,7 +158,7 @@ export class PublicPayController {
       callbackUrl: `/public/gateways/${input.provider}/webhook`,
     });
 
-    const ctx = { tenantId: link.tenantId };
+    const ctx = { tenantId: link.tenantId, ...actorContextOf(request) };
     await withTenant(this.sql, ctx, (tx) =>
       beginCollection(tx, ctx, {
         paymentLinkId: link.id,
@@ -215,7 +217,11 @@ export class PublicPayController {
     // The actor is the person who ISSUED the link, not "the system". Every
     // posted journal entry names someone accountable — see migration 0015 —
     // and they are the one who invited this payment for this amount.
-    const ctx = { tenantId: link.tenantId, userId: link.createdBy };
+    // An unattributed USER is correct on a webhook — no human is present. An
+    // unattributed REQUEST is not: a gateway callback that settles an invoice is
+    // exactly the write worth being able to trace back to an origin and a
+    // request id.
+    const ctx = { tenantId: link.tenantId, userId: link.createdBy, ...actorContextOf(request) };
 
     return withTenant(this.sql, ctx, async (tx) => {
       const stored = await recordGatewayEvent(tx, ctx, {

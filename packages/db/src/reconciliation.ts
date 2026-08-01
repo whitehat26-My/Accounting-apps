@@ -854,6 +854,32 @@ export async function completeReconciliation(
       RETURNING id
   `;
 
+  /*
+   * Signing off a reconciliation is an act, not just a row.
+   *
+   * The audit trigger already records the `reconciliation_session` INSERT. This
+   * is the second log — the small set an auditor asks about by name (0012:200).
+   * "The bank was reconciled to zero at this date, by this person" is close to
+   * the top of that list, and `RECONCILIATION_COMPLETED` has been declared in
+   * the event enum since 0012 without anything ever writing it.
+   *
+   * Same transaction as the session row, so a completed reconciliation cannot
+   * exist without its event.
+   */
+  await tx`
+      INSERT INTO financial_event_log (
+          tenant_id, event_type, actor_user_id, permission, entity_type, entity_id, detail
+      ) VALUES (
+          ${ctx.tenantId}, 'RECONCILIATION_COMPLETED', ${ctx.userId ?? null},
+          'bank.reconcile', 'reconciliation_session', ${row!.id},
+          ${tx.json({
+            bankAccountId: input.bankAccountId,
+            periodEnd: input.periodEnd,
+            variance: result.variance.toDecimalString(),
+          })}
+      )
+  `;
+
   return { id: row!.id, variance: result.variance.toDecimalString() };
 }
 

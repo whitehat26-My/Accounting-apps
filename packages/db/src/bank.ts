@@ -84,6 +84,33 @@ export async function createBankAccount(
       RETURNING id
   `;
 
+  /*
+   * A high-signal event, not merely an audited row change.
+   *
+   * The audit trigger already records the INSERT with a full after-image. This
+   * is the SECOND log — `financial_event_log`, the small set an auditor asks
+   * about by name (0012:200-211). Where a tenant's money is paid belongs on
+   * that list: redirecting settlement to an attacker's account is the classic
+   * fraud, and in a stream of ordinary row changes it looks like any other
+   * insert. `BANK_DETAILS_CHANGED` has been declared in the event enum since
+   * 0012 and, until now, was never written by anything.
+   */
+  await tx`
+      INSERT INTO financial_event_log (
+          tenant_id, event_type, actor_user_id, permission, entity_type, entity_id, detail
+      ) VALUES (
+          ${ctx.tenantId}, 'BANK_DETAILS_CHANGED', ${ctx.userId ?? null},
+          'bank.import',
+          'bank_account', ${row!.id},
+          ${tx.json({
+            name: input.name,
+            bankName: input.bankName,
+            accountNoMasked: input.accountNoMasked ?? null,
+            glAccountId: input.glAccountId,
+          })}
+      )
+  `;
+
   return { id: row!.id };
 }
 

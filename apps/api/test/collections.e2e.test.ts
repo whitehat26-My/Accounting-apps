@@ -647,3 +647,90 @@ async function movementSince(before: Record<string, bigint>): Promise<Record<str
 
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// The audit trail, end to end
+// ---------------------------------------------------------------------------
+
+describe('the audit trail through the real HTTP application', () => {
+  it('records the request id, IP and user agent that caused a change', async () => {
+    // The end of the wire that migration 0016 opened. These three columns were
+    // NULL on every audit row in the system before it, because the API
+    // collected them and TenantContext had no way to carry them into the
+    // transaction. This asserts they survive a real request.
+    const created = await call(api, {
+      method: 'POST',
+      url: '/v1/contacts',
+      token,
+      tenantId: tenant.tenantId,
+      body: { name: 'Traceable Through HTTP Sdn Bhd', isCustomer: true },
+    });
+
+    const [row] = await api.admin<
+      { request_id: string | null; actor_ip: string | null; user_agent: string | null;
+        actor_user_id: string | null; action: string }[]
+    >`
+        SELECT request_id, host(actor_ip) AS actor_ip, user_agent,
+               actor_user_id::text, action
+          FROM audit_log
+         WHERE tenant_id = ${tenant.tenantId}
+           AND entity_type = 'contact' AND entity_id = ${created.body['id'] as string}
+    `;
+
+    expect(row!.action).toBe('CREATE');
+    expect(row!.request_id).toBeTruthy();
+    expect(row!.actor_user_id).toBeTruthy();
+    // Fastify resolves an injected request's address; the point is that
+    // whatever it was reached the row rather than being dropped.
+    expect(row!.actor_ip).toBeTruthy();
+  });
+
+  it('exposes the trail to a role that holds audit.read, and hides it from one that does not', async () => {
+    const reader = await makeUser(api, { tenantId: tenant.tenantId, role: 'ADMIN' });
+    const { accessToken: adminToken } = await accessTokenFor(
+      api, reader.refreshToken, tenant.tenantId,
+    );
+
+    const allowed = await call(api, {
+      method: 'GET', url: '/v1/audit?entityType=contact&limit=5',
+      token: adminToken, tenantId: tenant.tenantId,
+    });
+    expect(allowed.status).toBe(200);
+    expect((allowed.body['entries'] as unknown[]).length).toBeGreaterThan(0);
+
+    // BOOKKEEPER does not hold audit.read. The people whose work the trail
+    // records should not routinely read what it captured about them.
+    const clerk = await makeUser(api, { tenantId: tenant.tenantId, role: 'BOOKKEEPER' });
+    const { accessToken: clerkToken } = await accessTokenFor(
+      api, clerk.refreshToken, tenant.tenantId,
+    );
+
+    const refused = await call(api, {
+      method: 'GET', url: '/v1/audit', token: clerkToken, tenantId: tenant.tenantId,
+    });
+    // 403, not 404: they are legitimately inside the tenant, so naming the
+    // missing permission tells an attacker nothing new — and tells a real user
+    // what to ask their administrator for.
+    expect(refused.status).toBe(403);
+    expect(refused.body['permission']).toBe('audit.read');
+  });
+
+  it('reports the tenant’s hash chain as intact', async () => {
+    const reader = await makeUser(api, { tenantId: tenant.tenantId, role: 'OWNER' });
+    const { accessToken: ownerToken } = await accessTokenFor(
+      api, reader.refreshToken, tenant.tenantId,
+    );
+
+    const verified = await call(api, {
+      method: 'GET', url: '/v1/audit-chain/verify',
+      token: ownerToken, tenantId: tenant.tenantId,
+    });
+
+    expect(verified.status).toBe(200);
+    expect(verified.body['intact']).toBe(true);
+    // Says how many rows it checked, so an empty answer can never be mistaken
+    // for a clean one.
+    expect(verified.body['entries']).toBeGreaterThan(0);
+    expect(verified.body['breaks']).toEqual([]);
+  });
+});

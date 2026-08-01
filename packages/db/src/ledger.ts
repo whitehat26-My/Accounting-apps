@@ -177,22 +177,20 @@ export async function postJournalEntry(
   }
 
   // ---- 7. Audit ------------------------------------------------------------
-  await tx`
-      INSERT INTO audit_log (
-          tenant_id, actor_user_id, action, entity_type, entity_id, after_json, row_hash
-      ) VALUES (
-          ${ctx.tenantId}, ${ctx.userId ?? null}, 'JOURNAL_POSTED', 'journal_entry',
-          ${entryId},
-          ${tx.json({
-            entryNo,
-            entryDate: entry.entryDate,
-            totalDebit: entry.totalDebit.toDecimalString(),
-            totalCredit: entry.totalCredit.toDecimalString(),
-            lineCount: entry.lines.length,
-          })},
-          ''::bytea
-      )
-  `;
+  //
+  // Nothing to do here any more, and that is the improvement.
+  //
+  // This function used to hand-write the single `audit_log` row that existed
+  // anywhere in the system: action 'JOURNAL_POSTED', a summary payload, no
+  // before image, and no IP, user agent or request id because `TenantContext`
+  // could not carry them. Migration 0016 replaced it with a trigger on every
+  // audited table, so the journal entry and its lines are now recorded the same
+  // way every other mutation is — with a before image, the actor's origin, and
+  // no chance of a future write path forgetting to call anything.
+  //
+  // The semantic name is not lost. "Somebody posted to a locked period" is
+  // written to `financial_event_log` a few lines above, which is the log that
+  // exists for acts rather than for row changes.
 
   // ---- 8. Outbox -----------------------------------------------------------
   // Written in the SAME transaction as the ledger effect. If the commit fails

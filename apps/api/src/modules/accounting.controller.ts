@@ -28,7 +28,7 @@ import {
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Requires } from '../guards/decorators.js';
-import { principalOf } from '../context/request-context.js';
+import { principalOf, tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
 import { NotFoundError } from '../errors.js';
 
@@ -54,15 +54,10 @@ import { NotFoundError } from '../errors.js';
 export class AccountingController {
   constructor(@Inject(SQL) private readonly sql: Sql) {}
 
+  // Assembled in `tenantContextOf`, not here. Five copies of this helper is
+  // how the audit log ended up with no IP, user agent or request id on any row.
   private ctx(request: FastifyRequest) {
-    const principal = principalOf(request);
-    return {
-      tenantId: principal.tenantId,
-      userId: principal.userId,
-      // Only set when the role actually carries it. `withTenant` turns this
-      // into `app.allow_locked_period`, which is what the database checks.
-      ...(principal.permissions.has('period.override') ? { allowLockedPeriod: true } : {}),
-    };
+    return tenantContextOf(request);
   }
 
   // ---- Sales --------------------------------------------------------------

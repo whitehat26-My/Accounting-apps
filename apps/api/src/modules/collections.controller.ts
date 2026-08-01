@@ -10,7 +10,7 @@ import {
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Requires } from '../guards/decorators.js';
-import { principalOf } from '../context/request-context.js';
+import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
 
 /**
@@ -25,12 +25,7 @@ export class CollectionsController {
   constructor(@Inject(SQL) private readonly sql: Sql) {}
 
   private ctx(request: FastifyRequest) {
-    const principal = principalOf(request);
-    return {
-      tenantId: principal.tenantId,
-      userId: principal.userId,
-      ...(principal.permissions.has('period.override') ? { allowLockedPeriod: true } : {}),
-    };
+    return tenantContextOf(request);
   }
 
   /**

@@ -67,6 +67,7 @@ export type Permission =
   | 'user.read'
   | 'user.manage'
   | 'apikey.manage'
+  | 'audit.read'
   | 'org.manage'
   | 'org.delete';
 
@@ -211,6 +212,21 @@ export const EVENT_LOGGED_PERMISSIONS: Readonly<Record<string, string>> = {
   'apikey.manage': 'API_KEY_ISSUED',
   'user.manage': 'ROLE_CHANGED',
 };
+
+/**
+ * Why `BANK_DETAILS_CHANGED` and `RECONCILIATION_COMPLETED` are NOT in the map
+ * above, despite being event types this system now writes.
+ *
+ * The map is keyed by PERMISSION, and its meaning is "every use of this
+ * permission logs an event". That holds for `period.override` — there is no way
+ * to exercise it quietly. It does not hold for banking: `bank.reconcile`
+ * authorises both `completeReconciliation`, which must log, and
+ * `suggestForAccount`, which must not. A permission cannot express "this
+ * permission, in this operation".
+ *
+ * So those two are written at their call sites, naming the permission that
+ * authorised them, and this map keeps the narrower claim it can actually make.
+ */
 
 export function requiresFinancialEvent(permission: Permission): string | undefined {
   return EVENT_LOGGED_PERMISSIONS[permission];

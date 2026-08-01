@@ -11,6 +11,7 @@ import { AuthController } from './modules/auth.controller.js';
 import { AccountingController } from './modules/accounting.controller.js';
 import { CollectionsController } from './modules/collections.controller.js';
 import { ContactsController } from './modules/contacts.controller.js';
+import { AuditController } from './modules/audit.controller.js';
 import { PublicPayController } from './modules/public-pay.controller.js';
 import { GatewayRegistry } from './gateways/registry.js';
 import { FakeGateway } from '@emil/db';
@@ -46,6 +47,7 @@ import { DatabaseLifecycle } from './database.lifecycle.js';
     AccountingController,
     ContactsController,
     CollectionsController,
+    AuditController,
     PublicPayController,
   ],
   providers: [
