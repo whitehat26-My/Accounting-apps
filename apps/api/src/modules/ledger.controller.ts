@@ -12,6 +12,8 @@ import {
   listPeriods,
   loadBaseCurrency,
   postJournalEntry,
+  receivablesAtClosingRate,
+  runRevaluation,
   updateAccount,
   withTenant,
   type Sql,
@@ -232,6 +234,100 @@ export class LedgerController {
     });
   }
 
+  // ---- Period-end revaluation ---------------------------------------------
+
+  /**
+   * What a revaluation WOULD do, without doing it.
+   *
+   * A revaluation posts to the ledger and its reversal posts the next day, so
+   * running one to see the number is not free. This shows the exposure at the
+   * closing rate first: outstanding foreign balances, what they were carried
+   * at, and the difference.
+   */
+  @Requires('report.read')
+  @Get('fx/exposure')
+  async fxExposure(@Query('asOf') asOf: string, @Req() request: FastifyRequest) {
+    const asOfDate = parse(isoDate, asOf);
+    const ctx = tenantContextOf(request);
+    const exposure = await withTenant(this.sql, ctx, (tx) =>
+      receivablesAtClosingRate(tx, ctx, asOfDate),
+    );
+    // What the receivables are carried at, what they are worth at the closing
+    // rate, and the difference a revaluation would post.
+    return { asOfDate, ...exposure };
+  }
+
+  /**
+   * Run a period-end FX revaluation.
+   *
+   * ---------------------------------------------------------------------------
+   * IT POSTS AND THEN REVERSES, WHICH IS THE WHOLE DESIGN.
+   *
+   * An unrealised difference is a reporting-date statement, not a settlement.
+   * The adjustment is posted at the reporting date and reversed the following
+   * day, so the receivable goes back to its booked rate — and the realised gain
+   * or loss, when the invoice is eventually settled, is measured from the
+   * ORIGINAL rate rather than being double-counted against an adjustment that
+   * was never undone.
+   *
+   * `journal.post` rather than a reporting permission: this writes to the
+   * ledger.
+   * ---------------------------------------------------------------------------
+   */
+  @Requires('journal.post')
+  @Post('revaluations')
+  async revalue(
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = parse(revaluationSchema, body);
+    const ctx = tenantContextOf(request);
+
+    // Rebuilt field by field rather than spread: `exactOptionalPropertyTypes`
+    // distinguishes an absent key from one set to undefined, and a spread of an
+    // optional Zod field produces the latter.
+    return withTenant(this.sql, ctx, (tx) =>
+      runRevaluation(tx, ctx, {
+        fiscalPeriodId: input.fiscalPeriodId,
+        idempotencyKey,
+        ...(input.asOfDate !== undefined ? { asOfDate: input.asOfDate } : {}),
+        ...(input.closingRates !== undefined ? { closingRates: input.closingRates } : {}),
+      }),
+    );
+  }
+
+  @Requires('report.read')
+  @Get('revaluations')
+  async listRevaluations(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    const rows = await withTenant(this.sql, ctx, (tx) =>
+      tx<
+        { id: string; as_of_date: Date; total_difference: string; status: string;
+          journal_entry_id: string | null; reversal_entry_id: string | null }[]
+      >`
+          SELECT id, as_of_date, total_difference, status,
+                 journal_entry_id, reversal_entry_id
+            FROM revaluation_run
+           WHERE tenant_id = ${ctx.tenantId}
+           ORDER BY as_of_date DESC
+      `,
+    );
+
+    return {
+      runs: rows.map((r) => ({
+        id: r.id,
+        asOfDate: r.as_of_date.toISOString().slice(0, 10),
+        totalDifference: r.total_difference,
+        status: r.status,
+        journalEntryId: r.journal_entry_id,
+        // Null only when there was no adjustment to make. A posted revaluation
+        // without a reversal would leave the books permanently restated.
+        reversalEntryId: r.reversal_entry_id,
+      })),
+    };
+  }
+
   /**
    * Whether the rollup cache still agrees with the journal it is derived from.
    *
@@ -260,6 +356,20 @@ const accountSchema = z.object({
   parentId: z.string().uuid().optional(),
   currency: z.string().length(3).optional(),
   tags: z.array(z.string().min(1)).optional(),
+});
+
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD');
+
+const revaluationSchema = z.object({
+  fiscalPeriodId: z.string().uuid(),
+  asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  /**
+   * Closing rates by currency. Omitted to use the stored rate on or before the
+   * reporting date — supplied explicitly when the rate to use is a decision
+   * rather than a lookup, which at a year end it usually is.
+   */
+  // Keyed by ISO currency code.
+  closingRates: z.record(z.string(), decimal).optional(),
 });
 
 const journalSchema = z.object({

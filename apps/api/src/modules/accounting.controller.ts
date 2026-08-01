@@ -405,6 +405,15 @@ const documentLine = z.object({
   taxCodeId: z.string().uuid(),
   itemId: z.string().uuid().optional(),
   discountBasisPoints: z.number().int().min(0).max(10_000).optional(),
+  /**
+   * LHDN item classification, per line.
+   *
+   * Accepted at issue time rather than asked for at submission, because by then
+   * the invoice has been sent to the customer and correcting it means a credit
+   * note. `issueInvoice` has stored it since M6; the route simply never let a
+   * caller supply one.
+   */
+  classificationCode: z.string().max(20).optional(),
 });
 
 const invoiceSchema = z.object({
