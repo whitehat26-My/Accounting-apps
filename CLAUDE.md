@@ -27,24 +27,37 @@ document before implementing anything in that area.
 
 TypeScript (strict) · NestJS · Next.js 15 · PostgreSQL 16 · raw SQL via `postgres.js` ·
 Redis + BullMQ · Zod · TanStack Query · shadcn/ui + Tailwind ·
-Vitest · Testcontainers · fast-check · Playwright
+Vitest · fast-check · Playwright
+(Integration tests run against a real PostgreSQL 16 — `scripts/pg-dev.sh` locally, a GitHub
+Actions service container in CI. Not Testcontainers: Docker is not available in every
+environment this is developed in, and a harness that cannot start is a harness nobody runs.)
 
 ## Repository layout
 
+**What exists today:**
+
 ```
-apps/api      NestJS — domain modules M0–M9
-apps/web      Next.js
-apps/worker   BullMQ processors
+apps/api            NestJS on Fastify — auth, RBAC, and the accounting surface
 packages/domain     Money, ledger aggregates, TaxEngine — pure, zero IO
+packages/db         Raw SQL migrations, RLS policies, repository services
+```
+
+**Planned, and deliberately not yet created** — do not assume these are present:
+
+```
+apps/web            Next.js
+apps/worker         BullMQ processors (nothing currently drains `outbox_event`)
 packages/contracts  Zod schemas + generated OpenAPI types
-packages/db         Raw SQL migrations, RLS policies, seeds, repository services
 packages/ui         Shared component library
 infra               Terraform
 ```
 
+Zod schemas currently live inline in `apps/api`; there is no generated OpenAPI spec yet, so
+the "OpenAPI spec updated" line below is aspirational rather than enforced.
+
 ## Definition of done
 
-Typechecks · unit tests · integration test against real PostgreSQL (Testcontainers) ·
+Typechecks · unit tests · integration test against real PostgreSQL ·
 ledger invariants still hold (`docs/architecture/06-data-model.md` §6.9) ·
 audit log row written for the mutation · OpenAPI spec updated.
 

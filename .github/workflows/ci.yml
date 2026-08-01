@@ -24,6 +24,9 @@ jobs:
 
     env:
       DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
+      # The API refuses to start without this, by design — a development
+      # fallback is the value that reaches production. CI supplies a throwaway.
+      JWT_SECRET: ci-only-secret-at-least-thirty-two-characters
 
     steps:
       - uses: actions/checkout@v4
@@ -52,3 +55,13 @@ jobs:
       # actually work — none of it can be verified against a mock.
       - name: Database tests (integration)
         run: pnpm test:db
+
+      # End-to-end through the real HTTP application — the same guards in the
+      # same order, the same exception filter. This is where the tenant
+      # boundary is proven at the edge: a cross-tenant request answering 404
+      # rather than 403, and a token minted for one organisation being refused
+      # for another.
+      #
+      # These were absent from CI when apps/api landed, so 27 tests sat unrun.
+      - name: API tests (end-to-end)
+        run: pnpm test:api
