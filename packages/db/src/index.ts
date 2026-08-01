@@ -16,4 +16,6 @@ export * from './report.js';
 export * from './collection.js';
 export * from './contact.js';
 export * from './audit.js';
+export * from './account.js';
+export * from './period.js';
 export { migrate } from './migrate.js';

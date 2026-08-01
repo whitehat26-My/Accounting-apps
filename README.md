@@ -23,7 +23,7 @@ pnpm install
 ./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
 export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
 export JWT_SECRET=any-32-character-string-for-local-dev
-pnpm typecheck && pnpm test        # 838 tests
+pnpm typecheck && pnpm test        # 864 tests
 ```
 
 | Package | Contents |
@@ -32,8 +32,8 @@ pnpm typecheck && pnpm test        # 838 tests
 | `packages/db` | Schema, RLS policies, integrity triggers, the write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`, `enterBill()`, `paySupplier()`, `issueDebitNote()`, `runRevaluation()`, `importStatement()`, `confirmMatch()`), identity and sessions, and the MyInvois submission lifecycle. |
 | `apps/api` | NestJS on Fastify. The middleware chain from `docs/architecture/01-system-architecture.md` §1.3: request context → rate limit → authentication → tenant resolution → RBAC → idempotency → handler. Controllers translate and authorise; they contain no business logic. |
 
-**What's proven, not just asserted.** 473 domain tests, 315 integration tests against a real
-PostgreSQL, and 50 end-to-end tests through the real HTTP application.
+**What's proven, not just asserted.** 473 domain tests, 332 integration tests against a real
+PostgreSQL, and 59 end-to-end tests through the real HTTP application.
 
 Property-based tests (fast-check) cover ledger invariants 1, 2 and 4, plus: tax lines always sum to
 the document total under either rounding policy, the tax summary always reconciles to document
