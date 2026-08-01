@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { loadConfig } from '../src/config.js';
 import {
   accessTokenFor,
   call,
@@ -289,5 +290,126 @@ describe('bank accounts and reconciliation', () => {
       body: { reason: 'Coded to the wrong account' },
     });
     expect(removed.status).toBe(200);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The externally-blocked capabilities
+// ---------------------------------------------------------------------------
+
+describe('what this deployment cannot do yet', () => {
+  it('answers it in one place, naming the authority that can unblock each one', async () => {
+    // Until now this lived in eight ⚠️ comments across the domain, the
+    // migrations and the API — answerable by reading the source and in no other
+    // way. Nobody operating the system reads the source.
+    const response = await call(api, { method: 'GET', ...as('/v1/readiness') });
+
+    expect(response.status).toBe(200);
+    const capabilities = response.body['capabilities'] as {
+      key: string; status: string; blockedBy?: string; source?: string;
+    }[];
+
+    const keys = capabilities.map((c) => c.key).sort();
+    expect(keys).toEqual([
+      'duitnow_qr',
+      'einvoice_submission',
+      'gateway_collections',
+      'statement_import',
+      'withholding',
+    ]);
+
+    for (const capability of capabilities.filter((c) => c.status === 'BLOCKED')) {
+      expect(capability.blockedBy, capability.key).toBeTruthy();
+      expect(capability.source, capability.key).toBeTruthy();
+    }
+
+    expect(response.body['fullyOperational']).toBe(false);
+  });
+
+  it('lets the person holding the ruling enter it, without a developer', async () => {
+    // The gap this closes. wht_rate has shipped empty since 0010 with no
+    // service and no route, so "it just needs the verified figures" was not
+    // true — it needed the figures AND somebody to write the code.
+    const created = await call(api, {
+      method: 'POST',
+      ...as('/v1/withholding-rates'),
+      body: {
+        paymentType: 'TECHNICAL_SERVICES',
+        rateBasisPoints: 1000,
+        validFrom: '2026-01-01',
+        legislationRef: 'LHDN Public Ruling 11/2018 s4.2',
+      },
+    });
+
+    expect(created.status).toBe(201);
+    expect(created.body['ratePercent']).toBe('10.00%');
+
+    const readiness = await call(api, { method: 'GET', ...as('/v1/readiness') });
+    const withholding = (readiness.body['capabilities'] as { key: string; status: string }[])
+      .find((c) => c.key === 'withholding')!;
+    expect(withholding.status).toBe('READY');
+  });
+
+  it('refuses a rate with no source, at the API boundary', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...as('/v1/withholding-rates'),
+      body: {
+        paymentType: 'INTEREST',
+        rateBasisPoints: 1500,
+        validFrom: '2026-01-01',
+        legislationRef: 'n/a',
+      },
+    });
+
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body)).toMatch(/Cite the source/);
+  });
+
+  it('cannot tell a citation from prose, and does not pretend to', async () => {
+    /*
+     * The honest limit of this mechanism, asserted so nobody mistakes it for
+     * more than it is.
+     *
+     * A length floor stops an empty field, "n/a" and "guess". It cannot stop
+     * someone determined from typing twelve characters of nonsense — no
+     * database constraint can, short of a list of valid LHDN rulings that would
+     * itself need maintaining against the same authority.
+     *
+     * What it buys is that the field cannot be skipped, so every rate has an
+     * identifiable claim attached to it and a reviewer can check the claim. The
+     * defence against a bad citation is the review, not the constraint.
+     */
+    const accepted = await call(api, {
+      method: 'POST',
+      ...as('/v1/withholding-rates'),
+      body: {
+        paymentType: 'PROSE_PROBE',
+        rateBasisPoints: 1000,
+        validFrom: '2026-01-01',
+        legislationRef: 'someone said so',
+      },
+    });
+
+    expect(accepted.status).toBe(201);
+    // But it IS recorded, verbatim and attributed, which is what makes it
+    // reviewable later.
+    expect(accepted.body['legislationRef']).toBe('someone said so');
+    expect(accepted.body['verifiedBy']).toBeTruthy();
+  });
+
+  it('refuses to load sandbox values in production, independently of the route', () => {
+    // Two independent checks. loadConfig refuses the flag outright, so the
+    // route is unreachable even if someone sets the variable on a production
+    // host — a 99% rate on a real supplier payment retains almost the whole
+    // invoice and remits it to LHDN.
+    expect(() =>
+      loadConfig({
+        DATABASE_URL: 'postgres://localhost/x',
+        JWT_SECRET: 'a'.repeat(32),
+        NODE_ENV: 'production',
+        EMIL_ENABLE_SANDBOX_VALUES: '1',
+      } as NodeJS.ProcessEnv),
+    ).toThrow(/never be set in production/);
   });
 });

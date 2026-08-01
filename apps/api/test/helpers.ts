@@ -72,6 +72,7 @@ export async function createTestApi(name: string): Promise<TestApi> {
   // only because `loadConfig` refuses this flag when NODE_ENV is production —
   // there is a test below asserting exactly that.
   process.env['EMIL_ENABLE_FAKE_GATEWAY'] = '1';
+  process.env['EMIL_ENABLE_SANDBOX_VALUES'] = '1';
 
   const app = await createApp();
   await app.init();

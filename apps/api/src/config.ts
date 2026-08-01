@@ -36,16 +36,29 @@ const schema = z.object({
    * than left to a deployment checklist — see the refinement below.
    */
   enableFakeGateway: z.boolean(),
+  /**
+   * Allow loading obviously-fake statutory values.
+   *
+   * The sandbox withholding rate is 99% and the DuitNow merchant template pays
+   * nobody. Both exist so the flows built on them can be demonstrated at all;
+   * neither may ever reach a real payment or a real payer.
+   */
+  enableSandboxValues: z.boolean(),
   nodeEnv: z.string(),
-}).refine(
-  (c) => !(c.enableFakeGateway && c.nodeEnv === 'production'),
-  {
+})
+  .refine((c) => !(c.enableFakeGateway && c.nodeEnv === 'production'), {
     message:
       'EMIL_ENABLE_FAKE_GATEWAY must never be set in production: the fake gateway ' +
       'accepts any webhook signature, which would let anyone mark any invoice paid.',
     path: ['enableFakeGateway'],
-  },
-);
+  })
+  .refine((c) => !(c.enableSandboxValues && c.nodeEnv === 'production'), {
+    message:
+      'EMIL_ENABLE_SANDBOX_VALUES must never be set in production: it loads a 99% ' +
+      'withholding rate, which on a real supplier payment retains almost the whole ' +
+      'invoice and remits it to LHDN.',
+    path: ['enableSandboxValues'],
+  });
 
 export type ApiConfig = z.infer<typeof schema>;
 
@@ -58,6 +71,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     rateLimitWindowMs: Number(env['RATE_LIMIT_WINDOW_MS'] ?? 60_000),
     publicRateLimit: Number(env['PUBLIC_RATE_LIMIT'] ?? 30),
     enableFakeGateway: env['EMIL_ENABLE_FAKE_GATEWAY'] === '1',
+    enableSandboxValues: env['EMIL_ENABLE_SANDBOX_VALUES'] === '1',
     nodeEnv: env['NODE_ENV'] ?? 'development',
   });
 

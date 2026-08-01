@@ -23,7 +23,7 @@ pnpm install
 ./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
 export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
 export JWT_SECRET=any-32-character-string-for-local-dev
-pnpm typecheck && pnpm test        # 864 tests
+pnpm typecheck && pnpm test        # 881 tests
 ```
 
 | Package | Contents |
@@ -32,8 +32,8 @@ pnpm typecheck && pnpm test        # 864 tests
 | `packages/db` | Schema, RLS policies, integrity triggers, the write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`, `enterBill()`, `paySupplier()`, `issueDebitNote()`, `runRevaluation()`, `importStatement()`, `confirmMatch()`), identity and sessions, and the MyInvois submission lifecycle. |
 | `apps/api` | NestJS on Fastify. The middleware chain from `docs/architecture/01-system-architecture.md` §1.3: request context → rate limit → authentication → tenant resolution → RBAC → idempotency → handler. Controllers translate and authorise; they contain no business logic. |
 
-**What's proven, not just asserted.** 473 domain tests, 332 integration tests against a real
-PostgreSQL, and 59 end-to-end tests through the real HTTP application.
+**What's proven, not just asserted.** 473 domain tests, 344 integration tests against a real
+PostgreSQL, and 64 end-to-end tests through the real HTTP application.
 
 Property-based tests (fast-check) cover ledger invariants 1, 2 and 4, plus: tax lines always sum to
 the document total under either rounding policy, the tax summary always reconciles to document
@@ -70,6 +70,26 @@ amount edited, an unmatch leaving both decisions visible rather than deleting on
 to be signed off while a variance remains, a view without `security_invoker` being caught before it
 can leak across tenants, and NUMERIC never degrading to a float. None of that can be verified
 against a mock.
+
+### What this build cannot do yet, and how to find out
+
+Five capabilities ship inert because they depend on a value that must come from
+outside — LHDN, PayNet, a bank, or a payment provider. `GET /v1/readiness` answers, per
+tenant, which ones are blocked, what is missing, and which authority can supply it. It
+reads the same configuration the features themselves read, so a capability cannot report
+ready and then refuse.
+
+Each one is now closed by **supplying data, not by writing code**: there are routes to
+enter withholding rates, the DuitNow merchant template and bank statement layouts. Every
+such value carries mandatory provenance — a `wht_rate` cannot be stored without citing the
+ruling it came from, enforced by a database CHECK, and a non-empty DuitNow template cannot
+be stored without saying where it was confirmed. That stops the field being skipped; it
+cannot tell a real citation from twelve characters of nonsense, and does not claim to.
+What it buys is that every rate has an identifiable claim attached for a reviewer to check.
+
+For demonstrating the blocked flows there are **sandbox values, refused in production** —
+a 99% withholding rate and a merchant template that pays nobody, each citing itself as
+unverified. `readiness` reports those capabilities as `SANDBOX`, never `READY`.
 
 **Not implemented, deliberately:** Malaysian withholding tax RATES. The mechanism is built and
 tested — resolution with treaty precedence, the gross/net split, the `Dr AP / Cr Bank / Cr WHT
