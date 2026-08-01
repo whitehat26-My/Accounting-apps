@@ -19,11 +19,29 @@ export const ADMIN_URL =
  */
 const APP_LOGIN_ROLE = 'emil_app_login';
 
+/**
+ * The role the WORKER connects as.
+ *
+ * Separate from the application role on purpose, and the separation is the
+ * thing worth testing. `emil_worker` holds EXECUTE on the SECURITY DEFINER
+ * functions that read the outbox across every tenant; `emil_app`, which is what
+ * the internet-facing API connects as, does not. A suite that drove the relay
+ * through the app connection would prove the relay works and prove nothing
+ * about the boundary — and would quietly pass if the GRANT were widened.
+ */
+const WORKER_LOGIN_ROLE = 'emil_worker_login';
+
 export interface TestDatabase {
   /** Connected as the unprivileged application role. Subject to RLS. */
   readonly sql: Sql;
   /** Connected as the owner. Used for provisioning only. */
   readonly admin: Sql;
+  /**
+   * Connected as the worker role: `emil_app` plus EXECUTE on the outbox and
+   * scheduler claim functions. Still unprivileged, still subject to RLS for
+   * every ordinary query.
+   */
+  readonly worker: Sql;
   readonly drop: () => Promise<void>;
 }
 
@@ -36,6 +54,9 @@ export async function createTestDatabase(name: string): Promise<TestDatabase> {
       BEGIN
           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_LOGIN_ROLE}') THEN
               CREATE ROLE ${APP_LOGIN_ROLE} LOGIN NOBYPASSRLS;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${WORKER_LOGIN_ROLE}') THEN
+              CREATE ROLE ${WORKER_LOGIN_ROLE} LOGIN NOBYPASSRLS;
           END IF;
       END $$;
   `);
@@ -50,10 +71,14 @@ export async function createTestDatabase(name: string): Promise<TestDatabase> {
       GRANT emil_app TO ${APP_LOGIN_ROLE};
       GRANT CONNECT ON DATABASE ${dbName} TO ${APP_LOGIN_ROLE};
       GRANT USAGE ON SCHEMA public TO ${APP_LOGIN_ROLE};
+      GRANT emil_worker TO ${WORKER_LOGIN_ROLE};
+      GRANT CONNECT ON DATABASE ${dbName} TO ${WORKER_LOGIN_ROLE};
+      GRANT USAGE ON SCHEMA public TO ${WORKER_LOGIN_ROLE};
   `);
 
   const appUrl = adminUrl.replace('//postgres@', `//${APP_LOGIN_ROLE}@`);
   const sql = createClient(appUrl);
+  const worker = createClient(adminUrl.replace('//postgres@', `//${WORKER_LOGIN_ROLE}@`));
 
   // Guard the guard: if this ever connects with RLS-bypassing privileges, every
   // isolation test below becomes meaningless. Fail loudly instead.
@@ -71,8 +96,10 @@ export async function createTestDatabase(name: string): Promise<TestDatabase> {
   return {
     sql,
     admin,
+    worker,
     drop: async () => {
       await sql.end();
+      await worker.end();
       await admin.end();
       const cleanup = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
       await cleanup.unsafe(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);

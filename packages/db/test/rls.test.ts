@@ -136,6 +136,13 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     // through a narrow SECURITY DEFINER function. Asserted below.
     app_user: 'global identity; app role has no grant, access via SECURITY DEFINER only',
     user_session: 'global session; app role has no grant, access via SECURITY DEFINER only',
+    // Scheduled jobs run ACROSS tenants — the rollup-drift canary asks "has
+    // any tenant's cache diverged from its journal", and a per-tenant schedule
+    // would make the answer depend on whether that tenant happened to have a
+    // row. It holds job names, intervals and run outcomes; no tenant data. The
+    // assertion below that an exempt table really has no tenant_id is what
+    // stops it quietly becoming tenant data later.
+    scheduled_job: 'global background schedule; job names and timings only',
     // The role→permission matrix is the same for every tenant.
     app_role: 'global role definitions, read-only',
     app_permission: 'global permission definitions, read-only',

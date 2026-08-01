@@ -38,6 +38,7 @@ environment this is developed in, and a harness that cannot start is a harness n
 
 ```
 apps/api            NestJS on Fastify — auth, RBAC, and the accounting surface
+apps/worker         Outbox relay + scheduled jobs. PostgreSQL-backed, NOT BullMQ — see below
 packages/domain     Money, ledger aggregates, TaxEngine — pure, zero IO
 packages/db         Raw SQL migrations, RLS policies, repository services
 ```
@@ -46,7 +47,6 @@ packages/db         Raw SQL migrations, RLS policies, repository services
 
 ```
 apps/web            Next.js
-apps/worker         BullMQ processors (nothing currently drains `outbox_event`)
 packages/contracts  Zod schemas + generated OpenAPI types
 packages/ui         Shared component library
 infra               Terraform
@@ -54,6 +54,20 @@ infra               Terraform
 
 Zod schemas currently live inline in `apps/api`; there is no generated OpenAPI spec yet, so
 the "OpenAPI spec updated" line below is aspirational rather than enforced.
+
+**The worker drains the outbox with PostgreSQL, not Redis.** The stack line above names
+BullMQ, and it is deferred rather than adopted. The outbox exists to eliminate a dual
+write — the job and the ledger effect commit together only while the job lives in the same
+database as the effect — so pushing to Redis from the writing transaction would reintroduce
+exactly the inconsistency the pattern prevents. `SELECT … FOR UPDATE SKIP LOCKED` is the
+right primitive, and a second datastore introduced for one nightly job is operational
+burden with no offsetting gain. BullMQ earns its place when something needs cross-process
+rate limiting or fan-out beyond one poller.
+
+**The worker connects as `emil_worker`, not `emil_app`.** It holds EXECUTE on the
+SECURITY DEFINER functions that read the outbox across every tenant; the internet-facing
+API cannot call them. Migrations must be applied by a role that bypasses RLS or those
+functions silently return nothing — migration 0021 asserts this rather than assuming it.
 
 ## Definition of done
 

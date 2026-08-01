@@ -15,6 +15,7 @@ export * from './revaluation.js';
 export * from './report.js';
 export * from './cash-flow.js';
 export * from './general-ledger.js';
+export * from './outbox.js';
 export * from './collection.js';
 export * from './contact.js';
 export * from './audit.js';

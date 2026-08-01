@@ -65,3 +65,10 @@ jobs:
       # These were absent from CI when apps/api landed, so 27 tests sat unrun.
       - name: API tests (end-to-end)
         run: pnpm test:api
+
+      # The background worker, against the same real PostgreSQL. Everything
+      # interesting here — the SKIP LOCKED claim, the lease, the exponential
+      # backoff, and the fact that `emil_app` CANNOT reach the cross-tenant
+      # claim functions — is database behaviour that no mock can stand in for.
+      - name: Worker tests (integration)
+        run: pnpm test:worker

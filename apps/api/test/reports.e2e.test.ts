@@ -392,3 +392,72 @@ describe('CSV exports', () => {
     expect(response.body).not.toMatch(/(^|[,\r\n])=HYPERLINK/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Queue health — the route that would have caught the undrained outbox
+// ---------------------------------------------------------------------------
+
+describe('GET /v1/system/queues', () => {
+  it('reports outbox state and the job schedule, with a verdict', async () => {
+    /*
+     * The outbox was written to by eight modules and read by nothing for nine
+     * milestones, and it survived that long because there was nowhere to look.
+     * This is that place.
+     *
+     * The journals posted by this suite emitted no outbox events — only
+     * document services do — so the interesting assertion is the shape and the
+     * verdict, not a count.
+     */
+    const response = await call(api, { method: 'GET', ...as('/v1/system/queues') });
+
+    expect(response.status).toBe(200);
+    expect(response.body['outbox']).toMatchObject({
+      pending: expect.any(Number),
+      failed: 0,
+      stalledOverAnHour: 0,
+    });
+    expect(response.body['healthy']).toBe(true);
+
+    const jobs = response.body['scheduledJobs'] as { name: string }[];
+    expect(jobs.map((j) => j.name).sort()).toEqual([
+      'einvoice-retry',
+      'outbox-sweep',
+      'rollup-drift',
+    ]);
+  });
+
+  it('turns unhealthy when an event dead-letters, and names it', async () => {
+    await api.admin`
+        INSERT INTO outbox_event (tenant_id, event_type, aggregate_type, aggregate_id,
+                                  payload, status, attempts, last_error)
+        VALUES (${tenant.tenantId}, 'invoice.issued', 'journal_entry', ${randomUUID()},
+                '{}'::jsonb, 'FAILED', 8, 'no customer TIN')
+    `;
+
+    const response = await call(api, { method: 'GET', ...as('/v1/system/queues') });
+
+    expect(response.body['healthy']).toBe(false);
+    const dead = response.body['deadLettered'] as { eventType: string; lastError: string }[];
+    // The reason travels with the failure. "Something failed eight times" is
+    // not an answer anybody can act on.
+    expect(dead[0]).toMatchObject({
+      eventType: 'invoice.issued',
+      lastError: 'no customer TIN',
+    });
+  });
+
+  it('is system.read, which an accountant does not hold', async () => {
+    // Queue health is an operational question, not an accounting one.
+    const accountant = await makeUser(api, { tenantId: tenant.tenantId, role: 'ACCOUNTANT' });
+    const { accessToken } = await accessTokenFor(api, accountant.refreshToken, tenant.tenantId);
+
+    const response = await call(api, {
+      method: 'GET',
+      url: '/v1/system/queues',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+
+    expect(response.status).toBe(403);
+  });
+});
