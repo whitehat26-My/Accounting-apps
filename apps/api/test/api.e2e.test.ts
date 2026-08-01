@@ -557,6 +557,154 @@ describe('a full accounting cycle over HTTP', () => {
 });
 
 // ---------------------------------------------------------------------------
+// Bill approval over HTTP
+// ---------------------------------------------------------------------------
+
+describe('bill approval', () => {
+  it('gates payment without gating recognition, and enforces two distinct people', async () => {
+    const tenant = await seedTenant(api.admin, 'Approval E2E Sdn Bhd');
+
+    const clerk = await makeUser(api, { tenantId: tenant.tenantId, role: 'BOOKKEEPER' });
+    const acct = await makeUser(api, { tenantId: tenant.tenantId, role: 'ACCOUNTANT' });
+    const boss = await makeUser(api, { tenantId: tenant.tenantId, role: 'OWNER' });
+
+    const clerkToken = (await accessTokenFor(api, clerk.refreshToken, tenant.tenantId)).accessToken;
+    const acctToken = (await accessTokenFor(api, acct.refreshToken, tenant.tenantId)).accessToken;
+    const bossToken = (await accessTokenFor(api, boss.refreshToken, tenant.tenantId)).accessToken;
+
+    const as = (token: string) => (method: 'GET' | 'POST', url: string, body?: unknown) =>
+      call(api, { method, url, token, tenantId: tenant.tenantId, ...(body !== undefined ? { body } : {}) });
+
+    // Only an OWNER holds org.manage, so only they may set a threshold.
+    const rule = await as(bossToken)('POST', '/v1/approval-rules', {
+      name: 'Over RM 1,000',
+      minAmount: '1000.00',
+      requiredRole: 'ACCOUNTANT',
+      sequence: 1,
+    });
+    expect(rule.status).toBe(201);
+
+    const rule2 = await as(bossToken)('POST', '/v1/approval-rules', {
+      name: 'Over RM 10,000',
+      minAmount: '10000.00',
+      requiredRole: 'OWNER',
+      sequence: 2,
+    });
+    expect(rule2.status).toBe(201);
+
+    // The clerk enters a large bill.
+    const bill = await as(clerkToken)('POST', '/v1/bills', {
+      ...billBody(tenant),
+      lines: [
+        {
+          description: 'Contract work',
+          quantity: '1',
+          unitPrice: '50000.00',
+          accountId: tenant.accounts['6000'],
+          taxCodeId: tenant.taxCodes['NONE'],
+        },
+      ],
+    });
+    expect(bill.status).toBe(201);
+    expect(bill.body['approvalRequestId']).toBeTypeOf('string');
+
+    // It is IN THE LEDGER already. Approval gates payment, not recognition.
+    const payables = await as(bossToken)('GET', '/v1/payables');
+    expect(Number(payables.body['count'])).toBeGreaterThan(0);
+
+    const billId = bill.body['id'] as string;
+
+    // ...but it cannot be paid, and the response says who is being waited on.
+    const blocked = await as(acctToken)('POST', '/v1/supplier-payments', {
+      supplierId: tenant.supplierId,
+      paymentDate: '2026-08-20',
+      amount: '50000.00',
+      method: 'TRANSFER',
+      depositAccountId: tenant.accounts['1000'],
+      allocations: [{ billId, amount: '50000.00' }],
+    });
+    expect(blocked.status).toBe(422);
+    expect(blocked.body['message']).toMatch(/awaiting approval/i);
+    expect(blocked.body['message']).toMatch(/ACCOUNTANT/);
+
+    // The clerk who raised it cannot approve it — but they also lack the
+    // permission, so the guard refuses before the rule is even consulted.
+    const selfApproval = await as(clerkToken)('POST', `/v1/bills/${billId}/approval`, {
+      sequence: 1,
+      decision: 'APPROVE',
+    });
+    expect(selfApproval.status).toBe(403);
+
+    // Step 1 by the accountant.
+    const first = await as(acctToken)('POST', `/v1/bills/${billId}/approval`, {
+      sequence: 1,
+      decision: 'APPROVE',
+    });
+    expect(first.status).toBe(201);
+    expect(first.body['status']).toBe('PENDING');
+
+    // Still not payable — one step outstanding.
+    const stillBlocked = await as(acctToken)('POST', '/v1/supplier-payments', {
+      supplierId: tenant.supplierId,
+      paymentDate: '2026-08-20',
+      amount: '50000.00',
+      method: 'TRANSFER',
+      depositAccountId: tenant.accounts['1000'],
+      allocations: [{ billId, amount: '50000.00' }],
+    });
+    expect(stillBlocked.status).toBe(422);
+
+    // The accountant cannot also fill step 2, even though they can reach it.
+    const doubleUp = await as(acctToken)('POST', `/v1/bills/${billId}/approval`, {
+      sequence: 2,
+      decision: 'APPROVE',
+    });
+    expect(doubleUp.status).toBe(422);
+    expect(doubleUp.body['message']).toMatch(/already decided|different person/i);
+
+    // The owner completes it.
+    const second = await as(bossToken)('POST', `/v1/bills/${billId}/approval`, {
+      sequence: 2,
+      decision: 'APPROVE',
+    });
+    expect(second.body['status']).toBe('APPROVED');
+
+    const paid = await as(acctToken)('POST', '/v1/supplier-payments', {
+      supplierId: tenant.supplierId,
+      paymentDate: '2026-08-20',
+      amount: '50000.00',
+      method: 'TRANSFER',
+      depositAccountId: tenant.accounts['1000'],
+      allocations: [{ billId, amount: '50000.00' }],
+    });
+    expect(paid.status).toBe(201);
+  });
+
+  it('reports NOT_REQUIRED for a bill below every threshold', async () => {
+    const tenant = await seedTenant(api.admin, 'No Threshold Sdn Bhd');
+    const user = await makeUser(api, { tenantId: tenant.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, user.refreshToken, tenant.tenantId);
+
+    const bill = await call(api, {
+      method: 'POST',
+      url: '/v1/bills',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+      body: billBody(tenant),
+    });
+
+    const approval = await call(api, {
+      method: 'GET',
+      url: `/v1/bills/${bill.body['id'] as string}/approval`,
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+
+    expect(approval.body['status']).toBe('NOT_REQUIRED');
+  });
+});
+
+// ---------------------------------------------------------------------------
 
 function invoiceBody(tenant: Tenant) {
   return {

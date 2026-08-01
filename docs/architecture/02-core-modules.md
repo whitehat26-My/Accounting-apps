@@ -203,11 +203,26 @@ before extending this module:
   LHDN. A payment that asks to withhold with no configured rate fails loudly rather than
   withholding zero, because the payer carries the liability for under-withholding.
 
+**Bill approval is now built** (`0013_bill_approval.sql`, `packages/domain/src/approval.ts`,
+`packages/db/src/approval.ts`), having waited for M0 as planned. Two decisions define it:
+
+- **Approval gates PAYMENT, not recognition.** The tempting design holds a bill out of the ledger
+  until approved, and it produces a misstatement rather than an inconvenience: if the goods arrived
+  and the supplier has invoiced, the obligation EXISTS, and accrual accounting recognises it when
+  incurred. A bill held back understates payables and expenses — worst at period end, when
+  unapproved bills pile up. So a bill posts on entry and `paySupplier()` refuses to release cash.
+- **Separation of duties is enforced in the database as well as the domain.** The requester can
+  never approve their own bill (a trigger), and one person can never fill two steps (a UNIQUE on
+  `(request, decided_by)`). "Over RM 10,000 needs a second approver" means a second PERSON — at a
+  small company one user often holds both roles, and allowing it defeats the threshold entirely. A
+  control that lives only in application code is one a script or a bulk import walks around.
+
+The routing rules in force are **snapshot into the request**, not referenced. Raising a threshold
+later must not make a past approval look unnecessary, nor lowering one make it look insufficient.
+
 **Deferred within M3**, stated rather than implied: purchase orders and three-way match, OCR
-document capture, expense claims, the approval workflow (needs M0 — threshold routing without users
-or roles would point at bare UUIDs, and separation of duties cannot be enforced by a system with no
-concept of two people), batch payment file export, self-billed e-invoice generation, and the WHT
-rates plus CP37 filing artefacts.
+document capture, expense claims, batch payment file export, self-billed e-invoice generation, and
+the WHT rates plus CP37 filing artefacts.
 
 ---
 

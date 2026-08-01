@@ -12,6 +12,7 @@ import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
 import { loadBaseCurrency, loadTaxCodes, resolveRate } from './invoice.js';
 import { addDays, decimalToScaled } from './internal.js';
+import { routeBillForApproval } from './approval.js';
 
 /**
  * BillService.enter() — the DRAFT -> ENTERED transition (M3).
@@ -34,10 +35,10 @@ import { addDays, decimalToScaled } from './internal.js';
  * `allocate_document_number('BILL')`, and what an auditor follows.
  * ---------------------------------------------------------------------------
  *
- * WHAT IS NOT HERE: an approval workflow. Threshold routing and separation of
- * duties need users and roles, which arrive with M0. Until then a bill is
- * entered by whoever is connected, and pretending otherwise would give a false
- * assurance of control.
+ * APPROVAL: a bill is routed on entry when a threshold rule matches, and it is
+ * still POSTED either way. Approval gates PAYMENT, not recognition — see
+ * `packages/db/src/approval.ts` for why holding a bill out of the ledger
+ * pending an internal signature understates payables and expenses.
  */
 
 export interface EnterBillInput {
@@ -77,6 +78,12 @@ export interface EnteredBill {
   readonly total: string;
   /** Null for a zero-total bill, which has no ledger effect to post. */
   readonly journalEntryId: string | null;
+  /**
+   * Set when a routing rule matched. The bill IS posted either way — approval
+   * gates payment, not recognition — so this says "cash is blocked", not
+   * "nothing happened".
+   */
+  readonly approvalRequestId?: string;
   readonly replayed: boolean;
 }
 
@@ -316,6 +323,21 @@ export async function enterBill(
        WHERE tenant_id = ${ctx.tenantId} AND id = ${billId}
   `;
 
+  // Routed in the SAME transaction as the bill. A bill that committed without
+  // its approval request would be payable by a caller who never saw a rule —
+  // and the gap would be invisible, because nothing would look wrong.
+  //
+  // Note the bill is already ENTERED and already posted at this point. That is
+  // deliberate: the obligation exists once the supplier has invoiced, and
+  // holding it out of the ledger pending an internal signature understates
+  // payables and expenses. Approval gates the PAYMENT.
+  const approval = await routeBillForApproval(
+    tx,
+    ctx,
+    billId,
+    rate.isOne() ? doc.total : converter(rate, baseCurrency)(doc.total),
+  );
+
   return {
     id: billId,
     internalRef,
@@ -324,6 +346,7 @@ export async function enterBill(
     taxTotal: doc.taxTotal.toDecimalString(),
     total: doc.total.toDecimalString(),
     journalEntryId,
+    ...(approval !== null ? { approvalRequestId: approval.requestId } : {}),
     replayed: false,
   };
 }

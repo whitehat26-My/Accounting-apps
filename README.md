@@ -10,7 +10,8 @@ Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-f
 > mechanism — and banking: statement import, the reconciliation matching engine, and
 > reconciliation sessions — and M0: users, the multi-organisation model, roles and
 > permissions, refresh-token rotation with reuse detection, API keys, and a NestJS
-> HTTP API over the whole thing. Implemented and tested.
+> HTTP API over the whole thing — plus bill approval with threshold routing and
+> separation of duties. Implemented and tested.
 >
 > **All fourteen ledger invariants now have tests behind them.**
 > The full architecture specification lives in [`docs/architecture/`](docs/architecture/).
@@ -22,7 +23,7 @@ pnpm install
 ./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
 export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
 export JWT_SECRET=any-32-character-string-for-local-dev
-pnpm typecheck && pnpm test        # 666 tests
+pnpm typecheck && pnpm test        # 712 tests
 ```
 
 | Package | Contents |
@@ -31,8 +32,8 @@ pnpm typecheck && pnpm test        # 666 tests
 | `packages/db` | Schema, RLS policies, integrity triggers, the write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`, `enterBill()`, `paySupplier()`, `issueDebitNote()`, `runRevaluation()`, `importStatement()`, `confirmMatch()`), identity and sessions, and the MyInvois submission lifecycle. |
 | `apps/api` | NestJS on Fastify. The middleware chain from `docs/architecture/01-system-architecture.md` §1.3: request context → rate limit → authentication → tenant resolution → RBAC → idempotency → handler. Controllers translate and authorise; they contain no business logic. |
 
-**What's proven, not just asserted.** 389 domain tests, 252 integration tests against a real
-PostgreSQL, and 25 end-to-end tests through the real HTTP application.
+**What's proven, not just asserted.** 414 domain tests, 271 integration tests against a real
+PostgreSQL, and 27 end-to-end tests through the real HTTP application.
 
 Property-based tests (fast-check) cover ledger invariants 1, 2 and 4, plus: tax lines always sum to
 the document total under either rounding policy, the tax summary always reconciles to document

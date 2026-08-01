@@ -27,6 +27,7 @@ import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
 import { loadBaseCurrency, resolveRate } from './invoice.js';
 import { toIsoDate } from './internal.js';
+import { assertPayable } from './approval.js';
 
 /**
  * PaymentService.paySupplier() — money out against open bills (M3).
@@ -203,6 +204,15 @@ export async function paySupplier(
         amount: Money.fromDecimal(a.amount, currency),
       }))
     : autoAllocate(amount, openBillDocuments, input.allocationStrategy ?? 'OLDEST_FIRST');
+
+  // ---- Approval gate -------------------------------------------------------
+  // Checked before anything is posted, so a blocked payment leaves no trace at
+  // all rather than a rolled-back one. A bill that matched no routing rule
+  // passes straight through, which keeps this invisible for tenants who never
+  // configured a threshold.
+  for (const allocation of allocations) {
+    await assertPayable(tx, ctx, allocation.documentId);
+  }
 
   // ---- Validate (pure domain) ---------------------------------------------
   const validated = validateReceipt(

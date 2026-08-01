@@ -3,6 +3,10 @@ import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import type { AgeingReport, RenderedReport } from '@emil/domain';
 import {
+  approvalFor,
+  createApprovalRule,
+  decideApproval,
+  pendingApprovals,
   agedPayables,
   agedReceivables,
   checkBankInvariant,
@@ -159,6 +163,91 @@ export class AccountingController {
     const input = parse(supplierPaymentSchema, body);
     const ctx = this.ctx(request);
     return withTenant(this.sql, ctx, (tx) => paySupplier(tx, ctx, { ...input, idempotencyKey }));
+  }
+
+  // ---- Bill approval ------------------------------------------------------
+
+  @Requires('bill.approve')
+  @Get('approvals')
+  async pendingApprovals(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { pending: await withTenant(this.sql, ctx, (tx) => pendingApprovals(tx, ctx)) };
+  }
+
+  @Requires('bill.read')
+  @Get('bills/:id/approval')
+  async billApproval(@Param('id') billId: string, @Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    const approval = await withTenant(this.sql, ctx, (tx) => approvalFor(tx, ctx, billId));
+
+    if (approval === null) {
+      // No routing rule matched, so nothing is waiting. Reported as a state
+      // rather than a 404: "this bill needs no approval" is the answer, and a
+      // 404 would read as "no such bill".
+      return { billId, status: 'NOT_REQUIRED', outstanding: [], decisions: [] };
+    }
+
+    return {
+      billId,
+      status: approval.state.status,
+      amount: approval.amount,
+      outstanding: approval.state.outstanding,
+      decisions: approval.decisions,
+      violations: approval.state.violations,
+    };
+  }
+
+  @Requires('bill.approve')
+  @Post('bills/:id/approval')
+  async decideApproval(
+    @Param('id') billId: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+  ) {
+    const principal = principalOf(request);
+    const input = parse(
+      z.object({
+        sequence: z.number().int().min(1),
+        decision: z.enum(['APPROVE', 'REJECT']),
+        comment: z.string().optional(),
+      }),
+      body,
+    );
+
+    const ctx = this.ctx(request);
+    // The actor's role comes from the resolved principal, never from the body.
+    // A client-supplied role would make the whole separation of duties
+    // advisory.
+    const result = await withTenant(this.sql, ctx, (tx) =>
+      decideApproval(tx, ctx, { ...input, billId, actorRole: principal.role }),
+    );
+
+    return {
+      billId,
+      status: result.state.status,
+      outstanding: result.state.outstanding,
+    };
+  }
+
+  @Requires('org.manage')
+  @Post('approval-rules')
+  async createApprovalRule(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = parse(
+      z.object({
+        name: z.string().min(1),
+        minAmount: decimal,
+        maxAmount: decimal.optional(),
+        requiredRole: z.enum([
+          'OWNER', 'ADMIN', 'ACCOUNTANT', 'APPROVER',
+          'BOOKKEEPER', 'SALES', 'READ_ONLY', 'EXTERNAL_AUDITOR',
+        ]),
+        sequence: z.number().int().min(1),
+      }),
+      body,
+    );
+
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) => createApprovalRule(tx, ctx, input));
   }
 
   // ---- Banking ------------------------------------------------------------
