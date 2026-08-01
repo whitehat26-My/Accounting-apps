@@ -117,6 +117,101 @@ export function buildCreditNoteJournal(
   };
 }
 
+export interface DebitNotePostingAccounts {
+  readonly accountsPayableId: string;
+  /** Only needed when a line's tax was RECOVERABLE. See below. */
+  readonly taxClaimableId?: string;
+}
+
+/**
+ * Debit note — a supplier's credit to us, and the mirror of
+ * `buildPurchaseJournal`:
+ *
+ *   Dr Accounts Payable  (gross)
+ *   Cr Expense/Asset     (net, PLUS any tax that was absorbed as a cost)
+ *   Cr SST Claimable     (only the RECOVERABLE portion)
+ *
+ * ---------------------------------------------------------------------------
+ * THE COST/RECOVERABLE SPLIT MUST BE REVERSED THE SAME WAY IT WAS BOOKED.
+ *
+ * When the original bill's tax was a COST, it went into the expense account —
+ * so crediting only the net here would leave the absorbed tax sitting in the
+ * expense forever, understating the credit and overstating the year's costs by
+ * exactly the tax. When it was RECOVERABLE, it went to the claimable asset and
+ * has to come back out of the asset, not out of the expense.
+ *
+ * Getting this backwards produces a debit note that balances perfectly and
+ * misstates two accounts, which is the hardest kind of error to notice.
+ * ---------------------------------------------------------------------------
+ */
+export function buildDebitNoteJournal(
+  doc: DocumentComputation,
+  accounts: DebitNotePostingAccounts,
+  ctx: CreditNotePostingContext,
+): JournalEntryDraft | null {
+  if (doc.total.isZero()) return null;
+
+  const lines: JournalLineDraft[] = [];
+
+  const expenseByAccount = new Map<string, Money>();
+  for (const line of doc.lines) {
+    const absorbed =
+      line.inputTreatment === 'COST' ? line.netAmount.add(line.taxAmount) : line.netAmount;
+    const current = expenseByAccount.get(line.accountId) ?? Money.zero(doc.currency);
+    expenseByAccount.set(line.accountId, current.add(absorbed));
+  }
+
+  lines.push({
+    accountId: accounts.accountsPayableId,
+    side: 'DEBIT',
+    amount: doc.total,
+    baseAmount: doc.total,
+    description: 'Accounts payable debited',
+    ...(ctx.contactId !== undefined ? { contactId: ctx.contactId } : {}),
+  });
+
+  for (const [accountId, amount] of expenseByAccount) {
+    if (amount.isZero()) continue;
+    lines.push({
+      accountId,
+      side: 'CREDIT',
+      amount,
+      baseAmount: amount,
+      description: 'Purchase credited',
+      ...(ctx.contactId !== undefined ? { contactId: ctx.contactId } : {}),
+    });
+  }
+
+  const recoverable = doc.lines
+    .filter((l) => l.inputTreatment === 'RECOVERABLE')
+    .reduce((acc, l) => acc.add(l.taxAmount), Money.zero(doc.currency));
+
+  if (!recoverable.isZero()) {
+    if (accounts.taxClaimableId === undefined) {
+      throw new Error(
+        'A tax code on this debit note is RECOVERABLE but no SST_CLAIMABLE account is ' +
+          'configured. Map the SST_CLAIMABLE posting role before reversing recoverable input tax.',
+      );
+    }
+    lines.push({
+      accountId: accounts.taxClaimableId,
+      side: 'CREDIT',
+      amount: recoverable,
+      baseAmount: recoverable,
+      description: 'Recoverable input tax reversed',
+    });
+  }
+
+  return {
+    entryDate: ctx.entryDate,
+    ...(ctx.description !== undefined ? { description: ctx.description } : {}),
+    sourceModule: 'PURCHASES',
+    sourceDocumentType: ctx.documentType,
+    sourceDocumentId: ctx.documentId,
+    lines,
+  };
+}
+
 export type CreditNoteViolation =
   | { readonly code: 'INVALID_CREDIT_DATE'; readonly value: string }
   | { readonly code: 'ZERO_VALUE_CREDIT' }

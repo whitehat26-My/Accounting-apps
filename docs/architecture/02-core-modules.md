@@ -154,6 +154,32 @@ flowchart TB
 | `ApprovalRule` / `ApprovalRequest` | threshold, approver_role, sequence, decision, decided_at, comment |
 | `DocumentCapture` | file_id, ocr_status, extracted_json, confidence_scores, review_status, created_bill_id |
 
+**Implementation status.** Bills, supplier payments, debit notes, AP ageing, AP revaluation and the
+withholding *mechanism* are built (`packages/db/migrations/0010_purchases.sql`,
+`packages/db/src/bill.ts`, `supplier-payment.ts`, `debit-note.ts`). Four decisions worth knowing
+before extending this module:
+
+- **`bill_no` is UNIQUE per `(tenant_id, supplier_id)`, never per tenant.** It is the supplier's
+  own number. Two suppliers both using `INV-001` is normal; a tenant-wide unique index rejects the
+  second one, which surfaces as a customer who cannot enter a bill. Our gapless identifier is
+  `internal_ref`, allocated through `allocate_document_number('BILL')`.
+- **`payment_allocation` is an exclusive arc, not a polymorphic key** — nullable `invoice_id` and
+  `bill_id`, each with a real composite foreign key, plus
+  `CHECK (num_nonnulls(invoice_id, bill_id) = 1)`. Referential integrity survives on both arms.
+- **Withholding discharges the payable at the GROSS.** `Dr AP gross / Cr Bank net / Cr WHT payable
+  withheld`. Debiting only the net would leave the bill permanently part-paid and break ledger
+  invariant #7 forever.
+- **`wht_rate` ships EMPTY, and that is not an oversight.** Malaysian withholding rates depend on
+  the payment type and on any applicable double taxation agreement; they must be verified against
+  LHDN. A payment that asks to withhold with no configured rate fails loudly rather than
+  withholding zero, because the payer carries the liability for under-withholding.
+
+**Deferred within M3**, stated rather than implied: purchase orders and three-way match, OCR
+document capture, expense claims, the approval workflow (needs M0 — threshold routing without users
+or roles would point at bare UUIDs, and separation of duties cannot be enforced by a system with no
+concept of two people), batch payment file export, self-billed e-invoice generation, and the WHT
+rates plus CP37 filing artefacts.
+
 ---
 
 ## M4 · Banking & Reconciliation

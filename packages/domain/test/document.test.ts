@@ -261,6 +261,36 @@ describe('purchase journal — SST input tax is a cost, not an asset', () => {
     expect(entry.lines.find((l) => l.accountId === 'acc-sst-claimable')!.amount.toDecimalString()).toBe('60.0000');
     expect(entry.lines.find((l) => l.accountId === 'acc-ap')!.amount.toDecimalString()).toBe('2140.0000');
   });
+
+  it('names the missing configuration when a recoverable line has no claimable account', () => {
+    // Before the guard this pushed a line with `accountId: undefined` and blew
+    // up much later as a NOT NULL violation naming a column, which tells the
+    // person reading the log nothing about what they need to configure.
+    const d = unwrap(
+      doc([line({ accountId: 'acc-expense', taxCodeId: 'tc-rec' })], { direction: 'INPUT' }),
+    );
+    expect(() =>
+      buildPurchaseJournal(
+        d,
+        { accountsPayableId: 'acc-ap' },
+        { entryDate: '2026-08-01', documentType: 'BILL', documentId: 'bill-1' },
+      ),
+    ).toThrow(/SST_CLAIMABLE/);
+  });
+
+  it('a bill with no recoverable tax needs no claimable account at all', () => {
+    // The common Malaysian case. Requiring the account here would force every
+    // tenant to invent an asset they will never post to.
+    const d = unwrap(
+      doc([line({ accountId: 'acc-expense', taxCodeId: 'tc-svc' })], { direction: 'INPUT' }),
+    );
+    const entry = buildPurchaseJournal(
+      d,
+      { accountsPayableId: 'acc-ap' },
+      { entryDate: '2026-08-01', documentType: 'BILL', documentId: 'bill-1' },
+    )!;
+    expect(validateJournalEntry(entry, MYR).ok).toBe(true);
+  });
 });
 
 describe('every generated document produces a balanced journal', () => {

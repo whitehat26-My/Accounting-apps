@@ -177,8 +177,14 @@ export interface SalesPostingAccounts {
 
 export interface PurchasePostingAccounts {
   readonly accountsPayableId: string;
-  /** Only used when a tax code is RECOVERABLE. */
-  readonly taxClaimableId: string;
+  /**
+   * Only used when a tax code is RECOVERABLE — which under SST is the
+   * exception, not the rule. Optional because a tenant that only ever incurs
+   * SST as a cost has no such account and should not be forced to invent one;
+   * `buildPurchaseJournal` throws by name if a recoverable line arrives
+   * without it.
+   */
+  readonly taxClaimableId?: string;
 }
 
 export interface PostingContext {
@@ -304,6 +310,15 @@ export function buildPurchaseJournal(
   );
 
   if (!recoverable.isZero()) {
+    // Without this the line would be pushed with `accountId: undefined` and
+    // surface much later as a NOT NULL violation naming a column, not the
+    // configuration that is actually missing.
+    if (accounts.taxClaimableId === undefined) {
+      throw new Error(
+        'A tax code on this document is RECOVERABLE but no SST_CLAIMABLE account is ' +
+          'configured. Map the SST_CLAIMABLE posting role before entering recoverable input tax.',
+      );
+    }
     lines.push({
       accountId: accounts.taxClaimableId,
       side: 'DEBIT',

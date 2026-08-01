@@ -89,6 +89,7 @@ export interface Tenant {
   readonly accounts: Record<string, string>;
   readonly taxCodes: Record<string, string>;
   readonly customerId: string;
+  readonly supplierId: string;
 }
 
 /**
@@ -123,6 +124,14 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
       // same SOFP line as AR — see packages/domain/src/revaluation.ts.
       ['1190', 'AR Currency Revaluation', 'ASSET'],
       ['6910', 'Unrealised Foreign Exchange Gain/Loss', 'EXPENSE'],
+      // The payables mirrors of 1190 and 1100's revaluation pairing.
+      ['2090', 'AP Currency Revaluation', 'LIABILITY'],
+      // Recoverable input tax. Under SST this is the EXCEPTION — input tax is
+      // normally absorbed as a cost — but the account has to exist for the
+      // RECOVERABLE branch of buildPurchaseJournal to be exercisable at all.
+      ['1150', 'SST Claimable', 'ASSET'],
+      // Withholding retained from a payment and owed to LHDN until remitted.
+      ['2200', 'Withholding Tax Payable', 'LIABILITY'],
     ];
 
     const accounts: Record<string, string> = {};
@@ -166,7 +175,9 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
         VALUES (${tenantId}, 'JOURNAL', 'JE-', 1, 5),
                (${tenantId}, 'INVOICE', 'INV-', 1, 5),
                (${tenantId}, 'PAYMENT', 'PAY-', 1, 5),
-               (${tenantId}, 'CREDIT_NOTE', 'CN-', 1, 5)
+               (${tenantId}, 'CREDIT_NOTE', 'CN-', 1, 5),
+               (${tenantId}, 'BILL', 'BILL-', 1, 5),
+               (${tenantId}, 'DEBIT_NOTE', 'DN-', 1, 5)
     `;
 
     // Which account plays which structural role.
@@ -177,7 +188,10 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, 'SST_PAYABLE',  ${accounts['2100']!}),
                (${tenantId}, 'FX_GAIN_LOSS',   ${accounts['6900']!}),
                (${tenantId}, 'AR_REVALUATION', ${accounts['1190']!}),
-               (${tenantId}, 'UNREALISED_FX',  ${accounts['6910']!})
+               (${tenantId}, 'UNREALISED_FX',  ${accounts['6910']!}),
+               (${tenantId}, 'AP_REVALUATION', ${accounts['2090']!}),
+               (${tenantId}, 'SST_CLAIMABLE',  ${accounts['1150']!}),
+               (${tenantId}, 'WHT_PAYABLE',    ${accounts['2200']!})
     `;
 
     // Tags let the GLOBAL statement templates address this chart without
@@ -189,7 +203,10 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, ${accounts['1100']!}, 'trade_receivables'),
                (${tenantId}, ${accounts['1190']!}, 'trade_receivables'),
                (${tenantId}, ${accounts['2000']!}, 'trade_payables'),
-               (${tenantId}, ${accounts['2100']!}, 'trade_payables')
+               (${tenantId}, ${accounts['2100']!}, 'trade_payables'),
+               (${tenantId}, ${accounts['2200']!}, 'trade_payables'),
+               (${tenantId}, ${accounts['1150']!}, 'trade_receivables'),
+               (${tenantId}, ${accounts['2090']!}, 'ap_revaluation')
     `;
 
     // Tax codes. FIXTURES ONLY — not authoritative Malaysian rates. The point
@@ -210,6 +227,22 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, ${svc!.id}, 800, '2024-03-01', NULL)
     `;
 
+    // A RECOVERABLE code. FIXTURES ONLY, and deliberately not representative:
+    // under SST input tax is normally a COST. This exists so the recoverable
+    // branch of buildPurchaseJournal has something to exercise it, and so the
+    // "recoverable without a claimable account" failure can be provoked.
+    const [rec] = await tx<{ id: string }[]>`
+        INSERT INTO tax_code (tenant_id, code, name, regime, input_treatment)
+        VALUES (${tenantId}, 'SST-REC', 'Recoverable input tax', 'SST_SALES', 'RECOVERABLE')
+        RETURNING id
+    `;
+    taxCodes['SST-REC'] = rec!.id;
+
+    await tx`
+        INSERT INTO tax_rate_version (tenant_id, tax_code_id, rate_basis_points, valid_from, valid_to)
+        VALUES (${tenantId}, ${rec!.id}, 600, '2018-09-01', NULL)
+    `;
+
     const [none] = await tx<{ id: string }[]>`
         INSERT INTO tax_code (tenant_id, code, name, regime, input_treatment)
         VALUES (${tenantId}, 'NONE', 'Out of scope', 'NONE', 'COST')
@@ -228,6 +261,17 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
         RETURNING id
     `;
 
+    // A supplier. Separate from the customer on purpose: a single contact
+    // flagged as both would let a test accidentally settle a bill against an
+    // invoice and still look green.
+    const [supplier] = await tx<{ id: string }[]>`
+        INSERT INTO contact (tenant_id, name, is_supplier, tin, id_type, id_value,
+                             payment_terms_days, default_currency)
+        VALUES (${tenantId}, 'Selangor Supplies Sdn Bhd', TRUE, 'C1234567890',
+                'BRN', '201901019876', 30, 'MYR')
+        RETURNING id
+    `;
+
     return {
       tenantId,
       userId,
@@ -236,6 +280,7 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
       accounts,
       taxCodes,
       customerId: customer!.id,
+      supplierId: supplier!.id,
     };
   });
 }

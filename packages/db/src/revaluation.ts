@@ -1,5 +1,5 @@
 import {
-  buildRevaluationJournal,
+  buildCombinedRevaluationJournal,
   isErr,
   Money,
   Rate,
@@ -14,6 +14,7 @@ import {
 import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
 import { loadBaseCurrency } from './invoice.js';
+import { toIsoDate } from './internal.js';
 
 /**
  * Period-end unrealised FX revaluation.
@@ -64,6 +65,7 @@ export interface RevaluationResult {
   readonly reversalEntryId: string | null;
   readonly status: 'POSTED' | 'NO_ADJUSTMENT';
   readonly byCurrency: readonly {
+    side: 'RECEIVABLE' | 'PAYABLE';
     currency: string;
     outstanding: string;
     carryingBase: string;
@@ -142,26 +144,58 @@ export async function runRevaluation(
   const accounts = await loadRevaluationAccounts(tx, ctx);
 
   // ---- Gather open monetary items -----------------------------------------
-  const items = await loadOpenReceivables(tx, ctx, asOfDate, baseCurrency);
-  const currencies = [...new Set(items.map((i) => i.outstanding.currency))];
+  // Both sides of the balance sheet. A tenant that buys in USD and sells in
+  // MYR has no FX exposure on receivables at all, and revaluing only
+  // receivables would report none — while the payables exposure sat unrevalued
+  // and the SOFP overstated or understated the liability by the whole rate move.
+  const receivables = await loadOpenReceivables(tx, ctx, asOfDate, baseCurrency);
+  const payables = await loadOpenPayables(tx, ctx, asOfDate, baseCurrency);
+
+  const currencies = [
+    ...new Set([...receivables, ...payables].map((i) => i.outstanding.currency)),
+  ];
   const closingRates = await resolveClosingRates(
     tx, ctx, currencies, baseCurrency, asOfDate, input.closingRates,
   );
 
   // ---- Compute (pure domain) ----------------------------------------------
-  const computed = revalue(items, closingRates, baseCurrency, asOfDate);
-  if (isErr(computed)) {
-    throw new RevaluationError('REVALUATION_INVALID', 'Revaluation failed validation', computed.error);
+  // Payables are fed as NEGATIVE outstanding: the whole system is
+  // debit-positive, and a credit-natured balance carries a negative sign. The
+  // difference then falls out with the right sign and `revalue()` needs no
+  // notion of which side of the balance sheet it is looking at.
+  const computedAr = revalue(receivables, closingRates, baseCurrency, asOfDate);
+  if (isErr(computedAr)) {
+    throw new RevaluationError('REVALUATION_INVALID', 'Revaluation failed validation', computedAr.error);
   }
-  const revaluation = computed.value;
+  const computedAp = revalue(payables, closingRates, baseCurrency, asOfDate);
+  if (isErr(computedAp)) {
+    throw new RevaluationError('REVALUATION_INVALID', 'Revaluation failed validation', computedAp.error);
+  }
+
+  const revaluation = computedAr.value;
+  const payablesRevaluation = computedAp.value;
+  const totalDifference = revaluation.totalDifference.add(
+    payablesRevaluation.totalDifference,
+  );
 
   // ---- Post ----------------------------------------------------------------
-  const journalDraft = buildRevaluationJournal(revaluation, accounts, {
-    entryDate: asOfDate,
-    description: `Unrealised FX revaluation at ${asOfDate}`,
-    documentType: 'REVALUATION',
-    documentId: input.fiscalPeriodId,
-  });
+  const journalDraft = buildCombinedRevaluationJournal(
+    [
+      { revaluation, revaluationAccountId: accounts.revaluationAccountId },
+      {
+        revaluation: payablesRevaluation,
+        revaluationAccountId: accounts.payablesRevaluationAccountId,
+      },
+    ],
+    accounts.unrealisedFxAccountId,
+    {
+      entryDate: asOfDate,
+      description: `Unrealised FX revaluation at ${asOfDate}`,
+      documentType: 'REVALUATION',
+      documentId: input.fiscalPeriodId,
+    },
+    baseCurrency,
+  );
 
   let journalEntryId: string | null = null;
   let reversalEntryId: string | null = null;
@@ -209,20 +243,25 @@ export async function runRevaluation(
           journal_entry_id, reversal_entry_id, status, idempotency_key, run_by
       ) VALUES (
           ${ctx.tenantId}, ${input.fiscalPeriodId}, ${asOfDate}, ${baseCurrency},
-          ${revaluation.totalDifference.toDecimalString()},
+          ${totalDifference.toDecimalString()},
           ${journalEntryId}, ${reversalEntryId}, ${status},
           ${input.idempotencyKey}, ${ctx.userId ?? null}
       )
       RETURNING id
   `;
 
-  for (const line of revaluation.byCurrency) {
+  const allLines = [
+    ...revaluation.byCurrency.map((l) => ({ side: 'RECEIVABLE' as const, line: l })),
+    ...payablesRevaluation.byCurrency.map((l) => ({ side: 'PAYABLE' as const, line: l })),
+  ];
+
+  for (const { side, line } of allLines) {
     await tx`
         INSERT INTO revaluation_line (
-            tenant_id, run_id, currency, item_count, outstanding,
+            tenant_id, run_id, side, currency, item_count, outstanding,
             carrying_base, closing_rate, closing_base, difference
         ) VALUES (
-            ${ctx.tenantId}, ${run!.id}, ${line.currency}, ${line.itemCount},
+            ${ctx.tenantId}, ${run!.id}, ${side}, ${line.currency}, ${line.itemCount},
             ${line.outstanding.toDecimalString()},
             ${line.carryingBase.toDecimalString()},
             ${line.closingRate.toDecimalString()},
@@ -235,17 +274,18 @@ export async function runRevaluation(
   return {
     id: run!.id,
     asOfDate,
-    totalDifference: revaluation.totalDifference.toDecimalString(),
+    totalDifference: totalDifference.toDecimalString(),
     journalEntryId,
     reversalEntryId,
     status,
-    byCurrency: revaluation.byCurrency.map((l) => ({
-      currency: l.currency,
-      outstanding: l.outstanding.toDecimalString(),
-      carryingBase: l.carryingBase.toDecimalString(),
-      closingRate: l.closingRate.toDecimalString(),
-      closingBase: l.closingBase.toDecimalString(),
-      difference: l.difference.toDecimalString(),
+    byCurrency: allLines.map(({ side, line }) => ({
+      side,
+      currency: line.currency,
+      outstanding: line.outstanding.toDecimalString(),
+      carryingBase: line.carryingBase.toDecimalString(),
+      closingRate: line.closingRate.toDecimalString(),
+      closingBase: line.closingBase.toDecimalString(),
+      difference: line.difference.toDecimalString(),
     })),
     replayed: false,
   };
@@ -280,6 +320,55 @@ async function loadOpenReceivables(
   return rows.map((r) => ({
     reference: r.invoice_no,
     outstanding: Money.fromDecimal(r.amount_due, r.currency),
+    bookedRate: Rate.fromDecimal(r.fx_rate),
+  }));
+}
+
+/**
+ * Open payables as at the reporting date, as NEGATIVE outstanding amounts.
+ *
+ * ---------------------------------------------------------------------------
+ * THE SIGN IS THE WHOLE TRICK, SO IT IS WORTH BEING EXPLICIT ABOUT.
+ *
+ * Everything in this system is debit-positive. A payable is credit-natured, so
+ * it carries a negative sign, and `revalue()` — which knows nothing about
+ * balance sheets — then produces a difference with the correct sign for free:
+ *
+ *   Owe USD 1,000 booked at 4.70 (carrying -4,700 base).
+ *   Closing rate 4.80 -> closing base -4,800.
+ *   Difference = -4,800 - (-4,700) = -100.
+ *
+ * A negative difference credits the AP revaluation account and debits the
+ * unrealised P&L: the liability grew, so we are worse off. Which is right — a
+ * strengthening dollar makes a dollar debt more expensive.
+ *
+ * Flipping this sign is the single easiest way to turn a period-end loss into
+ * a reported gain, which is why the arithmetic is spelled out here and
+ * asserted directly in the tests rather than inferred from a passing balance.
+ * ---------------------------------------------------------------------------
+ */
+async function loadOpenPayables(
+  tx: Tx,
+  ctx: TenantContext,
+  asOfDate: string,
+  baseCurrency: Currency,
+): Promise<RevaluationItem[]> {
+  const rows = await tx<
+    { internal_ref: string; currency: string; amount_due: string; fx_rate: string }[]
+  >`
+      SELECT internal_ref, currency, amount_due, fx_rate
+        FROM bill
+       WHERE tenant_id = ${ctx.tenantId}
+         AND status IN ('ENTERED','PART_PAID')
+         AND amount_due > 0
+         AND bill_date <= ${asOfDate}::date
+         AND currency <> ${baseCurrency}
+       ORDER BY internal_ref
+  `;
+
+  return rows.map((r) => ({
+    reference: r.internal_ref,
+    outstanding: Money.fromDecimal(r.amount_due, r.currency).negate(),
     bookedRate: Rate.fromDecimal(r.fx_rate),
   }));
 }
@@ -323,13 +412,17 @@ async function resolveClosingRates(
 async function loadRevaluationAccounts(
   tx: Tx,
   ctx: TenantContext,
-): Promise<{ revaluationAccountId: string; unrealisedFxAccountId: string }> {
+): Promise<{
+  revaluationAccountId: string;
+  payablesRevaluationAccountId: string;
+  unrealisedFxAccountId: string;
+}> {
   const rows = await tx<{ role: string; account_id: string }[]>`
       SELECT role, account_id FROM posting_account_map WHERE tenant_id = ${ctx.tenantId}
   `;
   const map = new Map(rows.map((r) => [r.role, r.account_id]));
 
-  for (const role of ['AR_REVALUATION', 'UNREALISED_FX'] as const) {
+  for (const role of ['AR_REVALUATION', 'AP_REVALUATION', 'UNREALISED_FX'] as const) {
     if (!map.get(role)) {
       throw new RevaluationError(
         'NO_POSTING_ACCOUNTS',
@@ -340,6 +433,7 @@ async function loadRevaluationAccounts(
 
   return {
     revaluationAccountId: map.get('AR_REVALUATION')!,
+    payablesRevaluationAccountId: map.get('AP_REVALUATION')!,
     unrealisedFxAccountId: map.get('UNREALISED_FX')!,
   };
 }
@@ -351,17 +445,19 @@ async function loadLines(
 ): Promise<RevaluationResult['byCurrency']> {
   const rows = await tx<
     {
-      currency: string; outstanding: string; carrying_base: string;
-      closing_rate: string; closing_base: string; difference: string;
+      side: 'RECEIVABLE' | 'PAYABLE'; currency: string; outstanding: string;
+      carrying_base: string; closing_rate: string; closing_base: string;
+      difference: string;
     }[]
   >`
-      SELECT currency, outstanding, carrying_base, closing_rate, closing_base, difference
+      SELECT side, currency, outstanding, carrying_base, closing_rate, closing_base, difference
         FROM revaluation_line
        WHERE tenant_id = ${ctx.tenantId} AND run_id = ${runId}
-       ORDER BY currency
+       ORDER BY side, currency
   `;
 
   return rows.map((r) => ({
+    side: r.side,
     currency: r.currency,
     outstanding: r.outstanding,
     carryingBase: r.carrying_base,
@@ -412,6 +508,3 @@ export async function receivablesAtClosingRate(
   };
 }
 
-function toIsoDate(value: Date | string): string {
-  return typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
-}

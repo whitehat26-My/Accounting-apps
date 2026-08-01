@@ -225,6 +225,90 @@ export function buildRevaluationJournal(
   };
 }
 
+/** One side of a two-sided revaluation and the account its adjustment lands in. */
+export interface RevaluationSide {
+  readonly revaluation: Revaluation;
+  readonly revaluationAccountId: string;
+}
+
+/**
+ * Build one entry covering several monetary-item populations at once —
+ * receivables and payables at a period end.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY ONE ENTRY WITH SEVERAL BALANCE-SHEET LINES, RATHER THAN ONE ENTRY EACH
+ *
+ * A period-end revaluation is a single event with a single reversal, and the
+ * schema's guarantee that a posted run has both an entry AND its reversal is
+ * worth keeping. But the two sides cannot share a balance-sheet line: a
+ * receivables adjustment belongs next to AR and a payables adjustment next to
+ * AP. Netting them would park a payables movement inside trade receivables.
+ *
+ * So each side gets its own balance-sheet line, and the P&L line is the
+ * BALANCING FIGURE — the same technique the settlement journal uses. Nothing
+ * here decides a sign from a direction, so no side can silently invert.
+ * ---------------------------------------------------------------------------
+ *
+ * Returns null when nothing moved on any side.
+ */
+export function buildCombinedRevaluationJournal(
+  sides: readonly RevaluationSide[],
+  unrealisedFxAccountId: string,
+  ctx: RevaluationPostingContext,
+  baseCurrency: Currency,
+): JournalEntryDraft | null {
+  const lines: JournalLineDraft[] = [];
+
+  for (const side of sides) {
+    const total = side.revaluation.totalDifference;
+    if (total.isZero()) continue;
+    const amount = total.abs();
+    lines.push({
+      accountId: side.revaluationAccountId,
+      side: total.isPositive() ? 'DEBIT' : 'CREDIT',
+      amount,
+      baseAmount: amount,
+      description: `Foreign currency revaluation at ${side.revaluation.asOfDate}`,
+    });
+  }
+
+  if (lines.length === 0) return null;
+
+  const debits = lines
+    .filter((l) => l.side === 'DEBIT')
+    .reduce((acc, l) => acc.add(l.baseAmount), Money.zero(baseCurrency));
+  const credits = lines
+    .filter((l) => l.side === 'CREDIT')
+    .reduce((acc, l) => acc.add(l.baseAmount), Money.zero(baseCurrency));
+
+  const imbalance = debits.subtract(credits);
+
+  // Only reachable when the sides exactly offset: a gain on receivables
+  // matched to the sen by a loss on payables. The balance sheet moved on both
+  // lines but the P&L did not, so there is no unrealised gain or loss to post.
+  if (!imbalance.isZero()) {
+    const gain = imbalance.isPositive();
+    lines.push({
+      accountId: unrealisedFxAccountId,
+      side: gain ? 'CREDIT' : 'DEBIT',
+      amount: imbalance.abs(),
+      baseAmount: imbalance.abs(),
+      description: gain
+        ? 'Unrealised foreign exchange gain'
+        : 'Unrealised foreign exchange loss',
+    });
+  }
+
+  return {
+    entryDate: ctx.entryDate,
+    ...(ctx.description !== undefined ? { description: ctx.description } : {}),
+    sourceModule: 'SYSTEM',
+    sourceDocumentType: ctx.documentType,
+    sourceDocumentId: ctx.documentId,
+    lines,
+  };
+}
+
 /**
  * The date the revaluation reverses on: the day after the reporting date.
  *

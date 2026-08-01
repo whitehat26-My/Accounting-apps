@@ -1,6 +1,8 @@
 import {
+  ageItems,
   autoAllocate,
   buildSettlementJournal,
+  DEFAULT_AGEING_BUCKETS,
   isErr,
   Money,
   Rate,
@@ -8,6 +10,9 @@ import {
   toBase,
   validateJournalEntry,
   validateReceipt,
+  type AgeingBucket,
+  type AgeingItem,
+  type AgeingReport,
   type AllocationStrategy,
   type OpenDocument,
   type PaymentMethod,
@@ -16,6 +21,7 @@ import {
 import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
 import { loadBaseCurrency, resolveRate } from './invoice.js';
+import { toIsoDate } from './internal.js';
 
 /**
  * PaymentService.recordReceipt() — money in against open invoices.
@@ -251,8 +257,8 @@ export async function recordReceipt(
 
   for (const allocation of receipt.allocations) {
     await tx`
-        INSERT INTO payment_allocation (tenant_id, payment_id, target_type, target_id, amount)
-        VALUES (${ctx.tenantId}, ${paymentId}, 'INVOICE', ${allocation.documentId},
+        INSERT INTO payment_allocation (tenant_id, payment_id, invoice_id, amount)
+        VALUES (${ctx.tenantId}, ${paymentId}, ${allocation.documentId},
                 ${allocation.amount.toDecimalString()})
     `;
 
@@ -288,34 +294,111 @@ export async function recordReceipt(
 }
 
 /**
- * Aged receivables, bucketed the way a Malaysian SME expects to see them.
- * `asOfDate` is passed in rather than read from a clock so the report is
- * reproducible and the function stays testable.
+ * Aged receivables as at a date — genuinely as at that date.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT THIS USED TO DO, AND WHY IT WAS WRONG
+ *
+ * The previous version bucketed by `asOfDate` but measured `invoice.amount_due`
+ * — today's live balance — with no filter on the issue date. So an aged report
+ * run for 31/03 showed March's buckets against June's balances: invoices
+ * issued in April appeared, invoices settled in May had vanished, and the
+ * total could not tie to the AR control account at any date at all. An aged
+ * report that does not tie to the control account is not evidence of anything,
+ * and this is the report an auditor asks for first.
+ *
+ * The fix reconstructs the balance at the date from the append-only history
+ * that was already there: the invoice as issued, less payments allocated on or
+ * before the date, less credit notes allocated on or before the date. `payment`
+ * is append-only and credit-note allocations carry their date, so the past is
+ * genuinely recoverable rather than approximated.
+ * ---------------------------------------------------------------------------
+ *
+ * Valued in BASE currency at the booked rate, for the same reason
+ * `outstandingReceivables()` is: so the total is comparable to the control
+ * account. Bucketing itself lives in `packages/domain/src/ageing.ts` — one
+ * definition of "31-60 days", shared with payables.
  */
 export async function agedReceivables(
   tx: Tx,
   ctx: TenantContext,
   asOfDate: string,
-): Promise<{ bucket: string; total: string; count: number }[]> {
-  const rows = await tx<{ bucket: string; total: string; count: string }[]>`
-      SELECT CASE
-               WHEN ${asOfDate}::date <= due_date                       THEN 'CURRENT'
-               WHEN ${asOfDate}::date - due_date BETWEEN 1 AND 30       THEN '1_30'
-               WHEN ${asOfDate}::date - due_date BETWEEN 31 AND 60      THEN '31_60'
-               WHEN ${asOfDate}::date - due_date BETWEEN 61 AND 90      THEN '61_90'
-               ELSE '90_PLUS'
-             END                       AS bucket,
-             SUM(amount_due)::text     AS total,
-             COUNT(*)::text            AS count
-        FROM invoice
-       WHERE tenant_id = ${ctx.tenantId}
-         AND status IN ('ISSUED','PART_PAID')
-         AND amount_due > 0
-       GROUP BY 1
-       ORDER BY 1
+  buckets: readonly AgeingBucket[] = DEFAULT_AGEING_BUCKETS,
+): Promise<AgeingReport> {
+  const items = await openReceivablesAsAt(tx, ctx, asOfDate);
+  const baseCurrency = await loadBaseCurrency(tx, ctx);
+  return ageItems(items, asOfDate, baseCurrency, buckets);
+}
+
+/**
+ * Open receivables reconstructed as at a date, in base currency at booked rates.
+ *
+ * Exported because ledger invariant #6 is asserted against exactly this number
+ * at a past date, and a test that recomputes it independently would be testing
+ * its own copy of the logic.
+ */
+export async function openReceivablesAsAt(
+  tx: Tx,
+  ctx: TenantContext,
+  asOfDate: string,
+): Promise<AgeingItem[]> {
+  const rows = await tx<
+    {
+      id: string;
+      invoice_no: string;
+      contact_id: string;
+      due_date: Date;
+      outstanding_base: string;
+    }[]
+  >`
+      SELECT i.id,
+             i.invoice_no,
+             i.contact_id,
+             i.due_date,
+             ROUND(
+                 (i.total
+                  - COALESCE(paid.amount, 0)
+                  - COALESCE(credited.amount, 0)) * i.fx_rate, 4
+             )::text AS outstanding_base
+        FROM invoice i
+        LEFT JOIN LATERAL (
+             SELECT SUM(a.amount) AS amount
+               FROM payment_allocation a
+               JOIN payment p
+                 ON p.tenant_id = a.tenant_id AND p.id = a.payment_id
+              WHERE a.tenant_id = i.tenant_id
+                AND a.invoice_id = i.id
+                AND p.payment_date <= ${asOfDate}::date
+        ) paid ON TRUE
+        LEFT JOIN LATERAL (
+             SELECT SUM(ca.amount) AS amount
+               FROM credit_note_allocation ca
+               JOIN credit_note cn
+                 ON cn.tenant_id = ca.tenant_id AND cn.id = ca.credit_note_id
+              WHERE ca.tenant_id = i.tenant_id
+                AND ca.invoice_id = i.id
+                AND cn.status = 'ISSUED'
+                AND cn.credit_date <= ${asOfDate}::date
+        ) credited ON TRUE
+       WHERE i.tenant_id = ${ctx.tenantId}
+         AND i.status <> 'DRAFT'
+         AND i.status <> 'VOIDED'
+         /* Issued after the report date: it did not exist yet. */
+         AND i.issue_date <= ${asOfDate}::date
+       ORDER BY i.due_date, i.invoice_no
   `;
 
-  return rows.map((r) => ({ bucket: r.bucket, total: r.total, count: Number(r.count) }));
+  const baseCurrency = await loadBaseCurrency(tx, ctx);
+
+  return rows
+    .map((r) => ({
+      documentId: r.id,
+      documentNo: r.invoice_no,
+      contactId: r.contact_id,
+      dueDate: toIsoDate(r.due_date),
+      outstanding: Money.fromDecimal(r.outstanding_base, baseCurrency),
+    }))
+    .filter((i) => !i.outstanding.isZero());
 }
 
 async function resolveSettlementRate(
@@ -362,6 +445,3 @@ async function loadArAccount(tx: Tx, ctx: TenantContext): Promise<string> {
   return row.account_id;
 }
 
-function toIsoDate(value: Date | string): string {
-  return typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
-}

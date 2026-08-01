@@ -14,6 +14,7 @@ import {
   type ValidatedEInvoice,
 } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
+import { toIsoDate } from './internal.js';
 
 /**
  * MyInvois submission lifecycle — M6, persistence layer.
@@ -702,10 +703,6 @@ async function loadBuyer(tx: Tx, ctx: TenantContext, contactId: string): Promise
     ...(contact?.email ? { email: contact.email } : {}),
     ...(contact?.phone ? { phone: contact.phone } : {}),
   };
-}
-
-function toIsoDate(value: Date | string): string {
-  return typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
 }
 
 export type { EInvoiceDocumentType };

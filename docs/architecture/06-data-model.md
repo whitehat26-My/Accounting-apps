@@ -346,3 +346,10 @@ Encode these as property-based tests (`fast-check`) over generated transaction s
 | 14 | No query executed without `app.tenant_id` set returns any tenant row |
 
 Invariant 14 is the one to write first. It is the test that proves the isolation boundary works, and it should run against every table in the schema.
+
+**Coverage so far.** 1–7 and 9–14 are tested; **8 is the only one still blocked**, on M4 Banking.
+Invariants 6 and 7 both compare the subledger to the control account in BASE currency at BOOKED
+rates (`amount_due * fx_rate`) — summing `amount_due` across currencies adds ringgit to dollars and
+reconciles to nothing. Invariant 7 additionally holds through partial payment, debit notes, and a
+withholding payment that discharges the payable at the gross while only the net leaves the bank
+(`packages/db/test/bill.test.ts`).

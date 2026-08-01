@@ -36,7 +36,7 @@ Use this shape for any feature request. Sections 1, 3, 4 and 6 are mandatory; th
 You will get a `createInvoice` function with an ORM you don't use, floats for money, no tenant scoping, no tax engine call, and no ledger posting.
 
 **Strong:**
-> **Context:** Module M2 (Sales & AR) in the Emil codebase. `packages/domain` already has `Money`, `TaxEngine.compute()`, and `LedgerService.post()`. Drizzle schema for `invoice` / `invoice_line_item` exists in `packages/db`.
+> **Context:** Module M2 (Sales & AR) in the Emil codebase. `packages/domain` already has `Money`, `TaxEngine.compute()`, and `LedgerService.post()`. The SQL schema for `invoice` / `invoice_line` exists in `packages/db/migrations`.
 >
 > **Task:** Implement `InvoiceService.issue()` — the transition from `DRAFT` to `ISSUED`.
 >
@@ -109,7 +109,7 @@ That last parenthetical is the kind of detail worth encoding permanently: 403 on
 ### C. Database migration
 
 ```
-Write a Drizzle migration for <change>.
+Write a SQL migration for <change>.
 
 Rules:
 - Forward-only. Expand/contract — never a breaking change in a single step.
@@ -276,7 +276,7 @@ Architecture: docs/architecture/. Read the relevant document before implementing
    for accounting dates.
 
 ## Stack
-TypeScript · NestJS · Next.js · PostgreSQL 16 · Drizzle · Redis/BullMQ ·
+TypeScript · NestJS · Next.js · PostgreSQL 16 · `postgres.js` · Redis/BullMQ ·
 Zod · TanStack Query · shadcn/ui · Vitest · Testcontainers · fast-check
 
 ## Definition of done
@@ -300,7 +300,7 @@ Do not ask for a module in one prompt. Split along the natural review boundaries
     that must hold. No application code yet."
        → review the schema before anything is built on it
 
-2. "Write the Drizzle migration for that schema, with RLS policies and indexes."
+2. "Write the SQL migration for that schema, with RLS policies and indexes."
        → review the migration separately
 
 3. "Implement the domain logic in packages/domain — pure functions, no IO —

@@ -5,6 +5,7 @@ import { isErr, unwrap } from '../src/result.js';
 import { netMovementByAccount, reverseEntry, validateJournalEntry } from '../src/journal-entry.js';
 import { Rate } from '../src/fx.js';
 import {
+  buildCombinedRevaluationJournal,
   buildRevaluationJournal,
   revalue,
   reversalDate,
@@ -293,5 +294,147 @@ describe('the revaluation reverses', () => {
         },
       ),
     );
+  });
+});
+
+describe('two-sided revaluation', () => {
+  const AP_REVAL = 'acc-ap-reval';
+
+  const receivables = (closing: string) =>
+    unwrap(revalue([item()], new Map([[USD, Rate.fromDecimal(closing)]]), MYR, '2026-08-31'));
+
+  /**
+   * A payable, fed as a NEGATIVE outstanding.
+   *
+   * The system is debit-positive throughout, so a credit-natured balance
+   * carries a negative sign and `revalue()` needs no notion of which side of
+   * the balance sheet it is looking at. Flipping this sign is the single
+   * easiest way to turn a period-end loss into a reported gain, so the
+   * arithmetic is asserted directly below rather than inferred from a journal
+   * that happens to balance.
+   */
+  const payables = (closing: string) =>
+    unwrap(
+      revalue(
+        [item({ reference: 'BILL-00001', outstanding: usd('-1000.00') })],
+        new Map([[USD, Rate.fromDecimal(closing)]]),
+        MYR,
+        '2026-08-31',
+      ),
+    );
+
+  it('a strengthening USD is a gain on receivables and a loss on payables', () => {
+    expect(receivables('4.90').totalDifference.toDecimalString()).toBe('200.0000');
+    expect(payables('4.90').totalDifference.toDecimalString()).toBe('-200.0000');
+  });
+
+  it('gives each side its own balance-sheet line and nets only the P&L', () => {
+    const entry = buildCombinedRevaluationJournal(
+      [
+        { revaluation: receivables('4.90'), revaluationAccountId: ACCOUNTS.revaluationAccountId },
+        { revaluation: payables('4.80'), revaluationAccountId: AP_REVAL },
+      ],
+      ACCOUNTS.unrealisedFxAccountId,
+      CTX,
+      MYR,
+    );
+
+    const net = netMovementByAccount([entry!], MYR);
+    // +200 on receivables, -100 on payables, +100 net gain -> credit the P&L.
+    expect(net.get(ACCOUNTS.revaluationAccountId)!.toDecimalString()).toBe('200.0000');
+    expect(net.get(AP_REVAL)!.toDecimalString()).toBe('-100.0000');
+    expect(net.get(ACCOUNTS.unrealisedFxAccountId)!.toDecimalString()).toBe('-100.0000');
+    expect(validateJournalEntry(entry!, MYR).ok).toBe(true);
+  });
+
+  it('a matched receivable and payable move the balance sheet but not the P&L', () => {
+    // The natural-hedge case. Netting the two sides into one balance-sheet
+    // account would produce the same (correct) P&L and the WRONG balance
+    // sheet, which is why this asserts the two lines separately.
+    const entry = buildCombinedRevaluationJournal(
+      [
+        { revaluation: receivables('4.90'), revaluationAccountId: ACCOUNTS.revaluationAccountId },
+        { revaluation: payables('4.90'), revaluationAccountId: AP_REVAL },
+      ],
+      ACCOUNTS.unrealisedFxAccountId,
+      CTX,
+      MYR,
+    )!;
+
+    const net = netMovementByAccount([entry], MYR);
+    expect(net.get(ACCOUNTS.revaluationAccountId)!.toDecimalString()).toBe('200.0000');
+    expect(net.get(AP_REVAL)!.toDecimalString()).toBe('-200.0000');
+    expect(net.has(ACCOUNTS.unrealisedFxAccountId)).toBe(false);
+    expect(validateJournalEntry(entry, MYR).ok).toBe(true);
+  });
+
+  it('posts nothing when no rate moved on either side', () => {
+    expect(
+      buildCombinedRevaluationJournal(
+        [
+          { revaluation: receivables('4.70'), revaluationAccountId: ACCOUNTS.revaluationAccountId },
+          { revaluation: payables('4.70'), revaluationAccountId: AP_REVAL },
+        ],
+        ACCOUNTS.unrealisedFxAccountId,
+        CTX,
+        MYR,
+      ),
+    ).toBeNull();
+  });
+
+  it('always balances, whatever the two sides do (property)', () => {
+    fc.assert(
+      fc.property(
+        fc.bigInt({ min: 1n, max: 20_00000000n }),
+        fc.bigInt({ min: 1n, max: 20_00000000n }),
+        (arClosing, apClosing) => {
+          const toRate = (units: bigint) => Rate.fromUnits(units);
+          const ar = unwrap(
+            revalue([item()], new Map([[USD, toRate(arClosing)]]), MYR, '2026-08-31'),
+          );
+          const ap = unwrap(
+            revalue(
+              [item({ reference: 'BILL-1', outstanding: usd('-1000.00') })],
+              new Map([[USD, toRate(apClosing)]]),
+              MYR,
+              '2026-08-31',
+            ),
+          );
+
+          const entry = buildCombinedRevaluationJournal(
+            [
+              { revaluation: ar, revaluationAccountId: ACCOUNTS.revaluationAccountId },
+              { revaluation: ap, revaluationAccountId: AP_REVAL },
+            ],
+            ACCOUNTS.unrealisedFxAccountId,
+            CTX,
+            MYR,
+          );
+          if (entry === null) return;
+          expect(validateJournalEntry(entry, MYR).ok).toBe(true);
+        },
+      ),
+    );
+  });
+
+  it('reverses cleanly, leaving nothing behind', () => {
+    const entry = buildCombinedRevaluationJournal(
+      [
+        { revaluation: receivables('4.90'), revaluationAccountId: ACCOUNTS.revaluationAccountId },
+        { revaluation: payables('4.80'), revaluationAccountId: AP_REVAL },
+      ],
+      ACCOUNTS.unrealisedFxAccountId,
+      CTX,
+      MYR,
+    )!;
+
+    const reversal = reverseEntry(entry, {
+      entryDate: reversalDate('2026-08-31'),
+      description: 'Reversal',
+    });
+
+    for (const movement of netMovementByAccount([entry, reversal], MYR).values()) {
+      expect(movement.isZero()).toBe(true);
+    }
   });
 });

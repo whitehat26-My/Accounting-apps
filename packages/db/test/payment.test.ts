@@ -3,7 +3,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Money } from '@emil/domain';
 import { withTenant, type Sql } from '../src/client.js';
 import { issueInvoice, outstandingReceivables } from '../src/invoice.js';
-import { agedReceivables, recordReceipt } from '../src/payment.js';
+import { agedReceivables, openReceivablesAsAt, recordReceipt } from '../src/payment.js';
 import { detectRollupDrift } from '../src/ledger.js';
 import { createTestDatabase, seedTenant, type Tenant } from './helpers.js';
 
@@ -343,9 +343,9 @@ describe('over-settlement is refused', () => {
             SELECT id FROM payment WHERE tenant_id = ${tenant.tenantId} LIMIT 1
         `;
         await tx`
-            INSERT INTO payment_allocation (tenant_id, payment_id, target_type, target_id, amount)
-            VALUES (${tenant.tenantId}, ${payment!.id}, 'INVOICE', ${invoice.id}, 100),
-                   (${tenant.tenantId}, ${payment!.id}, 'INVOICE', ${invoice.id}, 100)
+            INSERT INTO payment_allocation (tenant_id, payment_id, invoice_id, amount)
+            VALUES (${tenant.tenantId}, ${payment!.id}, ${invoice.id}, 100),
+                   (${tenant.tenantId}, ${payment!.id}, ${invoice.id}, 100)
         `;
       }),
     ).rejects.toThrow(/over-allocated|duplicate key/i);
@@ -406,19 +406,109 @@ describe('ledger invariant #6 holds through partial settlement', () => {
 
 describe('aged receivables', () => {
   it('buckets outstanding invoices by how overdue they are', async () => {
-    const buckets = await withTenant(sql, ctx(), (tx) => agedReceivables(tx, ctx(), '2026-10-15'));
+    const report = await withTenant(sql, ctx(), (tx) => agedReceivables(tx, ctx(), '2026-10-15'));
 
-    expect(buckets.length).toBeGreaterThan(0);
-    for (const bucket of buckets) {
-      expect(['CURRENT', '1_30', '31_60', '61_90', '90_PLUS']).toContain(bucket.bucket);
-      expect(rm(bucket.total).isPositive()).toBe(true);
-    }
+    expect(report.buckets.map((b) => b.key)).toEqual([
+      'CURRENT',
+      '1_30',
+      '31_60',
+      '61_90',
+      '90_PLUS',
+    ]);
 
     // The buckets must reconcile to the subledger total.
     const subledger = await withTenant(sql, ctx(), (tx) => outstandingReceivables(tx, ctx()));
-    const bucketTotal = buckets.reduce((acc, b) => acc.add(rm(b.total)), Money.zero('MYR'));
+    const bucketTotal = report.buckets.reduce((acc, b) => acc.add(b.total), Money.zero('MYR'));
     expect(bucketTotal.toDecimalString()).toBe(
       Money.fromDecimal(subledger.total, 'MYR').toDecimalString(),
     );
+  });
+});
+
+describe('aged receivables are genuinely as-at', () => {
+  /**
+   * The bug this suite exists for.
+   *
+   * The original implementation bucketed by `asOfDate` but measured
+   * `invoice.amount_due` — today's live balance — with no filter on the issue
+   * date. So a report run for 31/03 showed March's buckets against June's
+   * balances: invoices issued in April appeared, invoices settled in May had
+   * vanished, and the total tied to the AR control account at no date at all.
+   *
+   * Each assertion below fails against that version.
+   */
+  const t = () => tenant;
+
+  /** AR control account balance restricted to periods starting on or before a date. */
+  async function arControlAsAt(asOf: string): Promise<string> {
+    const [row] = await withTenant(sql, ctx(), (tx) =>
+      tx<{ balance: string }[]>`
+          SELECT COALESCE(SUM(b.net_movement), 0)::text AS balance
+            FROM account_period_balance b
+            JOIN fiscal_period p
+              ON p.tenant_id = b.tenant_id AND p.id = b.fiscal_period_id
+           WHERE b.tenant_id = ${t().tenantId}
+             AND b.account_id = ${t().accounts['1100']!}
+             AND p.start_date <= ${asOf}::date
+      `,
+    );
+    return Money.fromDecimal(row!.balance, 'MYR').toDecimalString();
+  }
+
+  it('excludes an invoice issued after the report date', async () => {
+    const before = await withTenant(sql, ctx(), (tx) => agedReceivables(tx, ctx(), '2026-09-30'));
+    await issue('4321.00', '2026-10-15');
+    const after = await withTenant(sql, ctx(), (tx) => agedReceivables(tx, ctx(), '2026-09-30'));
+
+    // The October invoice was not a receivable on 30 September.
+    expect(after.total.toDecimalString()).toBe(before.total.toDecimalString());
+
+    const later = await withTenant(sql, ctx(), (tx) => agedReceivables(tx, ctx(), '2026-10-31'));
+    expect(later.total.subtract(before.total).toDecimalString()).toBe('4321.0000');
+  });
+
+  it('still shows an invoice that was open then and has since been settled', async () => {
+    const invoice = await issue('2500.00', '2026-09-02');
+
+    const openThen = await withTenant(sql, ctx(), (tx) =>
+      openReceivablesAsAt(tx, ctx(), '2026-09-30'),
+    );
+    expect(openThen.some((i) => i.documentId === invoice.id)).toBe(true);
+
+    await withTenant(sql, ctx(), (tx) =>
+      recordReceipt(tx, ctx(), {
+        contactId: tenant.customerId,
+        paymentDate: '2026-11-05',
+        amount: '2500.00',
+        method: 'DUITNOW',
+        depositAccountId: tenant.accounts['1000']!,
+        allocations: [{ invoiceId: invoice.id, amount: '2500.00' }],
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    // Settled in November, so it was STILL outstanding at 30 September. The
+    // buggy version measured the live balance and dropped it retrospectively.
+    const stillOpen = await withTenant(sql, ctx(), (tx) =>
+      openReceivablesAsAt(tx, ctx(), '2026-09-30'),
+    );
+    expect(stillOpen.find((i) => i.documentId === invoice.id)?.outstanding.toDecimalString()).toBe(
+      '2500.0000',
+    );
+
+    // And gone by the end of November.
+    const settled = await withTenant(sql, ctx(), (tx) =>
+      openReceivablesAsAt(tx, ctx(), '2026-11-30'),
+    );
+    expect(settled.some((i) => i.documentId === invoice.id)).toBe(false);
+  });
+
+  it('ties to the AR control account at a PAST date, which is the point', async () => {
+    // The assertion the old implementation could not satisfy at any date but
+    // today, and the reason an auditor asks for this report first.
+    for (const asOf of ['2026-09-30', '2026-10-31', '2026-11-30']) {
+      const report = await withTenant(sql, ctx(), (tx) => agedReceivables(tx, ctx(), asOf));
+      expect(report.total.toDecimalString(), `aged AR at ${asOf}`).toBe(await arControlAsAt(asOf));
+    }
   });
 });

@@ -13,6 +13,7 @@ import {
 } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
+import { addDays, decimalToScaled, toIsoDate } from './internal.js';
 
 /**
  * InvoiceService.issue() — the DRAFT -> ISSUED transition (M2).
@@ -492,27 +493,3 @@ export async function resolveRate(
   return Rate.fromDecimal(row.rate);
 }
 
-function decimalToScaled(value: string, scale: bigint): bigint {
-  const trimmed = value.trim();
-  if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {
-    throw new TypeError(`Not a valid decimal string: "${value}"`);
-  }
-  const negative = trimmed.startsWith('-');
-  const [whole = '0', fraction = ''] = (negative ? trimmed.slice(1) : trimmed).split('.');
-  if (BigInt(fraction.length) > scale) {
-    throw new RangeError(`"${value}" exceeds ${scale} decimal places`);
-  }
-  const padded = fraction.padEnd(Number(scale), '0');
-  const units = BigInt(whole) * 10n ** scale + BigInt(padded || '0');
-  return negative ? -units : units;
-}
-
-function addDays(isoDate: string, days: number): string {
-  const date = new Date(`${isoDate}T00:00:00Z`);
-  date.setUTCDate(date.getUTCDate() + days);
-  return date.toISOString().slice(0, 10);
-}
-
-function toIsoDate(value: Date | string): string {
-  return typeof value === 'string' ? value.slice(0, 10) : value.toISOString().slice(0, 10);
-}

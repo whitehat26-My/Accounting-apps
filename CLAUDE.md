@@ -25,7 +25,7 @@ document before implementing anything in that area.
 
 ## Stack
 
-TypeScript (strict) · NestJS · Next.js 15 · PostgreSQL 16 · Drizzle ORM ·
+TypeScript (strict) · NestJS · Next.js 15 · PostgreSQL 16 · raw SQL via `postgres.js` ·
 Redis + BullMQ · Zod · TanStack Query · shadcn/ui + Tailwind ·
 Vitest · Testcontainers · fast-check · Playwright
 
@@ -37,7 +37,7 @@ apps/web      Next.js
 apps/worker   BullMQ processors
 packages/domain     Money, ledger aggregates, TaxEngine — pure, zero IO
 packages/contracts  Zod schemas + generated OpenAPI types
-packages/db         Drizzle schema, migrations, RLS policies, seeds
+packages/db         Raw SQL migrations, RLS policies, seeds, repository services
 packages/ui         Shared component library
 infra               Terraform
 ```

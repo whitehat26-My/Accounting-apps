@@ -110,6 +110,7 @@ describe('running a revaluation', () => {
     expect(result.totalDifference).toBe('200.0000'); // 4900 - 4700
     expect(result.byCurrency).toEqual([
       {
+        side: 'RECEIVABLE',
         currency: 'USD',
         outstanding: '1000.0000',
         carryingBase: '4700.0000',

@@ -7,6 +7,8 @@ export * from './account.js';
 export * from './journal-entry.js';
 export * from './tax.js';
 export * from './document.js';
+export * from './withholding.js';
+export * from './ageing.js';
 export * from './payment.js';
 export * from './credit-note.js';
 export * from './einvoice.js';

@@ -1,6 +1,7 @@
 import type { ValidatedJournalEntry } from '@emil/domain';
 import { Money } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
+import { toIsoDate } from './internal.js';
 
 /**
  * The ONE write path into the general ledger.
@@ -285,7 +286,3 @@ function formatScaled(units: bigint, scale: number): string {
   return `${negative ? '-' : ''}${whole}.${fraction}`;
 }
 
-function toIsoDate(value: Date | string): string {
-  if (typeof value === 'string') return value.slice(0, 10);
-  return value.toISOString().slice(0, 10);
-}

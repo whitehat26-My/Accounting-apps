@@ -32,7 +32,7 @@ Every choice below is justified against the same four criteria: **correctness fo
 | Language | **TypeScript on Node.js 22 LTS** | Single language across tiers → shared Zod schemas, shared money types, shared OpenAPI client. For a small team building a large surface area, this compounds. Node's IO-bound profile fits an app whose hot path is database + HTTP calls, not computation. |
 | Framework | **NestJS** | Opinionated modularity is exactly what a modular monolith needs: `@Module` boundaries map 1:1 to M0–M9, DI makes the tax engine and matching engine trivially testable in isolation, and built-in interceptors/guards give a clean home for the tenant/RBAC/idempotency middleware chain. |
 | API standard | **REST (OpenAPI 3.1) as the contract, tRPC internally between `emil-web` and `emil-api`** | REST because third parties will integrate (banks, POS vendors, accountant tooling), OpenAPI generates both the client and the docs, and REST caches and rate-limits cleanly. tRPC for the first-party BFF hop gives end-to-end type safety without maintaining a second schema. **GraphQL rejected**: unbounded query cost is a real hazard when a malicious or careless query can table-scan a ledger, per-field authorisation on financial data is error-prone, and the flexibility mostly benefits many-consumer scenarios you don't have. |
-| ORM / data access | **Drizzle ORM** for typed queries + **raw SQL for reporting** | Drizzle is a thin, SQL-shaped layer — you can see the query it generates, which is what you want when performance and correctness matter. Reports are hand-written SQL against the rollups. **Prisma rejected** for weaker raw-SQL ergonomics and historically awkward RLS/session-variable handling. |
+| ORM / data access | **Raw parameterised SQL via `postgres.js`** | Revised during implementation. The original choice was Drizzle; the schema's composite `(tenant_id, id)` keys, `SET LOCAL app.tenant_id` session binding, deferred constraint triggers and `NUMERIC(19,4)` handling all sit at the edge of what an ORM expresses well, and the generated query is exactly what you want visible when RLS and correctness are at stake. `postgres.js` gives parameterised tagged templates — SQL injection is structurally prevented — with no query the reader cannot see. **Prisma rejected** for weaker raw-SQL ergonomics and historically awkward RLS/session-variable handling. |
 | Decimal handling | **`decimal.js` / a `Money` value object**, `NUMERIC(19,4)` in PG | Never `number` for currency. The `Money` type carries currency and forbids cross-currency arithmetic at the type level. |
 | Jobs & queues | **BullMQ on Redis** | Mature, good retry/backoff/DLQ semantics, per-queue concurrency, repeatable jobs for recurring invoices and reminders. Paired with a **transactional outbox** table so enqueue is never lost. |
 | Auth | **Auth.js / Better Auth for session flows + own JWT issuance**, Argon2id, TOTP MFA | Keeping issuance in-house avoids per-MAU identity-vendor pricing at SME margins; the standards involved are well-trodden. |
@@ -55,7 +55,7 @@ Every choice below is justified against the same four criteria: **correctness fo
 | Object storage | **S3-compatible** (AWS S3, or Cloudflare R2 for cheap egress) with SSE-KMS | Attachments, generated PDFs, imported statements, exports. Tenant-prefixed keys, versioning on, lifecycle to cold storage after 2 years, retention to 7+ years. |
 | Search | **PostgreSQL full-text first; OpenSearch when it stops being enough** | Do not add a search cluster in the MVP. `tsvector` over contacts + document references handles the actual query pattern ("find invoice INV-1042", "find Tenaga") well past early scale. |
 | Analytics (later) | **ClickHouse** or the warehouse of the day | Only when cross-tenant product analytics or heavy customer-facing BI arrives. Not MVP. |
-| Migrations | **Drizzle Kit**, forward-only, expand/contract | Every migration reviewed like production code. A migration that rewrites posted ledger rows requires a written justification in the PR. |
+| Migrations | **Hand-written SQL**, forward-only, expand/contract, applied by `packages/db/src/migrate.ts` | Every migration reviewed like production code. A migration that rewrites posted ledger rows requires a written justification in the PR. |
 | Backups | Automated daily snapshot + **PITR (5-minute RPO)**, cross-region copy, **restore drill quarterly** | An untested backup is not a backup. Schedule the drill; record the RTO you actually achieve. |
 
 **Partitioning plan (not day one, but design for it):** `journal_line`, `audit_log`, and `bank_transaction` are the tables that grow without bound. Partition by range on date (`RANGE (occurred_at)`) once any exceeds ~50M rows, or by `tenant_id` hash if a few very large tenants dominate. Keeping `tenant_id` first in the primary key keeps both options open.
@@ -106,7 +106,7 @@ emil/
 ├── packages/
 │   ├── domain/       # Money, Currency, JournalEntry aggregates, TaxEngine — zero IO, pure
 │   ├── contracts/    # Zod schemas + generated OpenAPI types (shared web ↔ api)
-│   ├── db/           # Drizzle schema, migrations, RLS policies, seed data
+│   ├── db/           # SQL migrations, RLS policies, seed data, repository services
 │   └── ui/           # shadcn-derived component library
 ├── infra/            # Terraform
 └── docs/architecture/
