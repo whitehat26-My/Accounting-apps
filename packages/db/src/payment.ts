@@ -3,7 +3,9 @@ import {
   buildReceiptJournal,
   isErr,
   Money,
+  Rate,
   settlementStatus,
+  toBase,
   validateJournalEntry,
   validateReceipt,
   type AllocationStrategy,
@@ -13,6 +15,7 @@ import {
 } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
+import { loadBaseCurrency, resolveRate } from './invoice.js';
 
 /**
  * PaymentService.recordReceipt() — money in against open invoices.
@@ -37,6 +40,8 @@ export interface RecordReceiptInput {
   readonly allocationStrategy?: AllocationStrategy;
   readonly reference?: string;
   readonly currency?: string;
+  /** Settlement-date rate. Omit to look up the stored rate for that date. */
+  readonly fxRate?: string;
   readonly idempotencyKey: string;
 }
 
@@ -47,13 +52,20 @@ export interface RecordedReceipt {
   readonly allocatedTotal: string;
   readonly unallocated: string;
   readonly journalEntryId: string;
+  /** Signed base-currency amount: positive a gain, negative a loss. */
+  readonly realisedFx: string | null;
   readonly settledInvoices: readonly { invoiceId: string; status: string; amountDue: string }[];
   readonly replayed: boolean;
 }
 
 export class PaymentError extends Error {
   constructor(
-    readonly code: 'CONTACT_NOT_FOUND' | 'NO_POSTING_ACCOUNTS' | 'RECEIPT_INVALID' | 'JOURNAL_INVALID',
+    readonly code:
+      | 'CONTACT_NOT_FOUND'
+      | 'NO_POSTING_ACCOUNTS'
+      | 'RECEIPT_INVALID'
+      | 'NO_FX_ACCOUNT'
+      | 'JOURNAL_INVALID',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -69,9 +81,9 @@ export async function recordReceipt(
 ): Promise<RecordedReceipt> {
   // ---- Idempotency ---------------------------------------------------------
   const existing = await tx<
-    { id: string; payment_no: string; amount: string; unallocated_amount: string; journal_entry_id: string }[]
+    { id: string; payment_no: string; amount: string; unallocated_amount: string; journal_entry_id: string; realised_fx: string | null }[]
   >`
-      SELECT id, payment_no, amount, unallocated_amount, journal_entry_id
+      SELECT id, payment_no, amount, unallocated_amount, journal_entry_id, realised_fx
         FROM payment
        WHERE tenant_id = ${ctx.tenantId} AND idempotency_key = ${input.idempotencyKey}
   `;
@@ -87,6 +99,7 @@ export async function recordReceipt(
       allocatedTotal: amount.subtract(unallocated).toDecimalString(),
       unallocated: row.unallocated_amount,
       journalEntryId: row.journal_entry_id,
+      realisedFx: row.realised_fx,
       settledInvoices: [],
       replayed: true,
     };
@@ -103,14 +116,15 @@ export async function recordReceipt(
   }
 
   const accountsReceivableId = await loadArAccount(tx, ctx);
+  const fxAccountId = await loadOptionalAccount(tx, ctx, 'FX_GAIN_LOSS');
 
   // ---- Read live balances, locked for update -------------------------------
   // FOR UPDATE so two concurrent receipts against the same invoice serialise
   // rather than both reading the same amount_due and both allocating it.
   const openRows = await tx<
-    { id: string; invoice_no: string; issue_date: Date; due_date: Date; amount_due: string; total: string; amount_paid: string }[]
+    { id: string; invoice_no: string; issue_date: Date; due_date: Date; amount_due: string; total: string; amount_paid: string; fx_rate: string }[]
   >`
-      SELECT id, invoice_no, issue_date, due_date, amount_due, total, amount_paid
+      SELECT id, invoice_no, issue_date, due_date, amount_due, total, amount_paid, fx_rate
         FROM invoice
        WHERE tenant_id = ${ctx.tenantId}
          AND contact_id = ${input.contactId}
@@ -120,12 +134,15 @@ export async function recordReceipt(
          FOR UPDATE
   `;
 
+  // Each invoice carries the rate its AR was booked at. That is the rate it
+  // must be relieved at — ledger invariant #13.
   const openInvoices: OpenInvoice[] = openRows.map((r) => ({
     invoiceId: r.id,
     invoiceNo: r.invoice_no,
     issueDate: toIsoDate(r.issue_date),
     dueDate: toIsoDate(r.due_date),
     amountDue: Money.fromDecimal(r.amount_due, currency),
+    bookedRate: Rate.fromDecimal(r.fx_rate),
   }));
 
   const allocations: ReceiptAllocation[] = input.allocations
@@ -168,22 +185,30 @@ export async function recordReceipt(
   const [generated] = await tx<{ id: string }[]>`SELECT gen_random_uuid() AS id`;
   const paymentId = generated!.id;
 
+  const baseCurrency = await loadBaseCurrency(tx, ctx);
+  const settlementRate = await resolveSettlementRate(
+    tx, ctx, currency, baseCurrency, input.paymentDate, input.fxRate,
+  );
+
   const journalDraft = buildReceiptJournal(
     receipt,
-    { accountsReceivableId },
+    { accountsReceivableId, ...(fxAccountId ? { fxGainLossId: fxAccountId } : {}) },
     {
       entryDate: input.paymentDate,
       description: `Receipt ${paymentNo}`,
       documentType: 'PAYMENT',
       documentId: paymentId,
     },
+    { baseCurrency, settlementRate, openInvoices },
   );
 
   if (journalDraft === null) {
     throw new PaymentError('RECEIPT_INVALID', 'A zero-value receipt has nothing to record');
   }
 
-  const validJournal = validateJournalEntry(journalDraft, currency);
+  // The ledger balances in BASE currency; a foreign receipt deliberately does
+  // not balance in the transaction currency once an FX line is present.
+  const validJournal = validateJournalEntry(journalDraft, baseCurrency);
   if (isErr(validJournal)) {
     throw new PaymentError('JOURNAL_INVALID', 'Generated journal is invalid', validJournal.error);
   }
@@ -196,17 +221,27 @@ export async function recordReceipt(
     },
   });
 
+  // Derive the realised difference from what was actually posted, rather than
+  // recomputing it — the journal is the truth.
+  const fxLine = journalDraft.lines.find((l) => l.accountId === fxAccountId);
+  const realisedFxAmount = fxLine
+    ? (fxLine.side === 'CREDIT' ? fxLine.baseAmount : fxLine.baseAmount.negate())
+    : null;
+
   await tx`
       INSERT INTO payment (
           tenant_id, id, payment_no, contact_id, direction, payment_date, method,
           deposit_account_id, currency, amount, unallocated_amount, reference,
-          journal_entry_id, idempotency_key, recorded_by
+          journal_entry_id, idempotency_key, recorded_by, fx_rate, base_amount, realised_fx
       ) VALUES (
           ${ctx.tenantId}, ${paymentId}, ${paymentNo}, ${input.contactId}, 'INBOUND',
           ${input.paymentDate}, ${input.method}, ${input.depositAccountId},
           ${currency}, ${amount.toDecimalString()},
           ${receipt.unallocated.toDecimalString()}, ${input.reference ?? null},
-          ${posted.id}, ${input.idempotencyKey}, ${ctx.userId ?? null}
+          ${posted.id}, ${input.idempotencyKey}, ${ctx.userId ?? null},
+          ${settlementRate.toDecimalString()},
+          ${toBase(amount, settlementRate, baseCurrency).toDecimalString()},
+          ${realisedFxAmount ? realisedFxAmount.toDecimalString() : null}
       )
   `;
 
@@ -245,6 +280,7 @@ export async function recordReceipt(
     allocatedTotal: receipt.allocatedTotal.toDecimalString(),
     unallocated: receipt.unallocated.toDecimalString(),
     journalEntryId: posted.id,
+    realisedFx: realisedFxAmount ? realisedFxAmount.toDecimalString() : null,
     settledInvoices,
     replayed: false,
   };
@@ -279,6 +315,36 @@ export async function agedReceivables(
   `;
 
   return rows.map((r) => ({ bucket: r.bucket, total: r.total, count: Number(r.count) }));
+}
+
+async function resolveSettlementRate(
+  tx: Tx,
+  ctx: TenantContext,
+  currency: string,
+  baseCurrency: string,
+  date: string,
+  explicit?: string,
+): Promise<Rate> {
+  try {
+    return await resolveRate(tx, ctx, currency, baseCurrency, date, explicit);
+  } catch (error) {
+    throw new PaymentError(
+      'RECEIPT_INVALID',
+      error instanceof Error ? error.message : 'Could not resolve an exchange rate',
+    );
+  }
+}
+
+async function loadOptionalAccount(
+  tx: Tx,
+  ctx: TenantContext,
+  role: string,
+): Promise<string | undefined> {
+  const [row] = await tx<{ account_id: string }[]>`
+      SELECT account_id FROM posting_account_map
+       WHERE tenant_id = ${ctx.tenantId} AND role = ${role}
+  `;
+  return row?.account_id;
 }
 
 async function loadArAccount(tx: Tx, ctx: TenantContext): Promise<string> {

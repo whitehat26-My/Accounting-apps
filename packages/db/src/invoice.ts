@@ -1,8 +1,10 @@
 import {
   buildSalesJournal,
   computeDocument,
+  converter,
   isErr,
   Money,
+  Rate,
   validateJournalEntry,
   type DocumentLine,
   type DocumentViolation,
@@ -32,6 +34,11 @@ export interface IssueInvoiceInput {
   /** Defaults to the issue date. The tax point selects the rate version. */
   readonly taxPointDate?: string;
   readonly currency?: string;
+  /**
+   * Rate to the base currency. Omit to look up the stored rate for the issue
+   * date. Supplied explicitly when a contracted rate applies.
+   */
+  readonly fxRate?: string;
   readonly amountsAreTaxInclusive?: boolean;
   readonly reference?: string;
   readonly lines: readonly IssueInvoiceLine[];
@@ -68,6 +75,7 @@ export class InvoiceError extends Error {
       | 'CONTACT_NOT_FOUND'
       | 'NO_POSTING_ACCOUNTS'
       | 'DOCUMENT_INVALID'
+      | 'NO_EXCHANGE_RATE'
       | 'JOURNAL_INVALID',
     message: string,
     readonly detail?: unknown,
@@ -225,6 +233,18 @@ export async function issueInvoice(
   }
 
   // ---- Post to the ledger --------------------------------------------------
+  // The rate is resolved and STORED on the invoice, because AR must later be
+  // relieved at this exact rate — see ledger invariant #13.
+  const baseCurrency = await loadBaseCurrency(tx, ctx);
+  const rate = await resolveRate(tx, ctx, currency, baseCurrency, input.issueDate, input.fxRate);
+
+  if (!rate.isOne()) {
+    await tx`
+        UPDATE invoice SET fx_rate = ${rate.toDecimalString()}
+         WHERE tenant_id = ${ctx.tenantId} AND id = ${invoiceId}
+    `;
+  }
+
   const journalDraft = buildSalesJournal(
     doc,
     { accountsReceivableId: accounts.AR, taxPayableId: accounts.SST_PAYABLE },
@@ -234,6 +254,9 @@ export async function issueInvoice(
       contactId: input.contactId,
       documentType: 'INVOICE',
       documentId: invoiceId,
+      ...(rate.isOne()
+        ? {}
+        : { fxRate: { baseCurrency, convert: converter(rate, baseCurrency) } }),
     },
   );
 
@@ -243,7 +266,9 @@ export async function issueInvoice(
   let journalEntryId: string | null = null;
 
   if (journalDraft !== null) {
-    const validated = validateJournalEntry(journalDraft, currency);
+    // The ledger balances in BASE currency. A multi-currency entry need not
+    // balance in the transaction currency.
+    const validated = validateJournalEntry(journalDraft, baseCurrency);
     if (isErr(validated)) {
       // Unreachable if the domain is correct — which is exactly why it must
       // throw loudly rather than post something unbalanced.
@@ -382,17 +407,24 @@ async function loadPostingAccounts(
 }
 
 /**
- * Aged receivables straight from the subledger.
+ * Outstanding receivables, valued in the BASE currency.
  *
- * Ledger invariant #6 says this must always agree with the AR control account
- * in the general ledger. `packages/db/test/invoice.test.ts` asserts it.
+ * Each invoice is carried at the rate it was booked at (`amount_due * fx_rate`),
+ * which is what makes ledger invariant #6 — AR control equals the subledger —
+ * hold for a multi-currency tenant. Summing `amount_due` across currencies
+ * would add ringgit to dollars and produce a number that means nothing.
+ *
+ * Note this is the HISTORICAL-rate valuation. Restating open foreign balances
+ * at the period-end rate (unrealised revaluation) is a separate, not yet
+ * implemented, step.
  */
 export async function outstandingReceivables(
   tx: Tx,
   ctx: TenantContext,
 ): Promise<{ total: string; count: number }> {
   const [row] = await tx<{ total: string; count: string }[]>`
-      SELECT COALESCE(SUM(amount_due), 0)::text AS total, COUNT(*)::text AS count
+      SELECT COALESCE(SUM(ROUND(amount_due * fx_rate, 4)), 0)::text AS total,
+             COUNT(*)::text                                          AS count
         FROM invoice
        WHERE tenant_id = ${ctx.tenantId}
          AND status IN ('ISSUED','PART_PAID')
@@ -400,9 +432,66 @@ export async function outstandingReceivables(
   return { total: row!.total, count: Number(row!.count) };
 }
 
+/** Outstanding receivables broken down by transaction currency. */
+export async function outstandingByCurrency(
+  tx: Tx,
+  ctx: TenantContext,
+): Promise<{ currency: string; total: string; baseTotal: string }[]> {
+  return tx<{ currency: string; total: string; baseTotal: string }[]>`
+      SELECT currency,
+             SUM(amount_due)::text                      AS total,
+             SUM(ROUND(amount_due * fx_rate, 4))::text  AS "baseTotal"
+        FROM invoice
+       WHERE tenant_id = ${ctx.tenantId}
+         AND status IN ('ISSUED','PART_PAID')
+       GROUP BY currency
+       ORDER BY currency
+  `;
+}
+
 // ------------------------------------------------------------------ internals
 
 /** "2.5" -> 25000n at scale 4. Rejects excess precision rather than rounding. */
+export async function loadBaseCurrency(tx: Tx, ctx: TenantContext): Promise<string> {
+  const [row] = await tx<{ base_currency: string }[]>`
+      SELECT base_currency FROM organisation WHERE id = ${ctx.tenantId}
+  `;
+  return row?.base_currency ?? 'MYR';
+}
+
+/**
+ * Resolve the rate for a document, preferring an explicitly supplied one.
+ *
+ * A missing rate is an error rather than a silent fallback to 1. Posting a
+ * USD invoice at 1:1 would understate revenue by a factor of four and look
+ * entirely plausible on the screen.
+ */
+export async function resolveRate(
+  tx: Tx,
+  ctx: TenantContext,
+  currency: string,
+  baseCurrency: string,
+  date: string,
+  explicit?: string,
+): Promise<Rate> {
+  if (currency === baseCurrency) return Rate.one();
+  if (explicit) return Rate.fromDecimal(explicit);
+
+  const [row] = await tx<{ rate: string | null }[]>`
+      SELECT rate_on_or_before(${currency}, ${baseCurrency}, ${date}::date) AS rate
+  `;
+
+  if (!row?.rate) {
+    throw new InvoiceError(
+      'NO_EXCHANGE_RATE',
+      `No ${currency}/${baseCurrency} exchange rate on or before ${date}. ` +
+        'Supply one explicitly or import the rate for that date.',
+    );
+  }
+
+  return Rate.fromDecimal(row.rate);
+}
+
 function decimalToScaled(value: string, scale: bigint): bigint {
   const trimmed = value.trim();
   if (!/^-?\d+(\.\d+)?$/.test(trimmed)) {

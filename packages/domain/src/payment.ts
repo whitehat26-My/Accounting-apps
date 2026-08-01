@@ -14,6 +14,7 @@
 
 import { Money, sumMoney, type Currency } from './money.js';
 import { err, isErr, ok, type Result } from './result.js';
+import { fxPostingSide, realisedFx, Rate, toBase, type SettlementLeg } from './fx.js';
 import type { JournalEntryDraft, JournalLineDraft } from './journal-entry.js';
 
 export type PaymentMethod =
@@ -34,6 +35,12 @@ export interface OpenInvoice {
   readonly issueDate: string;
   readonly dueDate: string;
   readonly amountDue: Money;
+  /**
+   * The rate at which this invoice's AR was booked. Absent means 1:1 (a
+   * base-currency invoice). AR must be relieved at THIS rate, not at the
+   * settlement rate — see packages/domain/src/fx.ts.
+   */
+  readonly bookedRate?: Rate;
 }
 
 export interface ReceiptAllocation {
@@ -231,6 +238,20 @@ export function autoAllocate(
 
 export interface ReceiptPostingAccounts {
   readonly accountsReceivableId: string;
+  /** Required only when a settlement can produce an FX difference. */
+  readonly fxGainLossId?: string;
+}
+
+/**
+ * Supplied when the receipt is not in the tenant's base currency.
+ *
+ * `settlementRate` is the rate on the day the money arrived. Each allocation's
+ * booked rate comes from its `OpenInvoice`.
+ */
+export interface ReceiptFxContext {
+  readonly baseCurrency: Currency;
+  readonly settlementRate: Rate;
+  readonly openInvoices: readonly OpenInvoice[];
 }
 
 export interface ReceiptPostingContext {
@@ -255,15 +276,65 @@ export function buildReceiptJournal(
   receipt: ValidatedReceipt,
   accounts: ReceiptPostingAccounts,
   ctx: ReceiptPostingContext,
+  fx?: ReceiptFxContext,
 ): JournalEntryDraft | null {
   if (receipt.amount.isZero()) return null;
+
+  // --- base-currency case -------------------------------------------------
+  if (!fx || receipt.amount.currency === fx.baseCurrency) {
+    return {
+      entryDate: ctx.entryDate,
+      ...(ctx.description !== undefined ? { description: ctx.description } : {}),
+      sourceModule: 'SALES',
+      sourceDocumentType: ctx.documentType,
+      sourceDocumentId: ctx.documentId,
+      lines: [
+        {
+          accountId: receipt.depositAccountId,
+          side: 'DEBIT',
+          amount: receipt.amount,
+          baseAmount: receipt.amount,
+          description: `Receipt (${receipt.method})`,
+          contactId: receipt.contactId,
+        },
+        {
+          accountId: accounts.accountsReceivableId,
+          side: 'CREDIT',
+          amount: receipt.amount,
+          baseAmount: receipt.amount,
+          description: 'Accounts receivable settled',
+          contactId: receipt.contactId,
+        },
+      ],
+    };
+  }
+
+  // --- foreign-currency case ----------------------------------------------
+  const { baseCurrency, settlementRate } = fx;
+  const rateByInvoice = new Map(
+    fx.openInvoices.map((i) => [i.invoiceId, i.bookedRate ?? Rate.one()]),
+  );
+
+  const legs: SettlementLeg[] = receipt.allocations.map((a) => ({
+    amount: a.amount,
+    bookedRate: rateByInvoice.get(a.invoiceId) ?? settlementRate,
+  }));
+
+  // The bank receives the whole amount at today's rate.
+  const bankBase = toBase(receipt.amount, settlementRate, baseCurrency);
+
+  // AR is relieved at each invoice's own booked rate. An unallocated
+  // remainder is a fresh customer credit, so it is carried at today's rate.
+  const allocated = realisedFx(legs, settlementRate, baseCurrency);
+  const unallocatedBase = toBase(receipt.unallocated, settlementRate, baseCurrency);
+  const arBase = allocated.bookedBase.add(unallocatedBase);
 
   const lines: JournalLineDraft[] = [
     {
       accountId: receipt.depositAccountId,
       side: 'DEBIT',
       amount: receipt.amount,
-      baseAmount: receipt.amount,
+      baseAmount: bankBase,
       description: `Receipt (${receipt.method})`,
       contactId: receipt.contactId,
     },
@@ -271,11 +342,36 @@ export function buildReceiptJournal(
       accountId: accounts.accountsReceivableId,
       side: 'CREDIT',
       amount: receipt.amount,
-      baseAmount: receipt.amount,
+      baseAmount: arBase,
       description: 'Accounts receivable settled',
       contactId: receipt.contactId,
     },
   ];
+
+  // The difference is whatever is left over — derived from the two rates, not
+  // plugged. If it is zero there is no FX line at all.
+  const difference = bankBase.subtract(arBase);
+
+  if (!difference.isZero()) {
+    if (!accounts.fxGainLossId) {
+      throw new Error(
+        'A settlement produced a realised exchange difference of ' +
+          `${difference.toDecimalString()} ${baseCurrency}, but no FX gain/loss ` +
+          'account is configured. Posting without it would leave the entry unbalanced.',
+      );
+    }
+
+    lines.push({
+      accountId: accounts.fxGainLossId,
+      side: fxPostingSide(difference),
+      amount: difference.abs(),
+      baseAmount: difference.abs(),
+      description: difference.isNegative()
+        ? 'Realised foreign exchange loss'
+        : 'Realised foreign exchange gain',
+      contactId: receipt.contactId,
+    });
+  }
 
   return {
     entryDate: ctx.entryDate,

@@ -137,17 +137,25 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
         RETURNING id
     `;
 
-    const [openPeriod] = await tx<{ id: string }[]>`
-        INSERT INTO fiscal_period (tenant_id, fiscal_year_id, sequence, start_date, end_date, status)
-        VALUES (${tenantId}, ${year!.id}, 8, '2026-08-01', '2026-08-31', 'OPEN')
-        RETURNING id
-    `;
+    // A full twelve-month calendar. January is LOCKED so period-lock behaviour
+    // has something to test against; the rest are open.
+    const monthEnds = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    const periodIds: Record<number, string> = {};
 
-    const [lockedPeriod] = await tx<{ id: string }[]>`
-        INSERT INTO fiscal_period (tenant_id, fiscal_year_id, sequence, start_date, end_date, status)
-        VALUES (${tenantId}, ${year!.id}, 1, '2026-01-01', '2026-01-31', 'LOCKED')
-        RETURNING id
-    `;
+    for (let month = 1; month <= 12; month++) {
+      const mm = String(month).padStart(2, '0');
+      const [period] = await tx<{ id: string }[]>`
+          INSERT INTO fiscal_period (tenant_id, fiscal_year_id, sequence, start_date, end_date, status)
+          VALUES (${tenantId}, ${year!.id}, ${month},
+                  ${`2026-${mm}-01`}, ${`2026-${mm}-${monthEnds[month - 1]}`},
+                  ${month === 1 ? 'LOCKED' : 'OPEN'})
+          RETURNING id
+      `;
+      periodIds[month] = period!.id;
+    }
+
+    const openPeriod = { id: periodIds[8]! };
+    const lockedPeriod = { id: periodIds[1]! };
 
     await tx`
         INSERT INTO number_sequence (tenant_id, document_type, prefix, next_value, padding)
