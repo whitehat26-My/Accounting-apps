@@ -558,6 +558,122 @@ describe('settlement', () => {
     ).rejects.toThrow(/does not add up/);
   });
 
+  it('books the gateway fee ONCE when the provider reports it twice', async () => {
+    // Providers state the fee on the PAID webhook and again on the settlement
+    // report. It is the same ringgit described from two angles.
+    //
+    // Booking both leaves the clearing account permanently short by the total
+    // fees and overstates expenses by the same amount — and because the
+    // difference lands in undeposited funds, the books still BALANCE. Nothing
+    // fails, nothing is flagged, and the only symptom is a clearing account
+    // that never returns to zero. This test is the whole reason
+    // payment_link.fee_amount exists.
+    const f = await collectionTenant('settle_fee_once');
+    const invoice = await issueOne(f);
+    const link = await withTenant(sql, f.ctx, (tx) =>
+      createPaymentLink(tx, f.ctx, { invoiceId: invoice.id, idempotencyKey: randomUUID() }),
+    );
+
+    const confirmed = await withTenant(sql, f.ctx, (tx) =>
+      confirmCollection(tx, f.ctx, {
+        paymentLinkId: link.id,
+        provider: 'FPX',
+        providerRef: 'fpx_fee_once',
+        amount: '1080.00',
+        fee: '1.00',
+        paidAt: '2026-08-03T14:32:00.000Z',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    await withTenant(sql, f.ctx, (tx) =>
+      recordSettlement(tx, f.ctx, {
+        provider: 'FPX',
+        providerBatchId: 'BATCH-FEE-ONCE',
+        settlementDate: '2026-08-05',
+        bankAccountId: f.bankAccountId,
+        reportedNet: '1079.00',
+        // The SAME fee the webhook already reported.
+        items: [{ paymentId: confirmed.receipt.id, gross: '1080.00', fee: '1.00' }],
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    expect(await accountBalance(f, f.tenant.accounts['6100']!)).toBe('1.0000');
+    expect(await accountBalance(f, f.tenant.accounts['1200']!)).toBe('0.0000');
+    expect(await accountBalance(f, f.tenant.accounts['1000']!)).toBe('1079.0000');
+  });
+
+  it('books a fee the confirmation did not know about', async () => {
+    // The other half of the same rule: many providers report the fee only on
+    // the settlement file, and it must still land in expense.
+    const f = await collectionTenant('settle_fee_late');
+    const invoice = await issueOne(f);
+    const link = await withTenant(sql, f.ctx, (tx) =>
+      createPaymentLink(tx, f.ctx, { invoiceId: invoice.id, idempotencyKey: randomUUID() }),
+    );
+    const confirmed = await withTenant(sql, f.ctx, (tx) =>
+      confirmCollection(tx, f.ctx, {
+        paymentLinkId: link.id,
+        provider: 'FPX',
+        providerRef: 'fpx_fee_late',
+        amount: '1080.00',
+        paidAt: '2026-08-03T14:32:00.000Z',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    await withTenant(sql, f.ctx, (tx) =>
+      recordSettlement(tx, f.ctx, {
+        provider: 'FPX',
+        providerBatchId: 'BATCH-FEE-LATE',
+        settlementDate: '2026-08-05',
+        bankAccountId: f.bankAccountId,
+        reportedNet: '1079.00',
+        items: [{ paymentId: confirmed.receipt.id, gross: '1080.00', fee: '1.00' }],
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    expect(await accountBalance(f, f.tenant.accounts['6100']!)).toBe('1.0000');
+    expect(await accountBalance(f, f.tenant.accounts['1200']!)).toBe('0.0000');
+  });
+
+  it('refuses a settlement claiming less fee than was already charged', async () => {
+    // Silently reversing part of an expense is not something to do without a
+    // human looking at the provider report.
+    const f = await collectionTenant('settle_fee_shrinks');
+    const invoice = await issueOne(f);
+    const link = await withTenant(sql, f.ctx, (tx) =>
+      createPaymentLink(tx, f.ctx, { invoiceId: invoice.id, idempotencyKey: randomUUID() }),
+    );
+    const confirmed = await withTenant(sql, f.ctx, (tx) =>
+      confirmCollection(tx, f.ctx, {
+        paymentLinkId: link.id,
+        provider: 'FPX',
+        providerRef: 'fpx_fee_shrinks',
+        amount: '1080.00',
+        fee: '2.00',
+        paidAt: '2026-08-03T14:32:00.000Z',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    await expect(
+      withTenant(sql, f.ctx, (tx) =>
+        recordSettlement(tx, f.ctx, {
+          provider: 'FPX',
+          providerBatchId: 'BATCH-FEE-SHRINK',
+          settlementDate: '2026-08-05',
+          bankAccountId: f.bankAccountId,
+          reportedNet: '1079.00',
+          items: [{ paymentId: confirmed.receipt.id, gross: '1080.00', fee: '1.00' }],
+          idempotencyKey: randomUUID(),
+        }),
+      ),
+    ).rejects.toThrow(/already booked/);
+  });
+
   it('refuses to settle a payment twice', async () => {
     const f = await collectionTenant('settle_twice');
     const invoice = await issueOne(f);
@@ -789,6 +905,7 @@ describe('FakeGateway', () => {
 
     const handle = await gateway.createPayment({
       amount: Money.fromDecimal('1080.00', 'MYR'),
+      merchantOrderId: link.id,
       reference: link.reference,
       description: `Invoice ${invoice.invoiceNo}`,
       returnUrl: 'https://app.invalid/paid',
@@ -809,6 +926,9 @@ describe('FakeGateway', () => {
       }),
     );
 
+    // Our id comes back on the event: that, not the provider's own reference,
+    // is what routes a webhook to a tenant.
+    expect(event.merchantOrderId).toBe(link.id);
     expect(event.type).toBe('PAID');
     expect(event.amount.toDecimalString()).toBe('1080.0000');
     expect(event.fee?.toDecimalString()).toBe('1.0000');

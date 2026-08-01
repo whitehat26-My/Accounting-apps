@@ -19,7 +19,33 @@ const schema = z.object({
   /** Requests per window, per principal. */
   rateLimit: z.number().int().positive(),
   rateLimitWindowMs: z.number().int().positive(),
-});
+  /**
+   * Requests per window for the UNAUTHENTICATED pay routes.
+   *
+   * Far tighter than the authenticated limit, because a pay-link token is
+   * guessable in principle and these routes are the only unauthenticated read
+   * of tenant data. The limit is what makes brute-forcing a token impractical
+   * rather than merely slow.
+   */
+  publicRateLimit: z.number().int().positive(),
+  /**
+   * Register the in-memory `FakeGateway`.
+   *
+   * It accepts any signature, so enabling it in production would let anyone
+   * mark any invoice paid. Refused outright when NODE_ENV is production rather
+   * than left to a deployment checklist — see the refinement below.
+   */
+  enableFakeGateway: z.boolean(),
+  nodeEnv: z.string(),
+}).refine(
+  (c) => !(c.enableFakeGateway && c.nodeEnv === 'production'),
+  {
+    message:
+      'EMIL_ENABLE_FAKE_GATEWAY must never be set in production: the fake gateway ' +
+      'accepts any webhook signature, which would let anyone mark any invoice paid.',
+    path: ['enableFakeGateway'],
+  },
+);
 
 export type ApiConfig = z.infer<typeof schema>;
 
@@ -30,6 +56,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     port: Number(env['PORT'] ?? 3000),
     rateLimit: Number(env['RATE_LIMIT'] ?? 600),
     rateLimitWindowMs: Number(env['RATE_LIMIT_WINDOW_MS'] ?? 60_000),
+    publicRateLimit: Number(env['PUBLIC_RATE_LIMIT'] ?? 30),
+    enableFakeGateway: env['EMIL_ENABLE_FAKE_GATEWAY'] === '1',
+    nodeEnv: env['NODE_ENV'] ?? 'development',
   });
 
   if (!parsed.success) {

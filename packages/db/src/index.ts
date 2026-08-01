@@ -14,4 +14,5 @@ export * from './einvoice.js';
 export * from './revaluation.js';
 export * from './report.js';
 export * from './collection.js';
+export * from './contact.js';
 export { migrate } from './migrate.js';

@@ -178,6 +178,18 @@ export async function createPaymentLink(
     throw new CollectionError('INVOICE_NOT_FOUND', `Invoice ${input.invoiceId} not found`);
   }
 
+  if (ctx.userId === undefined) {
+    // `created_by` is NOT NULL and becomes `posted_by` on the journal entry a
+    // webhook later posts. A link created without an actor would be a
+    // collection that can never be recorded, discovered only once a customer's
+    // money has already moved. See migration 0015.
+    throw new CollectionError(
+      'LINK_NOT_FOUND',
+      'A payment link must record who issued it: the confirming journal entry is ' +
+        'posted in their name, and every posted entry names someone accountable.',
+    );
+  }
+
   // The reference is derived from the invoice number, not generated randomly.
   // A random reference would be unrecognisable to the payer and, worse,
   // invisible to `referenceMatch()` when the money arrives by plain transfer.
@@ -193,7 +205,7 @@ export async function createPaymentLink(
           ${ctx.tenantId}, ${invoice.id}, ${hash}, ${reference},
           ${invoice.amount_due}, ${invoice.currency},
           now() + make_interval(days => ${lifetimeDays}),
-          ${ctx.userId ?? null}
+          ${ctx.userId}
       )
       RETURNING id, expires_at, token_hash
   `;
@@ -278,6 +290,107 @@ export async function resolvePaymentLink(
     expiresAt: row.expires_at.toISOString(),
     expired: row.expires_at.getTime() < Date.now(),
   };
+}
+
+/**
+ * Route an inbound webhook to a tenant, with no tenant context.
+ *
+ * ---------------------------------------------------------------------------
+ * KEYED ON OUR MERCHANT ORDER ID — THE PAY LINK'S UUID — AND ON NOTHING ELSE.
+ *
+ * Two rejected alternatives, both of which look reasonable:
+ *
+ *   * THE PROVIDER'S OWN REFERENCE. Unique within their namespace, not across
+ *     merchants, so two tenants on one provider can be handed the same id.
+ *     Routing on it means either refusing a legitimate payment or applying a
+ *     webhook to the wrong tenant's invoice.
+ *
+ *   * THE PAY-LINK TOKEN, embedded in the callback URL. That token is the
+ *     payer's bearer credential; handing it to a third party puts it in their
+ *     logs and their support tooling, turning one compromised vendor into read
+ *     access to invoices.
+ *
+ * The link's UUID is globally unique by construction and is not a credential.
+ * It goes out as the merchant order id — a field every gateway carries so a
+ * merchant can recognise its own payment — and comes back on every event.
+ *
+ * Returns routing information only. Amounts and invoice details are re-read
+ * inside a tenant transaction once the tenant is known.
+ */
+export async function resolvePaymentLinkForWebhook(
+  sql: Sql,
+  merchantOrderId: string,
+): Promise<WebhookRoute | null> {
+  // A malformed id is a probe, not a payment. Refuse before it reaches SQL,
+  // where a non-UUID would raise rather than simply miss.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(merchantOrderId)) {
+    return null;
+  }
+
+  const [row] = await sql<
+    { tenant_id: string; id: string; status: string; created_by: string; expires_at: Date }[]
+  >`SELECT * FROM find_payment_link_for_webhook(${merchantOrderId})`;
+
+  if (!row) return null;
+
+  return {
+    tenantId: row.tenant_id,
+    id: row.id,
+    status: row.status as CollectionStatus,
+    createdBy: row.created_by,
+    expired: row.expires_at.getTime() < Date.now(),
+  };
+}
+
+export interface WebhookRoute {
+  readonly tenantId: string;
+  readonly id: string;
+  readonly status: CollectionStatus;
+  readonly expired: boolean;
+  /**
+   * Who issued the link — and therefore who the resulting journal entry is
+   * posted by.
+   *
+   * A webhook has no session, but `journal_entry` requires an accountable
+   * person on every posted row, and that constraint is right: "the system did
+   * it" is the attribution an auditor cannot follow up. The person who invited
+   * this payment, against this invoice, for this amount, is the honest answer.
+   */
+  readonly createdBy: string;
+}
+
+/**
+ * Hand a link off to a gateway: record which provider and reference own it.
+ *
+ * Separate from `confirmCollection` because the outcome is not yet known. The
+ * status moves to PENDING, which is what distinguishes "the payer went to their
+ * bank and we are waiting" from "the payer never tried" — the difference a
+ * merchant chasing a debt actually wants to see.
+ */
+export async function beginCollection(
+  tx: Tx,
+  ctx: TenantContext,
+  input: { paymentLinkId: string; provider: string; providerRef: string },
+): Promise<void> {
+  const updated = await tx<{ id: string }[]>`
+      UPDATE payment_link
+         SET status       = 'PENDING',
+             provider     = ${input.provider},
+             provider_ref = ${input.providerRef},
+             updated_at   = now()
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${input.paymentLinkId}
+         -- Never out of a terminal state. A second hand-off on a link already
+         -- paid would let a payer be charged twice for one invoice.
+         AND status NOT IN ('PAID', 'CANCELLED')
+      RETURNING id
+  `;
+
+  if (updated.length === 0) {
+    throw new CollectionError(
+      'LINK_NOT_FOUND',
+      `Payment link ${input.paymentLinkId} is not available for payment`,
+    );
+  }
 }
 
 /** Record that the payer opened the page. Advisory only; never blocks. */
@@ -499,6 +612,9 @@ export async function confirmCollection(
              provider_ref = ${input.providerRef},
              payment_id   = ${receipt.id},
              paid_at      = ${input.paidAt},
+             -- What this confirmation booked. The settlement that follows
+             -- reports the same fee again and must not book it twice.
+             fee_amount   = ${feeJournalEntryId !== null ? (input.fee ?? '0') : '0'},
              updated_at   = now()
        WHERE tenant_id = ${ctx.tenantId} AND id = ${link.id}
   `;
@@ -715,10 +831,50 @@ export async function recordSettlement(
     `;
   }
 
+  /*
+   * Book only the fees confirmation did not already book.
+   *
+   * -------------------------------------------------------------------------
+   * THE SAME RINGGIT, REPORTED TWICE.
+   *
+   * A provider states the fee on the PAID webhook and again on the settlement
+   * report. Booking both leaves the clearing account permanently short by the
+   * total fees and overstates expenses by the same amount — and because the
+   * difference lands in undeposited funds, the books still balance and nothing
+   * is flagged. The only symptom is a clearing account that never returns to
+   * zero, which is exactly the error this whole treatment exists to surface.
+   *
+   * So the settlement books the REMAINDER. Usually that is zero.
+   * -------------------------------------------------------------------------
+   */
+  const [booked] = await tx<{ already: string }[]>`
+      SELECT COALESCE(SUM(pl.fee_amount), 0)::text AS already
+        FROM payment_link pl
+       WHERE pl.tenant_id = ${ctx.tenantId}
+         AND pl.payment_id IN ${tx(input.items.map((i) => i.paymentId))}
+  `;
+
+  const alreadyBooked = Money.fromDecimal(booked!.already, currency);
+  const feesToBook = fees.subtract(alreadyBooked);
+
+  if (feesToBook.isNegative()) {
+    // The provider now reports LESS fee than it charged at confirmation.
+    // Silently reversing part of an expense on a settlement is not something
+    // to do without a human looking at it.
+    throw new CollectionError(
+      'SETTLEMENT_UNBALANCED',
+      `Settlement ${input.providerBatchId} reports ${fees.toDecimalString()} of fees, but ` +
+        `${alreadyBooked.toDecimalString()} was already booked when these payments ` +
+        'confirmed. A settlement cannot reduce a fee already charged — check the ' +
+        'provider report against the individual confirmations.',
+      { alreadyBooked: alreadyBooked.toDecimalString() },
+    );
+  }
+
   let feeJournalEntryId: string | null = null;
-  if (!fees.isZero()) {
+  if (!feesToBook.isZero()) {
     feeJournalEntryId = await postGatewayFee(tx, ctx, {
-      fee: fees.toDecimalString(),
+      fee: feesToBook.toDecimalString(),
       currency,
       config,
       entryDate: input.settlementDate,
@@ -859,10 +1015,13 @@ export class FakeGateway implements PaymentGateway {
 
   private counter = 0;
   private readonly issued = new Map<string, GatewayPaymentRequest>();
+  /** providerRef → merchantOrderId, so an event can echo ours back. */
+  private readonly orders = new Map<string, string>();
 
   createPayment(request: GatewayPaymentRequest): Promise<GatewayPaymentHandle> {
     const providerRef = `fake_${++this.counter}`;
     this.issued.set(providerRef, request);
+    this.orders.set(providerRef, request.merchantOrderId);
     return Promise.resolve({
       providerRef,
       redirectUrl: `https://gateway.invalid/pay/${providerRef}`,
@@ -877,6 +1036,7 @@ export class FakeGateway implements PaymentGateway {
     const parsed = JSON.parse(rawBody) as {
       eventId: string;
       providerRef: string;
+      merchantOrderId?: string;
       type: 'PAID' | 'FAILED' | 'PENDING';
       amount: string;
       currency?: string;
@@ -889,6 +1049,10 @@ export class FakeGateway implements PaymentGateway {
     return {
       eventId: parsed.eventId,
       providerRef: parsed.providerRef,
+      // A real gateway echoes the merchant order id it was given. The fake
+      // one remembers it, so a caller need not repeat it.
+      merchantOrderId:
+        parsed.merchantOrderId ?? this.orders.get(parsed.providerRef) ?? parsed.providerRef,
       type: parsed.type,
       amount: Money.fromDecimal(parsed.amount, currency),
       ...(parsed.fee !== undefined ? { fee: Money.fromDecimal(parsed.fee, currency) } : {}),

@@ -24,3 +24,27 @@ export const Public = () => SetMetadata(PUBLIC_KEY, true);
  */
 export const Requires = (permission: Permission) =>
   SetMetadata(REQUIRED_PERMISSION, permission);
+
+export const NO_IDEMPOTENCY_KEY = 'emil:no-idempotency-key';
+
+/**
+ * Exempt a write from the `Idempotency-Key` requirement.
+ *
+ * ---------------------------------------------------------------------------
+ * FOR ONE CASE ONLY: A WRITE WE DO NOT CONTROL THE CLIENT OF.
+ *
+ * A payment gateway's webhook is delivered by the provider, and no provider
+ * sends a header this product invented. Requiring one would reject every real
+ * webhook, so the choice is not "with or without idempotency" — it is "this
+ * route's own guarantee, or none at all".
+ *
+ * The guarantee is `UNIQUE (tenant_id, provider, provider_event_id)` on
+ * `gateway_event`, enforced in the same transaction as the write. That is
+ * strictly stronger than a header, because it is keyed on the PROVIDER's notion
+ * of the event rather than on a client remembering to reuse a key.
+ *
+ * Applying this anywhere without an equivalent database-level guarantee is a
+ * bug. It is not a convenience for endpoints whose clients are inconvenienced.
+ * ---------------------------------------------------------------------------
+ */
+export const NoIdempotencyKey = () => SetMetadata(NO_IDEMPOTENCY_KEY, true);

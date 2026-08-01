@@ -1,11 +1,14 @@
 import {
+  Inject,
   Injectable,
   type CallHandler,
   type ExecutionContext,
   type NestInterceptor,
 } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import type { FastifyRequest } from 'fastify';
 import { ValidationError } from '../errors.js';
+import { NO_IDEMPOTENCY_KEY } from '../guards/decorators.js';
 
 /**
  * Require an `Idempotency-Key` on every write.
@@ -40,12 +43,22 @@ import { ValidationError } from '../errors.js';
 export class IdempotencyInterceptor implements NestInterceptor {
   private static readonly MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
 
+  constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
+
   intercept(execution: ExecutionContext, next: CallHandler) {
     const request = execution.switchToHttp().getRequest<FastifyRequest>();
 
     if (!IdempotencyInterceptor.MUTATING.has(request.method)) {
       return next.handle();
     }
+
+    // Opt-out, route by route, and only where the database enforces the same
+    // guarantee more strongly. See `@NoIdempotencyKey`.
+    const exempt = this.reflector.getAllAndOverride<boolean>(NO_IDEMPOTENCY_KEY, [
+      execution.getHandler(),
+      execution.getClass(),
+    ]);
+    if (exempt) return next.handle();
 
     const raw = request.headers['idempotency-key'];
     const key = Array.isArray(raw) ? raw[0] : raw;

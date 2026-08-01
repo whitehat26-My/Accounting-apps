@@ -9,6 +9,13 @@ import { IdempotencyInterceptor } from './interceptors/idempotency.interceptor.j
 import { DomainExceptionFilter } from './filters/domain-exception.filter.js';
 import { AuthController } from './modules/auth.controller.js';
 import { AccountingController } from './modules/accounting.controller.js';
+import { CollectionsController } from './modules/collections.controller.js';
+import { ContactsController } from './modules/contacts.controller.js';
+import { PublicPayController } from './modules/public-pay.controller.js';
+import { GatewayRegistry } from './gateways/registry.js';
+import { FakeGateway } from '@emil/db';
+import { GATEWAYS } from './tokens.js';
+import { DatabaseLifecycle } from './database.lifecycle.js';
 
 /**
  * The middleware chain from docs/architecture/01-system-architecture.md §1.3.
@@ -34,7 +41,13 @@ import { AccountingController } from './modules/accounting.controller.js';
  * ---------------------------------------------------------------------------
  */
 @Module({
-  controllers: [AuthController, AccountingController],
+  controllers: [
+    AuthController,
+    AccountingController,
+    ContactsController,
+    CollectionsController,
+    PublicPayController,
+  ],
   providers: [
     {
       provide: CONFIG,
@@ -55,6 +68,30 @@ import { AccountingController } from './modules/accounting.controller.js';
         new FixedWindowRateLimiter(config.rateLimit, config.rateLimitWindowMs),
       inject: [CONFIG],
     },
+    {
+      // A separate budget for /public/*, so a flood of pay-token guesses
+      // cannot exhaust an authenticated tenant's allowance or vice versa.
+      provide: Symbol.for('PUBLIC_RATE_LIMITER'),
+      useFactory: (config: ApiConfig) =>
+        new FixedWindowRateLimiter(config.publicRateLimit, config.rateLimitWindowMs),
+      inject: [CONFIG],
+    },
+    {
+      provide: GATEWAYS,
+      useFactory: (config: ApiConfig): GatewayRegistry => {
+        const registry = new GatewayRegistry();
+        // Empty in production, and that is correct: no concrete adapter exists
+        // yet, so the routes that need one answer 503 rather than pretending.
+        // `loadConfig` refuses this flag when NODE_ENV is production, because
+        // the fake gateway accepts any signature.
+        if (config.enableFakeGateway) registry.register(new FakeGateway());
+        return registry;
+      },
+      inject: [CONFIG],
+    },
+    // Ends the pool on shutdown. A `useFactory` value gets no lifecycle hooks,
+    // so the closing has to live on a class Nest can call.
+    DatabaseLifecycle,
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },

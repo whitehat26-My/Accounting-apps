@@ -466,6 +466,26 @@ export interface PaymentGateway {
 
 export interface GatewayPaymentRequest {
   readonly amount: Money;
+  /**
+   * OUR id for this payment, which the gateway echoes back on every event.
+   *
+   * -------------------------------------------------------------------------
+   * THE WEBHOOK ROUTES ON THIS, NOT ON THE PROVIDER'S OWN REFERENCE.
+   *
+   * A webhook arrives with no tenant, so something in it has to say which
+   * organisation it belongs to. The provider's reference is the obvious
+   * candidate and the wrong one: it is unique within THEIR namespace, and two
+   * merchants on the same provider can be handed the same id. Routing on it
+   * means either refusing a legitimate payment or, far worse, applying a
+   * webhook to the wrong tenant's invoice.
+   *
+   * A merchant order id is a field every gateway carries precisely so the
+   * merchant can recognise its own payment. Ours is the payment link's UUID —
+   * globally unique by construction, and not a credential, unlike the pay-link
+   * token, which is why that token is never put in a callback URL.
+   * -------------------------------------------------------------------------
+   */
+  readonly merchantOrderId: string;
   readonly reference: string;
   readonly description: string;
   readonly payerName?: string;
@@ -483,7 +503,10 @@ export interface GatewayPaymentHandle {
 export interface GatewayEvent {
   /** The provider's own id. The de-duplication key — see `gateway_event`. */
   readonly eventId: string;
+  /** The provider's id for the payment. Recorded, but never routed on. */
   readonly providerRef: string;
+  /** Our id, echoed back. This is what says which tenant the event belongs to. */
+  readonly merchantOrderId: string;
   readonly type: 'PAID' | 'FAILED' | 'PENDING';
   readonly amount: Money;
   readonly fee?: Money;

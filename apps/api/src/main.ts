@@ -46,6 +46,11 @@ export async function createApp(): Promise<NestFastifyApplication> {
     done();
   });
 
+  // Without this Nest never calls `onApplicationShutdown`, and the database
+  // pool in `DatabaseLifecycle` is never drained. `app.close()` alone tears
+  // down the HTTP server and leaves the PostgreSQL connections open.
+  app.enableShutdownHooks();
+
   // Deliberately NO `ValidationPipe`. Nest's pipe validates class-validator
   // decorators on DTO classes; this API validates with Zod in `parse()`, at the
   // single boundary where untrusted input becomes typed input. Two validation

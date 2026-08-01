@@ -67,6 +67,11 @@ export async function createTestApi(name: string): Promise<TestApi> {
   process.env['DATABASE_URL'] = appUrl;
   process.env['JWT_SECRET'] = 'test-secret-that-is-long-enough-to-pass-validation';
   process.env['RATE_LIMIT'] = '10000';
+  process.env['PUBLIC_RATE_LIMIT'] = '10000';
+  // Registers the in-memory FakeGateway, which accepts any signature. Safe
+  // only because `loadConfig` refuses this flag when NODE_ENV is production —
+  // there is a test below asserting exactly that.
+  process.env['EMIL_ENABLE_FAKE_GATEWAY'] = '1';
 
   const app = await createApp();
   await app.init();

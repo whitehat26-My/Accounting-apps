@@ -77,6 +77,7 @@ export class RateLimitGuard implements CanActivate {
   constructor(
     @Inject(CONFIG) private readonly config: ApiConfig,
     @Inject(Symbol.for('RATE_LIMITER')) private readonly limiter: RateLimiter,
+    @Inject(Symbol.for('PUBLIC_RATE_LIMITER')) private readonly publicLimiter: RateLimiter,
   ) {}
 
   canActivate(execution: ExecutionContext): boolean {
@@ -86,6 +87,23 @@ export class RateLimitGuard implements CanActivate {
     // would let one busy tenant behind a corporate NAT throttle another.
     const tenant = request.headers['x-tenant-id'];
     const key = `${Array.isArray(tenant) ? tenant[0] : (tenant ?? 'anon')}:${request.ip}`;
+
+    /*
+     * The pay routes get their own, much tighter budget.
+     *
+     * They are the only unauthenticated read of tenant data, and their key is a
+     * random token — so the rate limit is not a fairness measure here, it is
+     * what makes guessing a token impractical rather than merely slow. It is
+     * also keyed separately so a flood of token guesses cannot exhaust an
+     * authenticated tenant's allowance, and a busy tenant cannot exhaust the
+     * pay page's.
+     */
+    if (request.url.startsWith('/public/')) {
+      const publicKey = `public:${request.ip}`;
+      const result = this.publicLimiter.check(publicKey, Date.now());
+      if (!result.allowed) throw new RateLimitedError(result.retryAfterSeconds);
+      return true;
+    }
 
     const { allowed, retryAfterSeconds } = this.limiter.check(key, Date.now());
     if (!allowed) throw new RateLimitedError(retryAfterSeconds);

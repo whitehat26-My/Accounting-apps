@@ -24,3 +24,4 @@ export const SQL = Symbol('SQL');
 export const CONFIG = Symbol('CONFIG');
 export const CLOCK = Symbol('CLOCK');
 export const RATE_LIMITER = Symbol('RATE_LIMITER');
+export const GATEWAYS = Symbol('GATEWAYS');
