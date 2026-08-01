@@ -119,6 +119,10 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
       ['5000', 'Cost of Sales', 'EXPENSE'],
       ['6000', 'Office Expenses', 'EXPENSE'],
       ['6900', 'Foreign Exchange Gain/Loss', 'EXPENSE'],
+      // Carries the closing-rate adjustment to receivables. Presented on the
+      // same SOFP line as AR — see packages/domain/src/revaluation.ts.
+      ['1190', 'AR Currency Revaluation', 'ASSET'],
+      ['6910', 'Unrealised Foreign Exchange Gain/Loss', 'EXPENSE'],
     ];
 
     const accounts: Record<string, string> = {};
@@ -171,7 +175,9 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
         VALUES (${tenantId}, 'AR',           ${accounts['1100']!}),
                (${tenantId}, 'AP',           ${accounts['2000']!}),
                (${tenantId}, 'SST_PAYABLE',  ${accounts['2100']!}),
-               (${tenantId}, 'FX_GAIN_LOSS', ${accounts['6900']!})
+               (${tenantId}, 'FX_GAIN_LOSS',   ${accounts['6900']!}),
+               (${tenantId}, 'AR_REVALUATION', ${accounts['1190']!}),
+               (${tenantId}, 'UNREALISED_FX',  ${accounts['6910']!})
     `;
 
     // Tax codes. FIXTURES ONLY — not authoritative Malaysian rates. The point
