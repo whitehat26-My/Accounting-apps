@@ -209,6 +209,41 @@ rates plus CP37 filing artefacts.
 | `ReconciliationSession` | bank_account_id, period_start, period_end, statement_closing_balance, book_closing_balance, variance, status, completed_by, completed_at |
 | `ImportProfile` | bank_name, delimiter, date_format, column_map_json, amount_convention (single signed column vs debit/credit columns) |
 
+**Implementation status.** Built: bank accounts, profile-driven CSV import with de-duplication, the
+matching engine (`packages/domain/src/matching.ts`, all seven acceptance tests from §7.4 including
+the 500 × 2,000 performance budget), transfer detection, bank rules, confirm/unmatch, creating a
+ledger entry from a statement line, the reconciliation statement and sessions. **Closes ledger
+invariant #8.**
+
+Decisions worth knowing before extending this module:
+
+- **Saved profiles, never dialect sniffing.** Guessing a CSV's shape is right most of the time and
+  silent when wrong: a description column read as an amount imports a plausible statement with wrong
+  numbers, and the user finds out at year end. Profiles are explicit per bank, parsing is total
+  (violations are returned, never thrown), and `previewStatement()` shows the result before anything
+  is written — so a wrong profile fails in front of the person who can fix it.
+- **De-duplication is `(date, amount, narrative, running balance)` plus an occurrence ordinal**, and
+  it is enforced by a unique index rather than by checking before inserting. The running balance is
+  in the key because two RM 50 ATM withdrawals on one day with one narrative are two real events,
+  and a naive hash drops the second — understating the bank with no error anywhere. The ordinal is
+  the fallback for banks that publish no running balance; its limitation is that a re-import
+  beginning part-way through a run of identical rows will re-import one, which is visible in the
+  preview rather than silent.
+- **Unmatching inserts a reversal row**, exactly as a posted entry is corrected by a reversing
+  entry. `active_reconciliation_match` is the view everything reads; the base table holds decisions,
+  including undone ones.
+- **The view is `WITH (security_invoker = true)`**, without which it would execute as its owner and
+  return every tenant's rows. The table sweep in `rls.test.ts` walks `relkind = 'r'` and cannot
+  catch that, so views are checked separately and by property.
+- **Suggestions only.** Confidence 100 still requires a click, and `auto_apply` on a bank rule is
+  per rule and off by default.
+
+**Deferred within M4**, stated rather than implied: MT940, OFX/QIF and PDF statement parsing; live
+bank feeds (the `BankFeedProvider` port only, with no adapter — a speculative client written against
+an aggregator nobody has integrated would look finished and be wrong); learned rules derived from
+user corrections beyond the narrative→contact aliases already fed to the matcher; and the
+reconciliation workspace UI.
+
 **Boundary notes.** A match never rewrites history. Accepting a match creates a `ReconciliationMatch` row and flips a status; it does not edit the posted journal entry. Unmatching creates a new row with the reversal, so the audit trail shows both decisions.
 
 ---

@@ -347,9 +347,20 @@ Encode these as property-based tests (`fast-check`) over generated transaction s
 
 Invariant 14 is the one to write first. It is the test that proves the isolation boundary works, and it should run against every table in the schema.
 
-**Coverage so far.** 1–7 and 9–14 are tested; **8 is the only one still blocked**, on M4 Banking.
+**Coverage so far.** All fourteen are tested.
 Invariants 6 and 7 both compare the subledger to the control account in BASE currency at BOOKED
 rates (`amount_due * fx_rate`) — summing `amount_due` across currencies adds ringgit to dollars and
 reconciles to nothing. Invariant 7 additionally holds through partial payment, debit notes, and a
 withholding payment that discharges the payable at the gross while only the net leaves the bank
 (`packages/db/test/bill.test.ts`).
+
+Invariant 8 carries a **precondition that has to be stated with it**: bank GL balance = opening +
+reconciled transactions holds only when the account is FULLY reconciled — nothing outstanding on
+either side. On a real account there is almost always a cheque in the post, so an implementation
+that asserts it unconditionally fails constantly and gets switched off. `checkBankInvariant()`
+returns `fullyReconciled` alongside the result rather than assuming it.
+
+The two kinds of outstanding item are also kept apart deliberately, because they are not the same
+kind of thing: an unpresented cheque is a timing difference the bank will catch up with, while an
+unrecorded bank charge is a missing ledger entry. Presented as one pool of "unmatched items", the
+second hides behind the first — which is how bank charges go unrecorded for a year.

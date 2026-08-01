@@ -7,7 +7,10 @@ Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-f
 > submission lifecycle, multi-currency settlement with period-end revaluation on both
 > sides of the balance sheet, the financial statements (trial balance, SOPL, SOFP), and
 > purchases/AP — bills, supplier payments, debit notes, ageing and the withholding
-> mechanism — implemented and tested.
+> mechanism — and banking: statement import, the reconciliation matching engine, and
+> reconciliation sessions. Implemented and tested.
+>
+> **All fourteen ledger invariants now have tests behind them.**
 > The full architecture specification lives in [`docs/architecture/`](docs/architecture/).
 
 ## Quick start
@@ -16,15 +19,15 @@ Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-f
 pnpm install
 ./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
 export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
-pnpm typecheck && pnpm test        # 456 tests
+pnpm typecheck && pnpm test        # 573 tests
 ```
 
 | Package | Contents |
 | --- | --- |
-| `packages/domain` | Pure core — `Money`, journal validation and reversal, the SST tax engine, document/posting construction, allocation, credit notes, the e-Invoice document model and state machine, FX conversion with realised and unrealised gain/loss, and the statement engine. Zero IO, zero framework imports. |
-| `packages/db` | Schema, RLS policies, integrity triggers, the write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`, `enterBill()`, `paySupplier()`, `issueDebitNote()`, `runRevaluation()`) and the MyInvois submission lifecycle. |
+| `packages/domain` | Pure core — `Money`, journal validation and reversal, the SST tax engine, document/posting construction, allocation, credit and debit notes, the e-Invoice document model and state machine, FX conversion with realised and unrealised gain/loss, the statement engine, ageing, withholding, statement parsing and the bank matching engine. Zero IO, zero framework imports. |
+| `packages/db` | Schema, RLS policies, integrity triggers, the write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`, `enterBill()`, `paySupplier()`, `issueDebitNote()`, `runRevaluation()`, `importStatement()`, `confirmMatch()`) and the MyInvois submission lifecycle. |
 
-**What's proven, not just asserted.** 261 domain tests and 195 integration tests against a real
+**What's proven, not just asserted.** 355 domain tests and 218 integration tests against a real
 PostgreSQL.
 
 Property-based tests (fast-check) cover ledger invariants 1, 2 and 4, plus: tax lines always sum to
@@ -34,8 +37,10 @@ auto-allocation never applies more than was received or more than is owed, a cre
 always the exact mirror of the invoice it corrects — line for line, and netting every account back
 to zero — a debit note is likewise the exact mirror of the bill it corrects, a foreign-currency
 settlement balances at any pair of rates, a two-sided revaluation balances whatever either side
-does, withholding's net and withheld always sum back to the gross exactly, and every ageing bucket
-total sums to the report total.
+does, withholding's net and withheld always sum back to the gross exactly, every ageing bucket
+total sums to the report total, a set of books and a statement that genuinely agree always
+reconcile to zero however the outstanding items fall, and statement parsing never throws on any
+input at all.
 
 The database tests are the load-bearing ones — RLS tenant isolation, the deferred balanced-entry
 trigger, posted-entry / issued-invoice / recorded-payment immutability, gapless numbering surviving
@@ -52,8 +57,14 @@ an invoice, aged receivables at a PAST date tying to the AR control account at t
 supplier payment and a customer receipt at identical rates producing equal-and-opposite realised FX,
 input tax absorbed as a cost rather than booked as an asset, withholding discharging the payable at
 the gross while only the net leaves the bank, the balance sheet balancing after invoices, receipts,
-credit notes, bills, supplier payments, FX settlement and revaluation (invariant 3), and NUMERIC
-never degrading to a float. None of that can be verified against a mock.
+credit notes, bills, supplier payments, FX settlement and revaluation (invariant 3), the bank GL
+account equalling opening plus reconciled transactions once nothing is outstanding on either side
+(invariant 8), a re-imported overlapping statement skipping exactly the rows already held while
+keeping two genuinely identical same-day withdrawals, an imported bank line refusing to have its
+amount edited, an unmatch leaving both decisions visible rather than deleting one, a period refusing
+to be signed off while a variance remains, a view without `security_invoker` being caught before it
+can leak across tenants, and NUMERIC never degrading to a float. None of that can be verified
+against a mock.
 
 **Not implemented, deliberately:** Malaysian withholding tax RATES. The mechanism is built and
 tested — resolution with treaty precedence, the gross/net split, the `Dr AP / Cr Bank / Cr WHT
@@ -61,6 +72,10 @@ Payable` posting, and append-only evidence — but `wht_rate` ships EMPTY and a 
 withhold without a configured rate fails loudly. Rates depend on payment type and on any applicable
 double taxation agreement and must be verified against LHDN; a plausible-looking wrong rate is worse
 than an explicit gap, because the payer carries the liability for under-withholding.
+
+**Not implemented, deliberately:** live bank feeds. `BankFeedProvider` is a port with no adapter.
+Malaysia has no broad open banking, so CSV import is the product rather than a fallback, and a
+client written against an aggregator nobody has integrated would look finished and be wrong.
 
 **Not implemented, deliberately:** the MyInvois HTTP client. `MyInvoisGateway` is declared as a port
 in the domain layer; the adapter is written against LHDN's published SDK and tested against their

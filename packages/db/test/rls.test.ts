@@ -246,3 +246,79 @@ describe('audit_log is append-only', () => {
     expect(broken).toHaveLength(0);
   });
 });
+
+describe('views do not become a hole in the boundary', () => {
+  /**
+   * A PostgreSQL view executes with the privileges of its OWNER by default.
+   * Here that owner is the schema owner — a role the tenant policies do not
+   * constrain — so a view created without `security_invoker` returns EVERY
+   * tenant's rows to any caller.
+   *
+   * The table sweep above cannot catch this: it walks `relkind = 'r'`. So
+   * every view gets checked here, by property rather than by name, and a new
+   * one added without the setting fails this test rather than leaking quietly.
+   */
+  it('every view in the schema runs as the invoker', async () => {
+    const views = await sql<{ viewname: string; options: string[] | null }[]>`
+        SELECT c.relname AS viewname, c.reloptions AS options
+          FROM pg_class c
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public' AND c.relkind = 'v'
+    `;
+
+    expect(views.length).toBeGreaterThan(0);
+
+    for (const view of views) {
+      expect(
+        view.options ?? [],
+        `view ${view.viewname} must be created WITH (security_invoker = true), ` +
+          'or it bypasses row-level security entirely',
+      ).toContain('security_invoker=true');
+    }
+  });
+
+  it('active_reconciliation_match shows only the caller’s tenant', async () => {
+    // The property test above proves the setting is present. This proves the
+    // setting does what it claims, through the actual view, with real rows on
+    // both sides of the boundary.
+    const seed = async (t: Tenant) => {
+      const ctx = { tenantId: t.tenantId, userId: t.userId };
+      return withTenant(admin, ctx, async (tx) => {
+        const [glAccount] = await tx<{ id: string }[]>`
+            SELECT id FROM account WHERE tenant_id = ${t.tenantId} AND code = '1000'
+        `;
+        const [bankAccount] = await tx<{ id: string }[]>`
+            INSERT INTO bank_account (tenant_id, name, bank_name, gl_account_id)
+            VALUES (${t.tenantId}, 'Current', 'Maybank', ${glAccount!.id})
+            RETURNING id
+        `;
+        const [line] = await tx<{ id: string }[]>`
+            INSERT INTO bank_transaction (
+                tenant_id, bank_account_id, txn_date, description, amount, dedupe_hash
+            ) VALUES (
+                ${t.tenantId}, ${bankAccount!.id}, '2026-08-05', 'PAYMENT', 100, ${randomUUID()}
+            )
+            RETURNING id
+        `;
+        await tx`
+            INSERT INTO reconciliation_match (
+                tenant_id, bank_transaction_id, matched_type, matched_id, amount
+            ) VALUES (
+                ${t.tenantId}, ${line!.id}, 'JOURNAL', ${randomUUID()}, 100
+            )
+        `;
+        return line!.id;
+      });
+    };
+
+    await seed(alpha);
+    await seed(beta);
+
+    const visible = await withTenant(sql, { tenantId: alpha.tenantId }, (tx) =>
+      tx<{ tenant_id: string }[]>`SELECT tenant_id FROM active_reconciliation_match`,
+    );
+
+    expect(visible.length).toBeGreaterThan(0);
+    expect(visible.every((r) => r.tenant_id === alpha.tenantId)).toBe(true);
+  });
+});

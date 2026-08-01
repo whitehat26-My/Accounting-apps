@@ -6,6 +6,8 @@ export * from './credit-note.js';
 export * from './bill.js';
 export * from './supplier-payment.js';
 export * from './debit-note.js';
+export * from './bank.js';
+export * from './reconciliation.js';
 export * from './einvoice.js';
 export * from './revaluation.js';
 export * from './report.js';
