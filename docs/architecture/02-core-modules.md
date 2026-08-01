@@ -356,14 +356,15 @@ reconciliation workspace UI.
 **Key features**
 - **Statement of Profit or Loss (SOPL)** — period vs comparative period, YTD, budget column later; by tracking category; classified by nature or by function
 - **Statement of Financial Position (SOFP)** — current/non-current classification, comparative column, with a built-in assertion that Assets = Liabilities + Equity and a loud error if the ledger ever disagrees
-- **Statement of Cash Flows** (indirect method) with a reconciliation to the movement in cash accounts
-- **Statement of Changes in Equity**
+- **Statement of Cash Flows** — **built by the DIRECT method, deliberately, where this document originally said indirect.** The indirect method reconstructs cash from profit through a chain of adjustments (depreciation, movements in receivables and payables, accruals, revaluation), and every adjustment is a separate chance to be subtly wrong with no way to tell which one. The direct method reads the cash accounts themselves and asks what the other side of each entry was — and because every journal entry balances, an entry's cash movement is *exactly* the negated sum of its non-cash lines. The decomposition is an identity rather than an estimate, so `opening cash + net cash flow = closing cash` holds by construction and a failure means a real defect. An indirect *presentation* can be derived from this later; the reverse cannot. See `packages/domain/src/cash-flow.ts`.
+  Whether a given asset or liability account is operating, investing or financing is a judgement `account.type` cannot supply, so it is per-account configuration (`cash_flow_classification`); anything undecided lands in a visible UNCLASSIFIED section that still counts toward the total, never silently defaulted into operating.
+- **Statement of Changes in Equity** — treats equity as *equity accounts plus unclosed profit*, so it agrees with the balance sheet whether or not a year-end close has been posted. For an SME product the books are usually not closed, and a SOCE built from equity account balances alone disagrees with the SOFP by exactly the current year's profit.
 - Trial balance (with movement and closing columns), general ledger detail, journal report
 - Aged receivables/payables (summary + detail), customer/supplier statements
 - SST return support schedules; a **management pack** (dashboard: cash position, AR/AP ageing, revenue trend, gross margin, top customers)
 - **Statement layouts are data.** A `ReportDefinition` maps account ranges/tags to statement lines, so MPERS and MFRS presentations, and industry variants, are configuration rather than code.
 - Every figure drills down: statement line → account → journal line → source document → attachment
-- Export: PDF (print-ready, RM formatting, `1,234.56`), XLSX with live formulas, CSV
+- Export: CSV today (trial balance, general ledger, cash flow); PDF and XLSX still to build. **Every exported cell passes through the formula-injection guard in `packages/domain/src/csv.ts`** — a contact name or entry description beginning `=`, `+`, `@` or a control character is executed as a formula by Excel, LibreOffice and Sheets, and an accounting export is opened by an accountant with a client's whole books on the same machine. Negative amounts are deliberately *not* guarded, because turning every credit balance into text breaks the file's reason for existing.
 - Period comparatives handle mid-year chart-of-accounts changes without silently dropping balances
 
 **Data models**

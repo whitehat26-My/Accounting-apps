@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { AgeingReport, RenderedReport } from '@emil/domain';
+import type { AgeingReport } from '@emil/domain';
 import {
   approvalFor,
   createApprovalRule,
@@ -19,10 +19,7 @@ import {
   paySupplier,
   recordReceipt,
   reconcileAccount,
-  statementOfFinancialPosition,
-  statementOfProfitOrLoss,
   suggestForAccount,
-  trialBalanceReport,
   withTenant,
   type Sql,
 } from '@emil/db';
@@ -323,44 +320,9 @@ export class AccountingController {
     };
   }
 
-  // ---- Reporting ----------------------------------------------------------
-
-  @Requires('report.read')
-  @Get('reports/trial-balance')
-  async trialBalance(
-    @Query('from') from: string,
-    @Query('to') to: string,
-    @Req() request: FastifyRequest,
-  ) {
-    const ctx = this.ctx(request);
-    return withTenant(this.sql, ctx, (tx) =>
-      trialBalanceReport(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
-    );
-  }
-
-  @Requires('report.read')
-  @Get('reports/sopl')
-  async sopl(
-    @Query('from') from: string,
-    @Query('to') to: string,
-    @Req() request: FastifyRequest,
-  ) {
-    const ctx = this.ctx(request);
-    const report = await withTenant(this.sql, ctx, (tx) =>
-      statementOfProfitOrLoss(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
-    );
-    return renderReport(report);
-  }
-
-  @Requires('report.read')
-  @Get('reports/sofp')
-  async sofp(@Query('asOf') asOf: string, @Req() request: FastifyRequest) {
-    const ctx = this.ctx(request);
-    const report = await withTenant(this.sql, ctx, (tx) =>
-      statementOfFinancialPosition(tx, ctx, { asOfDate: parse(isoDate, asOf) }),
-    );
-    return renderReport(report);
-  }
+  // Reporting lives in `reports.controller.ts` — trial balance, SOPL, SOFP,
+  // cash flow, changes in equity, the general ledger and the CSV exports are
+  // one surface and belong in one file.
 
   @Get('organisation')
   async organisation(@Req() request: FastifyRequest) {
@@ -525,14 +487,3 @@ function renderAgeing(report: AgeingReport) {
   };
 }
 
-function renderReport(report: RenderedReport) {
-  return {
-    lines: report.lines.map((l) => ({
-      label: l.label,
-      level: l.level,
-      lineType: l.lineType,
-      amount: l.amount.toDecimalString(),
-      ...(l.comparative !== undefined ? { comparative: l.comparative.toDecimalString() } : {}),
-    })),
-  };
-}

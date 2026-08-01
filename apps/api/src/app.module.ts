@@ -16,6 +16,7 @@ import { LedgerController } from './modules/ledger.controller.js';
 import { BankingController } from './modules/banking.controller.js';
 import { ConfigurationController } from './modules/configuration.controller.js';
 import { EInvoiceController } from './modules/einvoice.controller.js';
+import { ReportsController } from './modules/reports.controller.js';
 import { PublicPayController } from './modules/public-pay.controller.js';
 import { GatewayRegistry } from './gateways/registry.js';
 import { FakeGateway } from '@emil/db';
@@ -56,6 +57,7 @@ import { DatabaseLifecycle } from './database.lifecycle.js';
     BankingController,
     ConfigurationController,
     EInvoiceController,
+    ReportsController,
     PublicPayController,
   ],
   providers: [

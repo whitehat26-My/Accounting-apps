@@ -38,7 +38,15 @@ import { loadBaseCurrency } from './invoice.js';
 
 export class ReportError extends Error {
   constructor(
-    readonly code: 'NO_TEMPLATE' | 'REPORT_INVALID' | 'NO_FISCAL_YEAR',
+    /*
+     * `ACCOUNT_NOT_FOUND` is not decoration. The API's exception filter maps
+     * any code ending `_NOT_FOUND` to a 404, and CLAUDE.md §9 requires that a
+     * record belonging to another tenant answers 404 rather than 403 or 422 —
+     * confirming it exists is what leaks. RLS has already filtered the row out
+     * before this layer sees it, so "absent" and "not yours" are genuinely the
+     * same case here, and they must stay the same answer.
+     */
+    readonly code: 'NO_TEMPLATE' | 'REPORT_INVALID' | 'NO_FISCAL_YEAR' | 'ACCOUNT_NOT_FOUND',
     message: string,
     readonly detail?: unknown,
   ) {

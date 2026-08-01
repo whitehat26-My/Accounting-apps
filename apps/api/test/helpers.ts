@@ -186,3 +186,28 @@ export async function accessTokenFor(
     body: response.body,
   };
 }
+
+/**
+ * The same request, without parsing the body as JSON.
+ *
+ * `call` assumes JSON, which is right for every route but the CSV exports —
+ * and a test that ran those through `JSON.parse` would fail on the response
+ * rather than on the assertion, hiding what actually broke.
+ */
+export async function callRaw(api: TestApi, options: Call) {
+  const headers: Record<string, string> = {};
+  if (options.token) headers['authorization'] = `Bearer ${options.token}`;
+  if (options.tenantId) headers['x-tenant-id'] = options.tenantId;
+
+  const response = await api.app.getHttpAdapter().getInstance().inject({
+    method: options.method,
+    url: options.url,
+    headers,
+  });
+
+  return {
+    status: response.statusCode,
+    headers: response.headers as Record<string, string>,
+    body: response.body,
+  };
+}
