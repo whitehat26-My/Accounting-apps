@@ -3,9 +3,8 @@
 Multi-tenant SaaS accounting for Malaysian SMEs and freelance accountants.
 Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-first.
 
-> **Status:** Phase 1 (ledger core) implemented and tested. The full architecture specification
-> lives in [`docs/architecture/`](docs/architecture/); `packages/domain` and `packages/db` are the
-> first working slice of it.
+> **Status:** Phases 1–2 implemented and tested — ledger core, tax engine, and invoicing.
+> The full architecture specification lives in [`docs/architecture/`](docs/architecture/).
 
 ## Quick start
 
@@ -13,19 +12,26 @@ Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-f
 pnpm install
 ./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
 export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
-pnpm typecheck && pnpm test        # 72 tests
+pnpm typecheck && pnpm test        # 135 tests
 ```
 
 | Package | Contents |
 | --- | --- |
-| `packages/domain` | Pure ledger core — `Money`, chart-of-accounts classification, journal validation and reversal. Zero IO, zero framework imports. |
-| `packages/db` | Schema, RLS policies, integrity triggers, and `postJournalEntry()` — the single write path into the ledger. |
+| `packages/domain` | Pure core — `Money`, journal validation and reversal, the SST tax engine, and document/posting construction. Zero IO, zero framework imports. |
+| `packages/db` | Schema, RLS policies, integrity triggers, `postJournalEntry()` (the single write path into the ledger) and `issueInvoice()`. |
 
-**What's proven, not just asserted.** 39 domain tests (including property-based tests over ledger
-invariants 1, 2 and 4) and 33 integration tests against a real PostgreSQL. The database tests are
-the load-bearing ones: RLS tenant isolation, the deferred balanced-entry trigger, posted-entry
-immutability, gapless numbering surviving rollback, rollup/journal agreement, and NUMERIC never
-degrading to a float. None of that can be verified against a mock.
+**What's proven, not just asserted.** 82 domain tests and 53 integration tests against a real
+PostgreSQL.
+
+Property-based tests (fast-check) cover ledger invariants 1, 2 and 4, plus: tax lines always sum to
+the document total under either rounding policy, the tax summary always reconciles to document
+totals, and every generated document produces either a valid balanced journal or no journal at all.
+
+The database tests are the load-bearing ones — RLS tenant isolation, the deferred balanced-entry
+trigger, posted-entry and issued-invoice immutability, gapless numbering surviving rollback,
+AR control agreeing with the invoice subledger (invariant 6), rollup/journal agreement, effective-dated
+rates resolving at the tax point, and NUMERIC never degrading to a float. None of that can be
+verified against a mock.
 
 ## What makes this different from a localised Xero
 

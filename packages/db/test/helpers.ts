@@ -87,6 +87,8 @@ export interface Tenant {
   readonly periodId: string;
   readonly lockedPeriodId: string;
   readonly accounts: Record<string, string>;
+  readonly taxCodes: Record<string, string>;
+  readonly customerId: string;
 }
 
 /**
@@ -102,8 +104,9 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
 
   return withTenant(admin, { tenantId }, async (tx) => {
     await tx`
-        INSERT INTO organisation (id, name, base_currency, fye_month, reporting_framework)
-        VALUES (${tenantId}, ${name}, 'MYR', 12, 'MPERS')
+        INSERT INTO organisation (id, name, base_currency, fye_month,
+                                  reporting_framework, sst_registered, sst_no)
+        VALUES (${tenantId}, ${name}, 'MYR', 12, 'MPERS', TRUE, 'W10-1808-32000123')
     `;
 
     const chart: [string, string, string][] = [
@@ -152,12 +155,56 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, 'INVOICE', 'INV-', 1, 5)
     `;
 
+    // Which account plays which structural role.
+    await tx`
+        INSERT INTO posting_account_map (tenant_id, role, account_id)
+        VALUES (${tenantId}, 'AR',           ${accounts['1100']!}),
+               (${tenantId}, 'AP',           ${accounts['2000']!}),
+               (${tenantId}, 'SST_PAYABLE',  ${accounts['2100']!}),
+               (${tenantId}, 'FX_GAIN_LOSS', ${accounts['6900']!})
+    `;
+
+    // Tax codes. FIXTURES ONLY — not authoritative Malaysian rates. The point
+    // is to exercise rate versioning across a change date, not to assert what
+    // the statutory rate is. Real values come from a verified seed.
+    const taxCodes: Record<string, string> = {};
+
+    const [svc] = await tx<{ id: string }[]>`
+        INSERT INTO tax_code (tenant_id, code, name, regime, input_treatment)
+        VALUES (${tenantId}, 'SST-SVC', 'Service tax', 'SST_SERVICE', 'COST')
+        RETURNING id
+    `;
+    taxCodes['SST-SVC'] = svc!.id;
+
+    await tx`
+        INSERT INTO tax_rate_version (tenant_id, tax_code_id, rate_basis_points, valid_from, valid_to)
+        VALUES (${tenantId}, ${svc!.id}, 600, '2018-09-01', '2024-02-29'),
+               (${tenantId}, ${svc!.id}, 800, '2024-03-01', NULL)
+    `;
+
+    const [none] = await tx<{ id: string }[]>`
+        INSERT INTO tax_code (tenant_id, code, name, regime, input_treatment)
+        VALUES (${tenantId}, 'NONE', 'Out of scope', 'NONE', 'COST')
+        RETURNING id
+    `;
+    taxCodes['NONE'] = none!.id;
+
+    const [customer] = await tx<{ id: string }[]>`
+        INSERT INTO contact (tenant_id, name, is_customer, tin, id_type, id_value,
+                             payment_terms_days, default_currency)
+        VALUES (${tenantId}, 'Nusantara Retail Sdn Bhd', TRUE, 'C12345678901',
+                'BRN', '202301012345', 30, 'MYR')
+        RETURNING id
+    `;
+
     return {
       tenantId,
       userId,
       periodId: openPeriod!.id,
       lockedPeriodId: lockedPeriod!.id,
       accounts,
+      taxCodes,
+      customerId: customer!.id,
     };
   });
 }

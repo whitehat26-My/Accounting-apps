@@ -9,19 +9,30 @@
  * USD is a bug. The two must not be handled by the same mechanism.
  */
 
-export type Result<T, E> =
-  | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: E };
+export interface Ok<T> {
+  readonly ok: true;
+  readonly value: T;
+}
+
+export interface Err<E> {
+  readonly ok: false;
+  readonly error: E;
+}
+
+export type Result<T, E> = Ok<T> | Err<E>;
 
 export const ok = <T>(value: T): Result<T, never> => ({ ok: true, value });
 
 export const err = <E>(error: E): Result<never, E> => ({ ok: false, error });
 
-export function isOk<T, E>(r: Result<T, E>): r is { ok: true; value: T } {
+// The predicate types must be the exact union members, not structurally
+// equivalent literals — otherwise TypeScript narrows the positive branch but
+// leaves the negative branch as the full union.
+export function isOk<T, E>(r: Result<T, E>): r is Ok<T> {
   return r.ok;
 }
 
-export function isErr<T, E>(r: Result<T, E>): r is { ok: false; error: E } {
+export function isErr<T, E>(r: Result<T, E>): r is Err<E> {
   return !r.ok;
 }
 
