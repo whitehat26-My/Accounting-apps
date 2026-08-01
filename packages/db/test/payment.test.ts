@@ -50,7 +50,7 @@ async function issue(unitPrice: string, issueDate = '2026-08-05') {
 async function arControlBalance(): Promise<string> {
   const [row] = await withTenant(sql, ctx(), (tx) =>
     tx<{ balance: string }[]>`
-        SELECT COALESCE(SUM(closing_balance), 0)::text AS balance
+        SELECT COALESCE(SUM(net_movement), 0)::text AS balance
           FROM account_period_balance
          WHERE tenant_id = ${tenant.tenantId} AND account_id = ${tenant.accounts['1100']!}
     `,
@@ -287,7 +287,7 @@ describe('auto-allocation against live balances', () => {
     // says the business owes them RM 150.
     const [row] = await withTenant(sql, soloCtx, (tx) =>
       tx<{ balance: string }[]>`
-          SELECT COALESCE(SUM(closing_balance), 0)::text AS balance
+          SELECT COALESCE(SUM(net_movement), 0)::text AS balance
             FROM account_period_balance
            WHERE tenant_id = ${solo.tenantId} AND account_id = ${solo.accounts['1100']!}
       `,

@@ -324,7 +324,7 @@ async function accountBalances(sql: Sql, t: Tenant): Promise<Record<string, stri
   const ctx = { tenantId: t.tenantId };
   const rows = await withTenant(sql, ctx, (tx) =>
     tx<{ code: string; balance: string }[]>`
-        SELECT a.code, COALESCE(SUM(b.closing_balance), 0)::text AS balance
+        SELECT a.code, COALESCE(SUM(b.net_movement), 0)::text AS balance
           FROM account a
           LEFT JOIN account_period_balance b
             ON b.tenant_id = a.tenant_id AND b.account_id = a.id

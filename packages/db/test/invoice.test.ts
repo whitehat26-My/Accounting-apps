@@ -174,7 +174,7 @@ describe('ledger invariant #6 — AR control agrees with the subledger', () => {
 
     const [control] = await withTenant(sql, ctx(), (tx) =>
       tx<{ balance: string }[]>`
-          SELECT COALESCE(SUM(b.closing_balance), 0)::text AS balance
+          SELECT COALESCE(SUM(b.net_movement), 0)::text AS balance
             FROM account_period_balance b
            WHERE b.tenant_id = ${tenant.tenantId}
              AND b.account_id = ${tenant.accounts['1100']!}

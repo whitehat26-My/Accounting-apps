@@ -116,6 +116,12 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     // refreshed from LHDN, contains nothing tenant-specific. Read-only to the
     // application role.
     einvoice_classification_code: 'global LHDN reference data, read-only',
+    // Statement layouts are the same for every tenant and contain no tenant
+    // data. Read-only to the application role; tenant-specific overrides,
+    // when they exist, will live in separate tenant-scoped tables.
+    report_template: 'global statement layout, read-only',
+    report_template_line: 'global statement layout, read-only',
+    report_template_line_map: 'global statement layout, read-only',
   };
 
   it('every tenant-owned table has RLS enabled AND forced with a policy', async () => {

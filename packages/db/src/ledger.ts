@@ -131,18 +131,19 @@ export async function postJournalEntry(
     await tx`
         INSERT INTO account_period_balance (
             tenant_id, account_id, fiscal_period_id, currency,
-            debit_total, credit_total, closing_balance
+            debit_total, credit_total, net_movement
         ) VALUES (
             ${ctx.tenantId}, ${line.accountId}, ${period.id}, ${entry.baseCurrency},
             ${debit}, ${credit}, ${isDebit ? debit : `-${credit}`}
         )
         ON CONFLICT (tenant_id, account_id, fiscal_period_id, currency) DO UPDATE
-        SET debit_total     = account_period_balance.debit_total  + EXCLUDED.debit_total,
-            credit_total    = account_period_balance.credit_total + EXCLUDED.credit_total,
-            closing_balance = account_period_balance.opening_balance
-                            + account_period_balance.debit_total  + EXCLUDED.debit_total
-                            - account_period_balance.credit_total - EXCLUDED.credit_total,
-            updated_at      = now()
+        SET debit_total  = account_period_balance.debit_total  + EXCLUDED.debit_total,
+            credit_total = account_period_balance.credit_total + EXCLUDED.credit_total,
+            -- Debit-positive movement for this period. Cumulative balance is
+            -- SUM(net_movement) over periods, computed at read time.
+            net_movement = account_period_balance.debit_total  + EXCLUDED.debit_total
+                         - account_period_balance.credit_total - EXCLUDED.credit_total,
+            updated_at   = now()
     `;
   }
 

@@ -180,6 +180,18 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, 'UNREALISED_FX',  ${accounts['6910']!})
     `;
 
+    // Tags let the GLOBAL statement templates address this chart without
+    // knowing its ids or numbering. The AR revaluation account carries the same
+    // tag as the AR control account, so both present on one SOFP line.
+    await tx`
+        INSERT INTO account_tag (tenant_id, account_id, tag)
+        VALUES (${tenantId}, ${accounts['1000']!}, 'cash_and_bank'),
+               (${tenantId}, ${accounts['1100']!}, 'trade_receivables'),
+               (${tenantId}, ${accounts['1190']!}, 'trade_receivables'),
+               (${tenantId}, ${accounts['2000']!}, 'trade_payables'),
+               (${tenantId}, ${accounts['2100']!}, 'trade_payables')
+    `;
+
     // Tax codes. FIXTURES ONLY — not authoritative Malaysian rates. The point
     // is to exercise rate versioning across a change date, not to assert what
     // the statutory rate is. Real values come from a verified seed.

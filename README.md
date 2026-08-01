@@ -4,8 +4,8 @@ Multi-tenant SaaS accounting for Malaysian SMEs and freelance accountants.
 Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-first.
 
 > **Status:** Ledger core, tax engine, invoicing, receipts, credit notes, the MyInvois
-> submission lifecycle, and multi-currency settlement with period-end revaluation implemented
-> and tested.
+> submission lifecycle, multi-currency settlement with period-end revaluation, and the
+> financial statements (trial balance, SOPL, SOFP) implemented and tested.
 > The full architecture specification lives in [`docs/architecture/`](docs/architecture/).
 
 ## Quick start
@@ -14,15 +14,15 @@ Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-f
 pnpm install
 ./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
 export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
-pnpm typecheck && pnpm test        # 324 tests
+pnpm typecheck && pnpm test        # 362 tests
 ```
 
 | Package | Contents |
 | --- | --- |
-| `packages/domain` | Pure core — `Money`, journal validation and reversal, the SST tax engine, document/posting construction, allocation, credit notes, the e-Invoice document model and state machine, and FX conversion with realised and unrealised gain/loss. Zero IO, zero framework imports. |
+| `packages/domain` | Pure core — `Money`, journal validation and reversal, the SST tax engine, document/posting construction, allocation, credit notes, the e-Invoice document model and state machine, FX conversion with realised and unrealised gain/loss, and the statement engine. Zero IO, zero framework imports. |
 | `packages/db` | Schema, RLS policies, integrity triggers, the four write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`) and the MyInvois submission lifecycle. |
 
-**What's proven, not just asserted.** 183 domain tests and 141 integration tests against a real
+**What's proven, not just asserted.** 210 domain tests and 152 integration tests against a real
 PostgreSQL.
 
 Property-based tests (fast-check) cover ledger invariants 1, 2 and 4, plus: tax lines always sum to
@@ -40,7 +40,8 @@ at the database level whether by payment or by credit, credit notes netting outp
 SST return, e-Invoice documents assembled from the ledger reconciling to their own lines, AR
 clearing to exactly zero when a foreign invoice is settled at a moved rate (invariant 13),
 a period-end revaluation reversing so cleanly that the later realised gain is measured from the
-original rate rather than double-counted, and NUMERIC never degrading to a float. None of that can be verified against a mock.
+original rate rather than double-counted, the balance sheet balancing after invoices, receipts,
+credit notes, FX settlement and revaluation (invariant 3), and NUMERIC never degrading to a float. None of that can be verified against a mock.
 
 **Not implemented, deliberately:** the MyInvois HTTP client. `MyInvoisGateway` is declared as a port
 in the domain layer; the adapter is written against LHDN's published SDK and tested against their

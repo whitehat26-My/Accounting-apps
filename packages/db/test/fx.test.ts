@@ -58,7 +58,7 @@ async function accountBase(code: string, t: Tenant = tenant): Promise<string> {
   const c = { tenantId: t.tenantId };
   const [row] = await withTenant(sql, c, (tx) =>
     tx<{ balance: string }[]>`
-        SELECT COALESCE(SUM(closing_balance), 0)::text AS balance
+        SELECT COALESCE(SUM(net_movement), 0)::text AS balance
           FROM account_period_balance
          WHERE tenant_id = ${t.tenantId} AND account_id = ${t.accounts[code]!}
     `,

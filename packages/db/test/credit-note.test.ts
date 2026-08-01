@@ -365,7 +365,7 @@ describe('ledger invariants still hold', () => {
 
     const [control] = await withTenant(sql, ctx(), (tx) =>
       tx<{ balance: string }[]>`
-          SELECT COALESCE(SUM(closing_balance), 0)::text AS balance
+          SELECT COALESCE(SUM(net_movement), 0)::text AS balance
             FROM account_period_balance
            WHERE tenant_id = ${tenant.tenantId} AND account_id = ${tenant.accounts['1100']!}
       `,
@@ -423,7 +423,7 @@ describe('ledger invariants still hold', () => {
 
     const balances = await withTenant(sql, soloCtx, (tx) =>
       tx<{ code: string; balance: string }[]>`
-          SELECT a.code, SUM(b.closing_balance)::text AS balance
+          SELECT a.code, SUM(b.net_movement)::text AS balance
             FROM account_period_balance b
             JOIN account a ON a.tenant_id = b.tenant_id AND a.id = b.account_id
            WHERE b.tenant_id = ${solo.tenantId}
