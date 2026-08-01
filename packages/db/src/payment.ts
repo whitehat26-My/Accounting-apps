@@ -1,6 +1,6 @@
 import {
   autoAllocate,
-  buildReceiptJournal,
+  buildSettlementJournal,
   isErr,
   Money,
   Rate,
@@ -9,9 +9,9 @@ import {
   validateJournalEntry,
   validateReceipt,
   type AllocationStrategy,
-  type OpenInvoice,
+  type OpenDocument,
   type PaymentMethod,
-  type ReceiptAllocation,
+  type SettlementAllocation,
 } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
@@ -136,18 +136,18 @@ export async function recordReceipt(
 
   // Each invoice carries the rate its AR was booked at. That is the rate it
   // must be relieved at — ledger invariant #13.
-  const openInvoices: OpenInvoice[] = openRows.map((r) => ({
-    invoiceId: r.id,
-    invoiceNo: r.invoice_no,
+  const openInvoices: OpenDocument[] = openRows.map((r) => ({
+    documentId: r.id,
+    documentNo: r.invoice_no,
     issueDate: toIsoDate(r.issue_date),
     dueDate: toIsoDate(r.due_date),
     amountDue: Money.fromDecimal(r.amount_due, currency),
     bookedRate: Rate.fromDecimal(r.fx_rate),
   }));
 
-  const allocations: ReceiptAllocation[] = input.allocations
+  const allocations: SettlementAllocation[] = input.allocations
     ? input.allocations.map((a) => ({
-        invoiceId: a.invoiceId,
+        documentId: a.invoiceId,
         amount: Money.fromDecimal(a.amount, currency),
       }))
     : autoAllocate(amount, openInvoices, input.allocationStrategy ?? 'OLDEST_FIRST');
@@ -190,16 +190,17 @@ export async function recordReceipt(
     tx, ctx, currency, baseCurrency, input.paymentDate, input.fxRate,
   );
 
-  const journalDraft = buildReceiptJournal(
+  const journalDraft = buildSettlementJournal(
+    'INBOUND',
     receipt,
-    { accountsReceivableId, ...(fxAccountId ? { fxGainLossId: fxAccountId } : {}) },
+    { controlAccountId: accountsReceivableId, ...(fxAccountId ? { fxGainLossId: fxAccountId } : {}) },
     {
       entryDate: input.paymentDate,
       description: `Receipt ${paymentNo}`,
       documentType: 'PAYMENT',
       documentId: paymentId,
     },
-    { baseCurrency, settlementRate, openInvoices },
+    { baseCurrency, settlementRate, openDocuments: openInvoices },
   );
 
   if (journalDraft === null) {
@@ -251,11 +252,11 @@ export async function recordReceipt(
   for (const allocation of receipt.allocations) {
     await tx`
         INSERT INTO payment_allocation (tenant_id, payment_id, target_type, target_id, amount)
-        VALUES (${ctx.tenantId}, ${paymentId}, 'INVOICE', ${allocation.invoiceId},
+        VALUES (${ctx.tenantId}, ${paymentId}, 'INVOICE', ${allocation.documentId},
                 ${allocation.amount.toDecimalString()})
     `;
 
-    const source = openRows.find((r) => r.id === allocation.invoiceId)!;
+    const source = openRows.find((r) => r.id === allocation.documentId)!;
     const total = Money.fromDecimal(source.total, currency);
     const newPaid = Money.fromDecimal(source.amount_paid, currency).add(allocation.amount);
     const status = settlementStatus(total, newPaid);
@@ -263,11 +264,11 @@ export async function recordReceipt(
     await tx`
         UPDATE invoice
            SET amount_paid = ${newPaid.toDecimalString()}, status = ${status}
-         WHERE tenant_id = ${ctx.tenantId} AND id = ${allocation.invoiceId}
+         WHERE tenant_id = ${ctx.tenantId} AND id = ${allocation.documentId}
     `;
 
     settledInvoices.push({
-      invoiceId: allocation.invoiceId,
+      invoiceId: allocation.documentId,
       status,
       amountDue: total.subtract(newPaid).toDecimalString(),
     });

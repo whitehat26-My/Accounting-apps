@@ -379,3 +379,58 @@ describe('validation', () => {
     expect(isOk(compute(args))).toBe(true);
   });
 });
+
+describe('withholding is not a document tax', () => {
+  const WHT_CODE: TaxCode = {
+    id: 'tc-wht',
+    code: 'WHT-TECH',
+    name: 'Withholding on technical fees',
+    regime: 'WHT',
+    inputTreatment: 'COST',
+    versions: [{ rateBasisPoints: 1000n, validFrom: '2018-01-01', validTo: null }],
+  };
+
+  it('is rejected rather than charged like SST', () => {
+    // Left unguarded this fell through to the ordinary rate path and was added
+    // as a positive charge at the document's tax point — plausible-looking, and
+    // it overstates both the expense and the payable. Withholding is a
+    // deduction from a PAYMENT, recognised when the payment is made.
+    const result = computeTax({
+      lines: [{ lineId: 'l1', taxCodeId: 'tc-wht', amount: rm('10000.00') }],
+      taxPointDate: '2026-08-01',
+      direction: 'INPUT',
+      amountsAreTaxInclusive: false,
+      taxCodes: [...CODES, WHT_CODE],
+      entity: REGISTERED,
+    });
+
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.error[0]).toMatchObject({
+        code: 'WITHHOLDING_IS_NOT_A_DOCUMENT_TAX',
+        taxCodeId: 'tc-wht',
+      });
+    }
+  });
+
+  it('does not affect ordinary SST codes on the same document', () => {
+    const result = computeTax({
+      lines: [
+        { lineId: 'l1', taxCodeId: 'tc-svc', amount: rm('1000.00') },
+        { lineId: 'l2', taxCodeId: 'tc-wht', amount: rm('1000.00') },
+      ],
+      taxPointDate: '2026-08-01',
+      direction: 'INPUT',
+      amountsAreTaxInclusive: false,
+      taxCodes: [...CODES, WHT_CODE],
+      entity: REGISTERED,
+    });
+
+    // The whole document is refused — one bad line is not silently dropped.
+    expect(isErr(result)).toBe(true);
+    if (isErr(result)) {
+      expect(result.error).toHaveLength(1);
+      expect(result.error[0]!.code).toBe('WITHHOLDING_IS_NOT_A_DOCUMENT_TAX');
+    }
+  });
+});

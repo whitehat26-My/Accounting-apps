@@ -14,7 +14,7 @@
 
 import { Money, sumMoney, type Currency } from './money.js';
 import { err, isErr, ok, type Result } from './result.js';
-import { fxPostingSide, realisedFx, Rate, toBase, type SettlementLeg } from './fx.js';
+import { realisedFx, Rate, toBase, type SettlementLeg } from './fx.js';
 import type { JournalEntryDraft, JournalLineDraft } from './journal-entry.js';
 
 export type PaymentMethod =
@@ -28,23 +28,30 @@ export type PaymentMethod =
 
 export type PaymentDirection = 'INBOUND' | 'OUTBOUND';
 
-/** An invoice with something still owing on it. */
-export interface OpenInvoice {
-  readonly invoiceId: string;
-  readonly invoiceNo: string;
+/**
+ * A document with something still owing on it.
+ *
+ * Named for documents rather than invoices because none of these fields is
+ * invoice-specific — a bill has every one of them, and `issueCreditNote()`
+ * already reuses this shape for a non-receipt document. Settling a payable
+ * runs the identical arithmetic.
+ */
+export interface OpenDocument {
+  readonly documentId: string;
+  readonly documentNo: string;
   readonly issueDate: string;
   readonly dueDate: string;
   readonly amountDue: Money;
   /**
-   * The rate at which this invoice's AR was booked. Absent means 1:1 (a
-   * base-currency invoice). AR must be relieved at THIS rate, not at the
+   * The rate at which this document's control account was booked. Absent
+   * means 1:1. The control account must be relieved at THIS rate, not at the
    * settlement rate — see packages/domain/src/fx.ts.
    */
   readonly bookedRate?: Rate;
 }
 
-export interface ReceiptAllocation {
-  readonly invoiceId: string;
+export interface SettlementAllocation {
+  readonly documentId: string;
   readonly amount: Money;
 }
 
@@ -55,7 +62,7 @@ export interface ReceiptInput {
   readonly method: PaymentMethod;
   /** GL account the money landed in — bank, cash, or undeposited funds. */
   readonly depositAccountId: string;
-  readonly allocations: readonly ReceiptAllocation[];
+  readonly allocations: readonly SettlementAllocation[];
   readonly reference?: string;
 }
 
@@ -78,10 +85,10 @@ export interface ValidatedReceipt extends ReceiptInput {
  * settlement paths starts accepting something the other refuses.
  */
 export type AllocationViolation =
-  | { readonly code: 'NON_POSITIVE_ALLOCATION'; readonly invoiceId: string; readonly amount: string }
-  | { readonly code: 'UNKNOWN_INVOICE'; readonly invoiceId: string }
-  | { readonly code: 'EXCEEDS_AMOUNT_DUE'; readonly invoiceId: string; readonly allocated: string; readonly amountDue: string }
-  | { readonly code: 'DUPLICATE_ALLOCATION'; readonly invoiceId: string }
+  | { readonly code: 'NON_POSITIVE_ALLOCATION'; readonly documentId: string; readonly amount: string }
+  | { readonly code: 'UNKNOWN_DOCUMENT'; readonly documentId: string }
+  | { readonly code: 'EXCEEDS_AMOUNT_DUE'; readonly documentId: string; readonly allocated: string; readonly amountDue: string }
+  | { readonly code: 'DUPLICATE_ALLOCATION'; readonly documentId: string }
   | { readonly code: 'OVER_ALLOCATED'; readonly received: string; readonly allocated: string }
   | { readonly code: 'MIXED_CURRENCY'; readonly expected: Currency; readonly found: Currency };
 
@@ -96,12 +103,12 @@ export interface AllocationOutcome {
  */
 export function validateAllocations(
   available: Money,
-  allocations: readonly ReceiptAllocation[],
-  openInvoices: readonly OpenInvoice[],
+  allocations: readonly SettlementAllocation[],
+  openDocuments: readonly OpenDocument[],
 ): Result<AllocationOutcome, AllocationViolation[]> {
   const violations: AllocationViolation[] = [];
   const currency = available.currency;
-  const byId = new Map(openInvoices.map((i) => [i.invoiceId, i]));
+  const byId = new Map(openDocuments.map((d) => [d.documentId, d]));
   const seen = new Set<string>();
 
   for (const allocation of allocations) {
@@ -113,28 +120,28 @@ export function validateAllocations(
     if (!allocation.amount.isPositive()) {
       violations.push({
         code: 'NON_POSITIVE_ALLOCATION',
-        invoiceId: allocation.invoiceId,
+        documentId: allocation.documentId,
         amount: allocation.amount.toDecimalString(),
       });
     }
 
-    if (seen.has(allocation.invoiceId)) {
-      violations.push({ code: 'DUPLICATE_ALLOCATION', invoiceId: allocation.invoiceId });
+    if (seen.has(allocation.documentId)) {
+      violations.push({ code: 'DUPLICATE_ALLOCATION', documentId: allocation.documentId });
     }
-    seen.add(allocation.invoiceId);
+    seen.add(allocation.documentId);
 
-    const invoice = byId.get(allocation.invoiceId);
-    if (!invoice) {
-      violations.push({ code: 'UNKNOWN_INVOICE', invoiceId: allocation.invoiceId });
+    const document = byId.get(allocation.documentId);
+    if (!document) {
+      violations.push({ code: 'UNKNOWN_DOCUMENT', documentId: allocation.documentId });
       continue;
     }
 
-    if (allocation.amount.compare(invoice.amountDue) > 0) {
+    if (allocation.amount.compare(document.amountDue) > 0) {
       violations.push({
         code: 'EXCEEDS_AMOUNT_DUE',
-        invoiceId: allocation.invoiceId,
+        documentId: allocation.documentId,
         allocated: allocation.amount.toDecimalString(),
-        amountDue: invoice.amountDue.toDecimalString(),
+        amountDue: document.amountDue.toDecimalString(),
       });
     }
   }
@@ -173,7 +180,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
  */
 export function validateReceipt(
   input: ReceiptInput,
-  openInvoices: readonly OpenInvoice[],
+  openDocuments: readonly OpenDocument[],
 ): Result<ValidatedReceipt, ReceiptViolation[]> {
   const violations: ReceiptViolation[] = [];
 
@@ -187,7 +194,7 @@ export function validateReceipt(
 
   if (violations.length > 0) return err(violations);
 
-  const allocated = validateAllocations(input.amount, input.allocations, openInvoices);
+  const allocated = validateAllocations(input.amount, input.allocations, openDocuments);
   if (isErr(allocated)) return err(allocated.error);
 
   return ok({
@@ -213,48 +220,49 @@ export type AllocationStrategy = 'OLDEST_FIRST' | 'DUE_FIRST';
  */
 export function autoAllocate(
   amount: Money,
-  openInvoices: readonly OpenInvoice[],
+  openDocuments: readonly OpenDocument[],
   strategy: AllocationStrategy = 'OLDEST_FIRST',
-): ReceiptAllocation[] {
+): SettlementAllocation[] {
   const key = strategy === 'OLDEST_FIRST' ? 'issueDate' : 'dueDate';
-  const ordered = [...openInvoices].sort((a, b) =>
-    a[key] === b[key] ? a.invoiceNo.localeCompare(b.invoiceNo) : a[key] < b[key] ? -1 : 1,
+  const ordered = [...openDocuments].sort((a, b) =>
+    a[key] === b[key] ? a.documentNo.localeCompare(b.documentNo) : a[key] < b[key] ? -1 : 1,
   );
 
-  const allocations: ReceiptAllocation[] = [];
+  const allocations: SettlementAllocation[] = [];
   let remaining = amount;
 
-  for (const invoice of ordered) {
+  for (const document of ordered) {
     if (!remaining.isPositive()) break;
-    if (!invoice.amountDue.isPositive()) continue;
+    if (!document.amountDue.isPositive()) continue;
 
-    const applied = remaining.compare(invoice.amountDue) >= 0 ? invoice.amountDue : remaining;
-    allocations.push({ invoiceId: invoice.invoiceId, amount: applied });
+    const applied = remaining.compare(document.amountDue) >= 0 ? document.amountDue : remaining;
+    allocations.push({ documentId: document.documentId, amount: applied });
     remaining = remaining.subtract(applied);
   }
 
   return allocations;
 }
 
-export interface ReceiptPostingAccounts {
-  readonly accountsReceivableId: string;
+export interface SettlementPostingAccounts {
+  /** Accounts receivable for an inbound settlement, payable for outbound. */
+  readonly controlAccountId: string;
   /** Required only when a settlement can produce an FX difference. */
   readonly fxGainLossId?: string;
 }
 
 /**
- * Supplied when the receipt is not in the tenant's base currency.
+ * Supplied when the settlement is not in the tenant's base currency.
  *
- * `settlementRate` is the rate on the day the money arrived. Each allocation's
- * booked rate comes from its `OpenInvoice`.
+ * `settlementRate` is the rate on the day the money moved. Each allocation's
+ * booked rate comes from its `OpenDocument`.
  */
-export interface ReceiptFxContext {
+export interface SettlementFxContext {
   readonly baseCurrency: Currency;
   readonly settlementRate: Rate;
-  readonly openInvoices: readonly OpenInvoice[];
+  readonly openDocuments: readonly OpenDocument[];
 }
 
-export interface ReceiptPostingContext {
+export interface SettlementPostingContext {
   readonly entryDate: string;
   readonly description?: string;
   readonly documentType: string;
@@ -262,128 +270,145 @@ export interface ReceiptPostingContext {
 }
 
 /**
- * Receipt:
- *   Dr Bank / Cash / Undeposited Funds   (amount received)
- *   Cr Accounts Receivable               (amount received)
+ * Post a settlement, in either direction.
  *
- * The FULL amount credits AR, including any unallocated remainder. An
- * overpayment leaves the customer's AR balance negative — which is exactly
+ *   INBOUND  (receipt):  Dr Bank / Cr Accounts receivable
+ *   OUTBOUND (payment):  Dr Accounts payable / Cr Bank
+ *
+ * ---------------------------------------------------------------------------
+ * ONE code path for both directions, and one for base and foreign currency.
+ *
+ * The temptation is to write a payables copy of the receipts version. That
+ * would be a mistake: the foreign-currency logic is the subtlest code in this
+ * package, and a copy needs the debit and credit sides swapped — which INVERTS
+ * the meaning of the realised difference. A copied `fxPostingSide()` would
+ * cheerfully label a loss as a gain, and nothing about the entry would look
+ * wrong, because it would still balance.
+ *
+ * So the FX line is not computed from a sign rule at all. The two real lines
+ * are posted first, and the FX line is simply WHATEVER BALANCES THE ENTRY. For
+ * an inbound settlement at a higher rate the bank debit exceeds the relieved
+ * receivable, so the balancing figure is a credit — a gain. For an outbound
+ * settlement at a higher rate the bank credit exceeds the relieved payable, so
+ * the balancing figure is a debit — a loss. The direction never appears in a
+ * sign conditional, because it does not need to.
+ * ---------------------------------------------------------------------------
+ *
+ * The FULL amount hits the control account, including any unallocated
+ * remainder. An overpayment leaves the customer in credit — which is exactly
  * right: the business owes them that money until it is applied or refunded.
- * Parking it in a separate "customer credits" account would take it out of
- * AR and break the agreement between the control account and the subledger.
+ * Parking it elsewhere would break the agreement between the control account
+ * and the subledger.
  */
-export function buildReceiptJournal(
-  receipt: ValidatedReceipt,
-  accounts: ReceiptPostingAccounts,
-  ctx: ReceiptPostingContext,
-  fx?: ReceiptFxContext,
+export function buildSettlementJournal(
+  direction: PaymentDirection,
+  settlement: ValidatedReceipt,
+  accounts: SettlementPostingAccounts,
+  ctx: SettlementPostingContext,
+  fx?: SettlementFxContext,
 ): JournalEntryDraft | null {
-  if (receipt.amount.isZero()) return null;
+  if (settlement.amount.isZero()) return null;
 
-  // --- base-currency case -------------------------------------------------
-  if (!fx || receipt.amount.currency === fx.baseCurrency) {
-    return {
-      entryDate: ctx.entryDate,
-      ...(ctx.description !== undefined ? { description: ctx.description } : {}),
-      sourceModule: 'SALES',
-      sourceDocumentType: ctx.documentType,
-      sourceDocumentId: ctx.documentId,
-      lines: [
-        {
-          accountId: receipt.depositAccountId,
-          side: 'DEBIT',
-          amount: receipt.amount,
-          baseAmount: receipt.amount,
-          description: `Receipt (${receipt.method})`,
-          contactId: receipt.contactId,
-        },
-        {
-          accountId: accounts.accountsReceivableId,
-          side: 'CREDIT',
-          amount: receipt.amount,
-          baseAmount: receipt.amount,
-          description: 'Accounts receivable settled',
-          contactId: receipt.contactId,
-        },
-      ],
-    };
+  const inbound = direction === 'INBOUND';
+  const baseCurrency = fx?.baseCurrency ?? settlement.amount.currency;
+  const foreign = fx !== undefined && settlement.amount.currency !== fx.baseCurrency;
+
+  // --- the bank side: the money that actually moved, at today's rate -------
+  const bankBase = foreign
+    ? toBase(settlement.amount, fx.settlementRate, baseCurrency)
+    : settlement.amount;
+
+  // --- the control side: relieved at each document's OWN booked rate -------
+  let controlBase: Money;
+
+  if (foreign) {
+    const rateByDocument = new Map(
+      fx.openDocuments.map((d) => [d.documentId, d.bookedRate ?? Rate.one()]),
+    );
+
+    const legs: SettlementLeg[] = settlement.allocations.map((a) => ({
+      amount: a.amount,
+      bookedRate: rateByDocument.get(a.documentId) ?? fx.settlementRate,
+    }));
+
+    // An unallocated remainder is a fresh credit, so it is carried at today's
+    // rate rather than at any historical one.
+    const allocated = realisedFx(legs, fx.settlementRate, baseCurrency);
+    controlBase = allocated.bookedBase.add(
+      toBase(settlement.unallocated, fx.settlementRate, baseCurrency),
+    );
+  } else {
+    controlBase = settlement.amount;
   }
-
-  // --- foreign-currency case ----------------------------------------------
-  const { baseCurrency, settlementRate } = fx;
-  const rateByInvoice = new Map(
-    fx.openInvoices.map((i) => [i.invoiceId, i.bookedRate ?? Rate.one()]),
-  );
-
-  const legs: SettlementLeg[] = receipt.allocations.map((a) => ({
-    amount: a.amount,
-    bookedRate: rateByInvoice.get(a.invoiceId) ?? settlementRate,
-  }));
-
-  // The bank receives the whole amount at today's rate.
-  const bankBase = toBase(receipt.amount, settlementRate, baseCurrency);
-
-  // AR is relieved at each invoice's own booked rate. An unallocated
-  // remainder is a fresh customer credit, so it is carried at today's rate.
-  const allocated = realisedFx(legs, settlementRate, baseCurrency);
-  const unallocatedBase = toBase(receipt.unallocated, settlementRate, baseCurrency);
-  const arBase = allocated.bookedBase.add(unallocatedBase);
 
   const lines: JournalLineDraft[] = [
     {
-      accountId: receipt.depositAccountId,
-      side: 'DEBIT',
-      amount: receipt.amount,
+      accountId: settlement.depositAccountId,
+      side: inbound ? 'DEBIT' : 'CREDIT',
+      amount: settlement.amount,
       baseAmount: bankBase,
-      description: `Receipt (${receipt.method})`,
-      contactId: receipt.contactId,
+      description: inbound
+        ? `Receipt (${settlement.method})`
+        : `Payment (${settlement.method})`,
+      contactId: settlement.contactId,
     },
     {
-      accountId: accounts.accountsReceivableId,
-      side: 'CREDIT',
-      amount: receipt.amount,
-      baseAmount: arBase,
-      description: 'Accounts receivable settled',
-      contactId: receipt.contactId,
+      accountId: accounts.controlAccountId,
+      side: inbound ? 'CREDIT' : 'DEBIT',
+      amount: settlement.amount,
+      baseAmount: controlBase,
+      description: inbound ? 'Accounts receivable settled' : 'Accounts payable settled',
+      contactId: settlement.contactId,
     },
   ];
 
-  // The difference is whatever is left over — derived from the two rates, not
-  // plugged. If it is zero there is no FX line at all.
-  const difference = bankBase.subtract(arBase);
+  // --- the FX line: the balancing figure -----------------------------------
+  const debits = lines
+    .filter((l) => l.side === 'DEBIT')
+    .reduce((acc, l) => acc.add(l.baseAmount), Money.zero(baseCurrency));
+  const credits = lines
+    .filter((l) => l.side === 'CREDIT')
+    .reduce((acc, l) => acc.add(l.baseAmount), Money.zero(baseCurrency));
 
-  if (!difference.isZero()) {
+  const imbalance = debits.subtract(credits);
+
+  if (!imbalance.isZero()) {
     if (!accounts.fxGainLossId) {
       throw new Error(
-        'A settlement produced a realised exchange difference of ' +
-          `${difference.toDecimalString()} ${baseCurrency}, but no FX gain/loss ` +
+        `A settlement produced a realised exchange difference of ` +
+          `${imbalance.toDecimalString()} ${baseCurrency}, but no FX gain/loss ` +
           'account is configured. Posting without it would leave the entry unbalanced.',
       );
     }
 
+    // A surplus of debits needs a credit to balance, and vice versa.
+    const side = imbalance.isPositive() ? 'CREDIT' : 'DEBIT';
+    // Debit to the FX account is a loss whichever way the money moved.
+    const isLoss = side === 'DEBIT';
+
     lines.push({
       accountId: accounts.fxGainLossId,
-      side: fxPostingSide(difference),
-      amount: difference.abs(),
-      baseAmount: difference.abs(),
-      description: difference.isNegative()
+      side,
+      amount: imbalance.abs(),
+      baseAmount: imbalance.abs(),
+      description: isLoss
         ? 'Realised foreign exchange loss'
         : 'Realised foreign exchange gain',
-      contactId: receipt.contactId,
+      contactId: settlement.contactId,
     });
   }
 
   return {
     entryDate: ctx.entryDate,
     ...(ctx.description !== undefined ? { description: ctx.description } : {}),
-    sourceModule: 'SALES',
+    sourceModule: inbound ? 'SALES' : 'PURCHASES',
     sourceDocumentType: ctx.documentType,
     sourceDocumentId: ctx.documentId,
     lines,
   };
 }
 
-/** The status an invoice moves to once `paid` has been applied to it. */
+/** The status a document moves to once `paid` has been applied to it. */
 export function settlementStatus(total: Money, paid: Money): 'ISSUED' | 'PART_PAID' | 'PAID' {
   if (paid.isZero()) return 'ISSUED';
   return paid.compare(total) >= 0 ? 'PAID' : 'PART_PAID';

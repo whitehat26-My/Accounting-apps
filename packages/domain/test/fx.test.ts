@@ -5,9 +5,9 @@ import { unwrap } from '../src/result.js';
 import { netMovementByAccount, validateJournalEntry } from '../src/journal-entry.js';
 import { converter, fxPostingSide, Rate, realisedFx, toBase } from '../src/fx.js';
 import {
-  buildReceiptJournal,
+  buildSettlementJournal,
   validateReceipt,
-  type OpenInvoice,
+  type OpenDocument,
   type ReceiptInput,
 } from '../src/payment.js';
 import { buildSalesJournal, computeDocument, type DocumentLine } from '../src/document.js';
@@ -147,7 +147,7 @@ const NO_TAX: TaxCode = {
 };
 
 const SALES_ACCOUNTS = { accountsReceivableId: 'acc-ar', taxPayableId: 'acc-sst' };
-const RECEIPT_ACCOUNTS = { accountsReceivableId: 'acc-ar', fxGainLossId: 'acc-fx' };
+const RECEIPT_ACCOUNTS = { controlAccountId: 'acc-ar', fxGainLossId: 'acc-fx' };
 
 function foreignInvoice(amount: string, rate: string) {
   const lines: DocumentLine[] = [
@@ -185,8 +185,8 @@ function foreignInvoice(amount: string, rate: string) {
 function receiptFor(
   amount: string,
   settlementRate: string,
-  openInvoices: readonly OpenInvoice[],
-  allocations: readonly { invoiceId: string; amount: Money }[],
+  openDocuments: readonly OpenDocument[],
+  allocations: readonly { documentId: string; amount: Money }[],
 ) {
   const input: ReceiptInput = {
     contactId: 'cust-1',
@@ -197,13 +197,14 @@ function receiptFor(
     allocations,
   };
 
-  const receipt = unwrap(validateReceipt(input, openInvoices));
+  const receipt = unwrap(validateReceipt(input, openDocuments));
 
-  return buildReceiptJournal(
+  return buildSettlementJournal(
+    'INBOUND',
     receipt,
     RECEIPT_ACCOUNTS,
     { entryDate: '2026-09-01', documentType: 'PAYMENT', documentId: 'pay-1' },
-    { baseCurrency: MYR, settlementRate: Rate.fromDecimal(settlementRate), openInvoices },
+    { baseCurrency: MYR, settlementRate: Rate.fromDecimal(settlementRate), openDocuments },
   )!;
 }
 
@@ -219,9 +220,9 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
   });
 
   it('posts a realised gain and stays balanced', () => {
-    const open: OpenInvoice[] = [{
-      invoiceId: 'inv-1',
-      invoiceNo: 'INV-1',
+    const open: OpenDocument[] = [{
+      documentId: 'inv-1',
+      documentNo: 'INV-1',
       issueDate: '2026-08-01',
       dueDate: '2026-08-31',
       amountDue: usd('1000.00'),
@@ -229,7 +230,7 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
     }];
 
     const entry = receiptFor('1000.00', '4.75', open, [
-      { invoiceId: 'inv-1', amount: usd('1000.00') },
+      { documentId: 'inv-1', amount: usd('1000.00') },
     ]);
 
     const bank = entry.lines.find((l) => l.accountId === 'acc-bank-usd')!;
@@ -246,9 +247,9 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
   });
 
   it('posts a realised loss and stays balanced', () => {
-    const open: OpenInvoice[] = [{
-      invoiceId: 'inv-1',
-      invoiceNo: 'INV-1',
+    const open: OpenDocument[] = [{
+      documentId: 'inv-1',
+      documentNo: 'INV-1',
       issueDate: '2026-08-01',
       dueDate: '2026-08-31',
       amountDue: usd('1000.00'),
@@ -256,7 +257,7 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
     }];
 
     const entry = receiptFor('1000.00', '4.55', open, [
-      { invoiceId: 'inv-1', amount: usd('1000.00') },
+      { documentId: 'inv-1', amount: usd('1000.00') },
     ]);
 
     const fx = entry.lines.find((l) => l.accountId === 'acc-fx')!;
@@ -266,9 +267,9 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
   });
 
   it('omits the FX line entirely when the rate has not moved', () => {
-    const open: OpenInvoice[] = [{
-      invoiceId: 'inv-1',
-      invoiceNo: 'INV-1',
+    const open: OpenDocument[] = [{
+      documentId: 'inv-1',
+      documentNo: 'INV-1',
       issueDate: '2026-08-01',
       dueDate: '2026-08-31',
       amountDue: usd('1000.00'),
@@ -276,7 +277,7 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
     }];
 
     const entry = receiptFor('1000.00', '4.70', open, [
-      { invoiceId: 'inv-1', amount: usd('1000.00') },
+      { documentId: 'inv-1', amount: usd('1000.00') },
     ]);
 
     expect(entry.lines.some((l) => l.accountId === 'acc-fx')).toBe(false);
@@ -284,20 +285,20 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
   });
 
   it('relieves each invoice at its own rate when one receipt settles several', () => {
-    const open: OpenInvoice[] = [
+    const open: OpenDocument[] = [
       {
-        invoiceId: 'inv-a', invoiceNo: 'INV-A', issueDate: '2026-06-01', dueDate: '2026-06-30',
+        documentId: 'inv-a', documentNo: 'INV-A', issueDate: '2026-06-01', dueDate: '2026-06-30',
         amountDue: usd('1000.00'), bookedRate: Rate.fromDecimal('4.50'),
       },
       {
-        invoiceId: 'inv-b', invoiceNo: 'INV-B', issueDate: '2026-08-01', dueDate: '2026-08-31',
+        documentId: 'inv-b', documentNo: 'INV-B', issueDate: '2026-08-01', dueDate: '2026-08-31',
         amountDue: usd('1000.00'), bookedRate: Rate.fromDecimal('4.70'),
       },
     ];
 
     const entry = receiptFor('2000.00', '4.75', open, [
-      { invoiceId: 'inv-a', amount: usd('1000.00') },
-      { invoiceId: 'inv-b', amount: usd('1000.00') },
+      { documentId: 'inv-a', amount: usd('1000.00') },
+      { documentId: 'inv-b', amount: usd('1000.00') },
     ]);
 
     const ar = entry.lines.find((l) => l.accountId === 'acc-ar')!;
@@ -309,15 +310,15 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
   });
 
   it('carries an unallocated remainder at the settlement rate', () => {
-    const open: OpenInvoice[] = [{
-      invoiceId: 'inv-1', invoiceNo: 'INV-1', issueDate: '2026-08-01', dueDate: '2026-08-31',
+    const open: OpenDocument[] = [{
+      documentId: 'inv-1', documentNo: 'INV-1', issueDate: '2026-08-01', dueDate: '2026-08-31',
       amountDue: usd('1000.00'), bookedRate: Rate.fromDecimal('4.70'),
     }];
 
     // USD 1,200 received, USD 1,000 applied. The 200 overpayment is a fresh
     // credit and belongs at today's rate, not at the old invoice's rate.
     const entry = receiptFor('1200.00', '4.75', open, [
-      { invoiceId: 'inv-1', amount: usd('1000.00') },
+      { documentId: 'inv-1', amount: usd('1000.00') },
     ]);
 
     const ar = entry.lines.find((l) => l.accountId === 'acc-ar')!;
@@ -328,13 +329,13 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
   it('clears AR to exactly zero when a foreign invoice is settled in full', () => {
     const { entry: invoiceEntry } = foreignInvoice('1000.00', '4.70');
 
-    const open: OpenInvoice[] = [{
-      invoiceId: 'inv-1', invoiceNo: 'INV-1', issueDate: '2026-08-01', dueDate: '2026-08-31',
+    const open: OpenDocument[] = [{
+      documentId: 'inv-1', documentNo: 'INV-1', issueDate: '2026-08-01', dueDate: '2026-08-31',
       amountDue: usd('1000.00'), bookedRate: Rate.fromDecimal('4.70'),
     }];
 
     const receiptEntry = receiptFor('1000.00', '4.75', open, [
-      { invoiceId: 'inv-1', amount: usd('1000.00') },
+      { documentId: 'inv-1', amount: usd('1000.00') },
     ]);
 
     // This is the whole point: the AR control account returns to zero, and
@@ -352,8 +353,8 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
         fc.bigInt({ min: 1_00000000n, max: 10_00000000n }), // settlement rate
         (amountUnits, bookedUnits, settlementUnits) => {
           const amount = Money.fromUnits(amountUnits, USD);
-          const open: OpenInvoice[] = [{
-            invoiceId: 'inv-1', invoiceNo: 'INV-1',
+          const open: OpenDocument[] = [{
+            documentId: 'inv-1', documentNo: 'INV-1',
             issueDate: '2026-08-01', dueDate: '2026-08-31',
             amountDue: amount, bookedRate: Rate.fromUnits(bookedUnits),
           }];
@@ -363,17 +364,18 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
               {
                 contactId: 'c', paymentDate: '2026-09-01', amount,
                 method: 'TRANSFER', depositAccountId: 'acc-bank-usd',
-                allocations: [{ invoiceId: 'inv-1', amount }],
+                allocations: [{ documentId: 'inv-1', amount }],
               },
               open,
             ),
           );
 
-          const entry = buildReceiptJournal(
+          const entry = buildSettlementJournal(
+            'INBOUND',
             receipt,
             RECEIPT_ACCOUNTS,
             { entryDate: '2026-09-01', documentType: 'PAYMENT', documentId: 'p' },
-            { baseCurrency: MYR, settlementRate: Rate.fromUnits(settlementUnits), openInvoices: open },
+            { baseCurrency: MYR, settlementRate: Rate.fromUnits(settlementUnits), openDocuments: open },
           )!;
 
           const validated = validateJournalEntry(entry, MYR);
@@ -384,8 +386,8 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
   });
 
   it('refuses to post an FX difference with no account configured', () => {
-    const open: OpenInvoice[] = [{
-      invoiceId: 'inv-1', invoiceNo: 'INV-1', issueDate: '2026-08-01', dueDate: '2026-08-31',
+    const open: OpenDocument[] = [{
+      documentId: 'inv-1', documentNo: 'INV-1', issueDate: '2026-08-01', dueDate: '2026-08-31',
       amountDue: usd('1000.00'), bookedRate: Rate.fromDecimal('4.70'),
     }];
 
@@ -394,7 +396,7 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
         {
           contactId: 'c', paymentDate: '2026-09-01', amount: usd('1000.00'),
           method: 'TRANSFER', depositAccountId: 'acc-bank-usd',
-          allocations: [{ invoiceId: 'inv-1', amount: usd('1000.00') }],
+          allocations: [{ documentId: 'inv-1', amount: usd('1000.00') }],
         },
         open,
       ),
@@ -402,11 +404,12 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
 
     // Silently dropping the difference would post an unbalanced entry.
     expect(() =>
-      buildReceiptJournal(
+      buildSettlementJournal(
+        'INBOUND',
         receipt,
-        { accountsReceivableId: 'acc-ar' },
+        { controlAccountId: 'acc-ar' },
         { entryDate: '2026-09-01', documentType: 'PAYMENT', documentId: 'p' },
-        { baseCurrency: MYR, settlementRate: Rate.fromDecimal('4.75'), openInvoices: open },
+        { baseCurrency: MYR, settlementRate: Rate.fromDecimal('4.75'), openDocuments: open },
       ),
     ).toThrow(/FX gain\/loss account/i);
   });
@@ -414,8 +417,8 @@ describe('invariant #13 — settling at a different rate posts a balanced FX lin
 
 describe('base-currency receipts are unaffected', () => {
   it('posts two lines with no FX involvement', () => {
-    const open: OpenInvoice[] = [{
-      invoiceId: 'inv-1', invoiceNo: 'INV-1', issueDate: '2026-08-01', dueDate: '2026-08-31',
+    const open: OpenDocument[] = [{
+      documentId: 'inv-1', documentNo: 'INV-1', issueDate: '2026-08-01', dueDate: '2026-08-31',
       amountDue: rm('1000.00'),
     }];
 
@@ -424,20 +427,181 @@ describe('base-currency receipts are unaffected', () => {
         {
           contactId: 'c', paymentDate: '2026-09-01', amount: rm('1000.00'),
           method: 'FPX', depositAccountId: 'acc-bank',
-          allocations: [{ invoiceId: 'inv-1', amount: rm('1000.00') }],
+          allocations: [{ documentId: 'inv-1', amount: rm('1000.00') }],
         },
         open,
       ),
     );
 
-    const entry = buildReceiptJournal(
+    const entry = buildSettlementJournal(
+      'INBOUND',
       receipt,
       RECEIPT_ACCOUNTS,
       { entryDate: '2026-09-01', documentType: 'PAYMENT', documentId: 'p' },
-      { baseCurrency: MYR, settlementRate: Rate.one(), openInvoices: open },
+      { baseCurrency: MYR, settlementRate: Rate.one(), openDocuments: open },
     )!;
 
     expect(entry.lines).toHaveLength(2);
     expect(sumMoney(entry.lines.map((l) => l.baseAmount), MYR).toDecimalString()).toBe('2000.0000');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Outbound settlement — the direction that would have been a copy-paste
+// ---------------------------------------------------------------------------
+
+const PAYABLE_ACCOUNTS = { controlAccountId: 'acc-ap', fxGainLossId: 'acc-fx' };
+
+function paymentFor(
+  amount: string,
+  settlementRate: string,
+  openDocuments: readonly OpenDocument[],
+  allocations: readonly { documentId: string; amount: Money }[],
+) {
+  const settlement = unwrap(
+    validateReceipt(
+      {
+        contactId: 'supp-1',
+        paymentDate: '2026-09-01',
+        amount: usd(amount),
+        method: 'TRANSFER',
+        depositAccountId: 'acc-bank-usd',
+        allocations,
+      },
+      openDocuments,
+    ),
+  );
+
+  return buildSettlementJournal(
+    'OUTBOUND',
+    settlement,
+    PAYABLE_ACCOUNTS,
+    { entryDate: '2026-09-01', documentType: 'PAYMENT', documentId: 'pay-1' },
+    { baseCurrency: MYR, settlementRate: Rate.fromDecimal(settlementRate), openDocuments },
+  )!;
+}
+
+const openBill = (bookedRate: string, amountDue = '1000.00'): OpenDocument[] => [{
+  documentId: 'bill-1',
+  documentNo: 'SUP-INV-9',
+  issueDate: '2026-08-01',
+  dueDate: '2026-08-31',
+  amountDue: usd(amountDue),
+  bookedRate: Rate.fromDecimal(bookedRate),
+}];
+
+describe('paying a foreign supplier', () => {
+  it('posts Dr AP / Cr Bank, the mirror of a receipt', () => {
+    const entry = paymentFor('1000.00', '4.70', openBill('4.70'), [
+      { documentId: 'bill-1', amount: usd('1000.00') },
+    ]);
+
+    const ap = entry.lines.find((l) => l.accountId === 'acc-ap')!;
+    const bank = entry.lines.find((l) => l.accountId === 'acc-bank-usd')!;
+
+    expect(ap.side).toBe('DEBIT');
+    expect(bank.side).toBe('CREDIT');
+    expect(entry.sourceModule).toBe('PURCHASES');
+    expect(validateJournalEntry(entry, MYR).ok).toBe(true);
+  });
+
+  it('paying at a HIGHER rate is a LOSS, not a gain', () => {
+    // The whole reason this is one function rather than two. A copied
+    // receipts version would have kept fxPostingSide()'s receivable sense and
+    // labelled this a gain, and the entry would still have balanced.
+    const entry = paymentFor('1000.00', '4.75', openBill('4.70'), [
+      { documentId: 'bill-1', amount: usd('1000.00') },
+    ]);
+
+    const fx = entry.lines.find((l) => l.accountId === 'acc-fx')!;
+    expect(fx.side).toBe('DEBIT');
+    expect(fx.description).toMatch(/loss/i);
+    expect(fx.baseAmount.toDecimalString()).toBe('50.0000');
+    expect(validateJournalEntry(entry, MYR).ok).toBe(true);
+  });
+
+  it('paying at a LOWER rate is a gain', () => {
+    const entry = paymentFor('1000.00', '4.55', openBill('4.70'), [
+      { documentId: 'bill-1', amount: usd('1000.00') },
+    ]);
+
+    const fx = entry.lines.find((l) => l.accountId === 'acc-fx')!;
+    expect(fx.side).toBe('CREDIT');
+    expect(fx.description).toMatch(/gain/i);
+    expect(fx.baseAmount.toDecimalString()).toBe('150.0000');
+  });
+
+  it('clears AP to exactly zero when a foreign bill is settled in full', () => {
+    // Mirror of the receivable case: AP is relieved at the rate the BILL was
+    // booked at, so the control account returns to zero and the residue lands
+    // in FX rather than being stranded in AP.
+    const billEntry: Parameters<typeof netMovementByAccount>[0][number] = {
+      entryDate: '2026-08-01',
+      sourceModule: 'PURCHASES',
+      lines: [
+        {
+          accountId: 'acc-expense', side: 'DEBIT',
+          amount: usd('1000.00'), baseAmount: rm('4700.00'),
+        },
+        {
+          accountId: 'acc-ap', side: 'CREDIT',
+          amount: usd('1000.00'), baseAmount: rm('4700.00'),
+        },
+      ],
+    };
+
+    const paymentEntry = paymentFor('1000.00', '4.75', openBill('4.70'), [
+      { documentId: 'bill-1', amount: usd('1000.00') },
+    ]);
+
+    const movements = netMovementByAccount([billEntry, paymentEntry], MYR);
+    expect(movements.get('acc-ap')!.isZero()).toBe(true);
+    expect(movements.get('acc-fx')!.toDecimalString()).toBe('50.0000'); // debit = loss
+  });
+
+  it('inbound and outbound at the same rates are equal and opposite (property)', () => {
+    fc.assert(
+      fc.property(
+        fc.bigInt({ min: 1n, max: 10_000_0000n }),
+        fc.bigInt({ min: 1_00000000n, max: 10_00000000n }),
+        fc.bigInt({ min: 1_00000000n, max: 10_00000000n }),
+        (amountUnits, bookedUnits, settlementUnits) => {
+          const amount = Money.fromUnits(amountUnits, USD);
+          const booked = Rate.fromUnits(bookedUnits);
+          const settlement = Rate.fromUnits(settlementUnits);
+
+          const open: OpenDocument[] = [{
+            documentId: 'doc-1', documentNo: 'D-1',
+            issueDate: '2026-08-01', dueDate: '2026-08-31',
+            amountDue: amount, bookedRate: booked,
+          }];
+          const allocations = [{ documentId: 'doc-1', amount }];
+
+          const inbound = receiptFor(
+            amount.toDecimalString(), settlement.toDecimalString(), open, allocations,
+          );
+          const outbound = paymentFor(
+            amount.toDecimalString(), settlement.toDecimalString(), open, allocations,
+          );
+
+          const fxIn = inbound.lines.find((l) => l.accountId === 'acc-fx');
+          const fxOut = outbound.lines.find((l) => l.accountId === 'acc-fx');
+
+          if (!fxIn || !fxOut) {
+            // No rate movement — neither direction posts an FX line.
+            expect(fxIn).toBeUndefined();
+            expect(fxOut).toBeUndefined();
+            return;
+          }
+
+          // Same magnitude, opposite side. A receivable gain is a payable loss.
+          expect(fxIn.baseAmount.equals(fxOut.baseAmount)).toBe(true);
+          expect(fxIn.side).not.toBe(fxOut.side);
+
+          expect(validateJournalEntry(inbound, MYR).ok).toBe(true);
+          expect(validateJournalEntry(outbound, MYR).ok).toBe(true);
+        },
+      ),
+    );
   });
 });

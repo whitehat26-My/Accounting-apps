@@ -5,22 +5,22 @@ import { isErr, unwrap } from '../src/result.js';
 import { validateJournalEntry } from '../src/journal-entry.js';
 import {
   autoAllocate,
-  buildReceiptJournal,
+  buildSettlementJournal,
   settlementStatus,
   validateReceipt,
-  type OpenInvoice,
+  type OpenDocument,
   type ReceiptInput,
 } from '../src/payment.js';
 
 const MYR = 'MYR';
 const rm = (v: string) => Money.fromDecimal(v, MYR);
 
-const ACCOUNTS = { accountsReceivableId: 'acc-ar' };
+const ACCOUNTS = { controlAccountId: 'acc-ar' };
 const POSTING = { entryDate: '2026-08-20', documentType: 'PAYMENT', documentId: 'pay-1' };
 
-const openInvoice = (over: Partial<OpenInvoice> = {}): OpenInvoice => ({
-  invoiceId: 'inv-1',
-  invoiceNo: 'INV-00001',
+const openInvoice = (over: Partial<OpenDocument> = {}): OpenDocument => ({
+  documentId: 'inv-1',
+  documentNo: 'INV-00001',
   issueDate: '2026-08-01',
   dueDate: '2026-08-31',
   amountDue: rm('1080.00'),
@@ -33,7 +33,7 @@ const receipt = (over: Partial<ReceiptInput> = {}): ReceiptInput => ({
   amount: rm('1080.00'),
   method: 'DUITNOW',
   depositAccountId: 'acc-bank',
-  allocations: [{ invoiceId: 'inv-1', amount: rm('1080.00') }],
+  allocations: [{ documentId: 'inv-1', amount: rm('1080.00') }],
   ...over,
 });
 
@@ -49,7 +49,7 @@ describe('receipt validation', () => {
   it('accepts a part payment', () => {
     const validated = unwrap(
       validateReceipt(
-        receipt({ amount: rm('500.00'), allocations: [{ invoiceId: 'inv-1', amount: rm('500.00') }] }),
+        receipt({ amount: rm('500.00'), allocations: [{ documentId: 'inv-1', amount: rm('500.00') }] }),
         [openInvoice()],
       ),
     );
@@ -62,13 +62,13 @@ describe('receipt validation', () => {
         receipt({
           amount: rm('1500.00'),
           allocations: [
-            { invoiceId: 'inv-1', amount: rm('1000.00') },
-            { invoiceId: 'inv-2', amount: rm('500.00') },
+            { documentId: 'inv-1', amount: rm('1000.00') },
+            { documentId: 'inv-2', amount: rm('500.00') },
           ],
         }),
         [
-          openInvoice({ invoiceId: 'inv-1', amountDue: rm('1000.00') }),
-          openInvoice({ invoiceId: 'inv-2', invoiceNo: 'INV-00002', amountDue: rm('500.00') }),
+          openInvoice({ documentId: 'inv-1', amountDue: rm('1000.00') }),
+          openInvoice({ documentId: 'inv-2', documentNo: 'INV-00002', amountDue: rm('500.00') }),
         ],
       ),
     );
@@ -79,7 +79,7 @@ describe('receipt validation', () => {
   it('records an overpayment as unallocated rather than rejecting it', () => {
     const validated = unwrap(
       validateReceipt(
-        receipt({ amount: rm('1200.00'), allocations: [{ invoiceId: 'inv-1', amount: rm('1080.00') }] }),
+        receipt({ amount: rm('1200.00'), allocations: [{ documentId: 'inv-1', amount: rm('1080.00') }] }),
         [openInvoice()],
       ),
     );
@@ -88,7 +88,7 @@ describe('receipt validation', () => {
 
   it('rejects allocating more than was received', () => {
     const result = validateReceipt(
-      receipt({ amount: rm('500.00'), allocations: [{ invoiceId: 'inv-1', amount: rm('1080.00') }] }),
+      receipt({ amount: rm('500.00'), allocations: [{ documentId: 'inv-1', amount: rm('1080.00') }] }),
       [openInvoice()],
     );
     expect(isErr(result)).toBe(true);
@@ -97,7 +97,7 @@ describe('receipt validation', () => {
 
   it('rejects allocating more than the invoice still owes', () => {
     const result = validateReceipt(
-      receipt({ amount: rm('2000.00'), allocations: [{ invoiceId: 'inv-1', amount: rm('2000.00') }] }),
+      receipt({ amount: rm('2000.00'), allocations: [{ documentId: 'inv-1', amount: rm('2000.00') }] }),
       [openInvoice({ amountDue: rm('1080.00') })],
     );
     expect(isErr(result)).toBe(true);
@@ -106,11 +106,11 @@ describe('receipt validation', () => {
 
   it('rejects an unknown invoice', () => {
     const result = validateReceipt(
-      receipt({ allocations: [{ invoiceId: 'inv-ghost', amount: rm('10.00') }] }),
+      receipt({ allocations: [{ documentId: 'inv-ghost', amount: rm('10.00') }] }),
       [openInvoice()],
     );
     expect(isErr(result)).toBe(true);
-    if (isErr(result)) expect(result.error[0]).toMatchObject({ code: 'UNKNOWN_INVOICE' });
+    if (isErr(result)) expect(result.error[0]).toMatchObject({ code: 'UNKNOWN_DOCUMENT' });
   });
 
   it('rejects the same invoice allocated twice', () => {
@@ -118,8 +118,8 @@ describe('receipt validation', () => {
       receipt({
         amount: rm('100.00'),
         allocations: [
-          { invoiceId: 'inv-1', amount: rm('50.00') },
-          { invoiceId: 'inv-1', amount: rm('50.00') },
+          { documentId: 'inv-1', amount: rm('50.00') },
+          { documentId: 'inv-1', amount: rm('50.00') },
         ],
       }),
       [openInvoice()],
@@ -138,14 +138,14 @@ describe('receipt validation', () => {
 
 describe('autoAllocate', () => {
   const invoices = [
-    openInvoice({ invoiceId: 'a', invoiceNo: 'INV-1', issueDate: '2026-06-01', dueDate: '2026-07-31', amountDue: rm('300.00') }),
-    openInvoice({ invoiceId: 'b', invoiceNo: 'INV-2', issueDate: '2026-07-01', dueDate: '2026-07-15', amountDue: rm('400.00') }),
-    openInvoice({ invoiceId: 'c', invoiceNo: 'INV-3', issueDate: '2026-08-01', dueDate: '2026-08-31', amountDue: rm('500.00') }),
+    openInvoice({ documentId: 'a', documentNo: 'INV-1', issueDate: '2026-06-01', dueDate: '2026-07-31', amountDue: rm('300.00') }),
+    openInvoice({ documentId: 'b', documentNo: 'INV-2', issueDate: '2026-07-01', dueDate: '2026-07-15', amountDue: rm('400.00') }),
+    openInvoice({ documentId: 'c', documentNo: 'INV-3', issueDate: '2026-08-01', dueDate: '2026-08-31', amountDue: rm('500.00') }),
   ];
 
   it('settles oldest first by default', () => {
     const allocations = autoAllocate(rm('800.00'), invoices);
-    expect(allocations.map((a) => [a.invoiceId, a.amount.toDecimalString()])).toEqual([
+    expect(allocations.map((a) => [a.documentId, a.amount.toDecimalString()])).toEqual([
       ['a', '300.0000'],
       ['b', '400.0000'],
       ['c', '100.0000'],
@@ -155,7 +155,7 @@ describe('autoAllocate', () => {
   it('can settle by due date instead', () => {
     const allocations = autoAllocate(rm('500.00'), invoices, 'DUE_FIRST');
     // INV-2 is due first despite being issued after INV-1.
-    expect(allocations[0]!.invoiceId).toBe('b');
+    expect(allocations[0]!.documentId).toBe('b');
   });
 
   it('stops when the money runs out', () => {
@@ -177,8 +177,8 @@ describe('autoAllocate', () => {
         (received, dues) => {
           const open = dues.map((d, i) =>
             openInvoice({
-              invoiceId: `inv-${i}`,
-              invoiceNo: `INV-${i}`,
+              documentId: `inv-${i}`,
+              documentNo: `INV-${i}`,
               issueDate: `2026-01-${String((i % 28) + 1).padStart(2, '0')}`,
               amountDue: Money.fromUnits(d, MYR),
             }),
@@ -189,9 +189,9 @@ describe('autoAllocate', () => {
 
           expect(total.compare(amount)).toBeLessThanOrEqual(0);
 
-          const dueById = new Map(open.map((o) => [o.invoiceId, o.amountDue]));
+          const dueById = new Map(open.map((o) => [o.documentId, o.amountDue]));
           for (const allocation of allocations) {
-            expect(allocation.amount.compare(dueById.get(allocation.invoiceId)!)).toBeLessThanOrEqual(0);
+            expect(allocation.amount.compare(dueById.get(allocation.documentId)!)).toBeLessThanOrEqual(0);
           }
 
           // And whatever it proposes must pass validation.
@@ -205,7 +205,7 @@ describe('autoAllocate', () => {
 describe('receipt journal', () => {
   it('posts Dr Bank / Cr AR for the full amount received', () => {
     const validated = unwrap(validateReceipt(receipt(), [openInvoice()]));
-    const entry = buildReceiptJournal(validated, ACCOUNTS, POSTING)!;
+    const entry = buildSettlementJournal('INBOUND', validated, ACCOUNTS, POSTING)!;
 
     expect(entry.lines).toHaveLength(2);
     const bank = entry.lines.find((l) => l.accountId === 'acc-bank')!;
@@ -222,11 +222,11 @@ describe('receipt journal', () => {
     // correctly says the business owes them money.
     const validated = unwrap(
       validateReceipt(
-        receipt({ amount: rm('1200.00'), allocations: [{ invoiceId: 'inv-1', amount: rm('1080.00') }] }),
+        receipt({ amount: rm('1200.00'), allocations: [{ documentId: 'inv-1', amount: rm('1080.00') }] }),
         [openInvoice()],
       ),
     );
-    const entry = buildReceiptJournal(validated, ACCOUNTS, POSTING)!;
+    const entry = buildSettlementJournal('INBOUND', validated, ACCOUNTS, POSTING)!;
     expect(entry.lines.find((l) => l.accountId === 'acc-ar')!.amount.toDecimalString()).toBe('1200.0000');
   });
 
@@ -235,7 +235,7 @@ describe('receipt journal', () => {
       fc.property(fc.bigInt({ min: 1n, max: 100_000_0000n }), (units) => {
         const amount = Money.fromUnits(units, MYR);
         const validated = unwrap(validateReceipt(receipt({ amount, allocations: [] }), []));
-        const entry = buildReceiptJournal(validated, ACCOUNTS, POSTING)!;
+        const entry = buildSettlementJournal('INBOUND', validated, ACCOUNTS, POSTING)!;
         expect(validateJournalEntry(entry, MYR).ok).toBe(true);
       }),
     );

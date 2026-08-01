@@ -169,6 +169,7 @@ export type TaxViolation =
   | { readonly code: 'UNKNOWN_TAX_CODE'; readonly lineId: string; readonly taxCodeId: string }
   | { readonly code: 'NO_RATE_IN_EFFECT'; readonly lineId: string; readonly taxCodeId: string; readonly taxPointDate: string }
   | { readonly code: 'MIXED_CURRENCY'; readonly lineId: string; readonly expected: Currency; readonly found: Currency }
+  | { readonly code: 'WITHHOLDING_IS_NOT_A_DOCUMENT_TAX'; readonly lineId: string; readonly taxCodeId: string }
   | { readonly code: 'INVALID_TAX_POINT_DATE'; readonly value: string }
   | { readonly code: 'NO_LINES' };
 
@@ -273,6 +274,25 @@ export function computeTax(
 
     if (taxCode.regime === 'NONE') {
       working.push({ line, taxCode, rateBasisPoints: 0n, exemptionReason: 'ZERO_RATED' });
+      continue;
+    }
+
+    // Withholding is NOT a document tax and must never reach this engine.
+    //
+    // It is a deduction from a PAYMENT to a non-resident, recognised when the
+    // payment is made, and a liability owed to LHDN — not a charge added to a
+    // bill at its tax point. Left unguarded, a WHT code falls through to the
+    // ordinary rate path below and is computed exactly like SST: added as a
+    // positive amount to the document total. The result looks entirely
+    // plausible and overstates both the expense and the payable.
+    //
+    // See packages/domain/src/withholding.ts for where it belongs.
+    if (taxCode.regime === 'WHT') {
+      violations.push({
+        code: 'WITHHOLDING_IS_NOT_A_DOCUMENT_TAX',
+        lineId: line.lineId,
+        taxCodeId: taxCode.id,
+      });
       continue;
     }
 

@@ -8,8 +8,8 @@ import {
   validateJournalEntry,
   type CreditNoteReason,
   type DocumentLine,
-  type OpenInvoice,
-  type ReceiptAllocation,
+  type OpenDocument,
+  type SettlementAllocation,
 } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
@@ -197,11 +197,11 @@ export async function issueCreditNote(
   }
 
   // ---- Allocation ----------------------------------------------------------
-  const openInvoices: OpenInvoice[] = referenced
+  const openInvoices: OpenDocument[] = referenced
     ? [
         {
-          invoiceId: referenced.invoiceId,
-          invoiceNo: referenced.invoiceNo,
+          documentId: referenced.invoiceId,
+          documentNo: referenced.invoiceNo,
           issueDate: referenced.issueDate,
           dueDate: referenced.dueDate,
           amountDue: referenced.amountDue,
@@ -209,11 +209,11 @@ export async function issueCreditNote(
       ]
     : [];
 
-  let allocations: ReceiptAllocation[];
+  let allocations: SettlementAllocation[];
 
   if (input.allocations) {
     allocations = input.allocations.map((a) => ({
-      invoiceId: a.invoiceId,
+      documentId: a.invoiceId,
       amount: Money.fromDecimal(a.amount, currency),
     }));
   } else if (referenced) {
@@ -221,7 +221,7 @@ export async function issueCreditNote(
     const applied =
       doc.total.compare(referenced.amountDue) <= 0 ? doc.total : referenced.amountDue;
     allocations = applied.isPositive()
-      ? [{ invoiceId: referenced.invoiceId, amount: applied }]
+      ? [{ documentId: referenced.invoiceId, amount: applied }]
       : [];
   } else {
     allocations = [];
@@ -229,14 +229,14 @@ export async function issueCreditNote(
 
   // Any invoice named explicitly must also be locked and readable.
   for (const allocation of allocations) {
-    if (openInvoices.some((o) => o.invoiceId === allocation.invoiceId)) continue;
-    const extra = await loadInvoiceForUpdate(tx, ctx, allocation.invoiceId, currency);
+    if (openInvoices.some((o) => o.documentId === allocation.documentId)) continue;
+    const extra = await loadInvoiceForUpdate(tx, ctx, allocation.documentId, currency);
     if (!extra) {
-      throw new CreditNoteError('INVOICE_NOT_FOUND', `Invoice ${allocation.invoiceId} not found`);
+      throw new CreditNoteError('INVOICE_NOT_FOUND', `Invoice ${allocation.documentId} not found`);
     }
     openInvoices.push({
-      invoiceId: extra.invoiceId,
-      invoiceNo: extra.invoiceNo,
+      documentId: extra.invoiceId,
+      documentNo: extra.invoiceNo,
       issueDate: extra.issueDate,
       dueDate: extra.dueDate,
       amountDue: extra.amountDue,
@@ -358,15 +358,15 @@ export async function issueCreditNote(
   for (const allocation of allocations) {
     await tx`
         INSERT INTO credit_note_allocation (tenant_id, credit_note_id, invoice_id, amount)
-        VALUES (${ctx.tenantId}, ${creditNoteId}, ${allocation.invoiceId},
+        VALUES (${ctx.tenantId}, ${creditNoteId}, ${allocation.documentId},
                 ${allocation.amount.toDecimalString()})
     `;
 
-    const target = openInvoices.find((o) => o.invoiceId === allocation.invoiceId)!;
+    const target = openInvoices.find((o) => o.documentId === allocation.documentId)!;
     const [updated] = await tx<{ status: string; amount_due: string; total: string; amount_paid: string; amount_credited: string }[]>`
         UPDATE invoice
            SET amount_credited = amount_credited + ${allocation.amount.toDecimalString()}
-         WHERE tenant_id = ${ctx.tenantId} AND id = ${allocation.invoiceId}
+         WHERE tenant_id = ${ctx.tenantId} AND id = ${allocation.documentId}
         RETURNING status, amount_due, total, amount_paid, amount_credited
     `;
 
@@ -389,11 +389,11 @@ export async function issueCreditNote(
 
     await tx`
         UPDATE invoice SET status = ${status}
-         WHERE tenant_id = ${ctx.tenantId} AND id = ${allocation.invoiceId}
+         WHERE tenant_id = ${ctx.tenantId} AND id = ${allocation.documentId}
     `;
 
     affectedInvoices.push({
-      invoiceId: target.invoiceId,
+      invoiceId: target.documentId,
       status,
       amountDue: total.subtract(settled).toDecimalString(),
     });
