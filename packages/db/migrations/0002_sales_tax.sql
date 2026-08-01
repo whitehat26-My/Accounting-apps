@@ -237,8 +237,7 @@ CREATE TABLE invoice (
     amount_paid         NUMERIC(19,4) NOT NULL DEFAULT 0 CHECK (amount_paid >= 0),
     /* Derived, so the subledger can never disagree with itself. */
     amount_due          NUMERIC(19,4) GENERATED ALWAYS AS (total - amount_paid) STORED,
-    status              TEXT NOT NULL DEFAULT 'DRAFT'
-                        CHECK (status IN ('DRAFT','ISSUED','PART_PAID','PAID','VOIDED')),
+    status              TEXT NOT NULL DEFAULT 'DRAFT',
     journal_entry_id    UUID,
     reference           TEXT,
     terms               TEXT,
@@ -252,12 +251,21 @@ CREATE TABLE invoice (
     UNIQUE      (tenant_id, idempotency_key),
     FOREIGN KEY (tenant_id, contact_id)       REFERENCES contact (tenant_id, id),
     FOREIGN KEY (tenant_id, journal_entry_id) REFERENCES journal_entry (tenant_id, id),
-    CHECK (due_date >= issue_date),
+    -- Named explicitly, not left to PostgreSQL's positional auto-naming
+    -- (invoice_check1, invoice_check2, ...). A later migration has to drop
+    -- these by name, and positional names silently shift when a constraint is
+    -- added above them.
+    CONSTRAINT invoice_status_valid
+        CHECK (status IN ('DRAFT','ISSUED','PART_PAID','PAID','VOIDED')),
+    CONSTRAINT invoice_due_after_issue
+        CHECK (due_date >= issue_date),
     -- Every issued invoice carries its journal entry, EXCEPT a zero-total one,
     -- which has no debits or credits to post. See hasLedgerEffect() in
     -- packages/domain/src/document.ts.
-    CHECK (status = 'DRAFT' OR journal_entry_id IS NOT NULL OR total = 0),
-    CHECK (amount_paid <= total)
+    CONSTRAINT invoice_issued_has_journal
+        CHECK (status = 'DRAFT' OR journal_entry_id IS NOT NULL OR total = 0),
+    CONSTRAINT invoice_not_over_settled
+        CHECK (amount_paid <= total)
 );
 
 CREATE INDEX invoice_contact_idx ON invoice (tenant_id, contact_id);

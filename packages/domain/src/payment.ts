@@ -13,7 +13,7 @@
  */
 
 import { Money, sumMoney, type Currency } from './money.js';
-import { err, ok, type Result } from './result.js';
+import { err, isErr, ok, type Result } from './result.js';
 import type { JournalEntryDraft, JournalLineDraft } from './journal-entry.js';
 
 export type PaymentMethod =
@@ -63,51 +63,43 @@ export interface ValidatedReceipt extends ReceiptInput {
   readonly currency: Currency;
 }
 
-export type ReceiptViolation =
-  | { readonly code: 'NON_POSITIVE_AMOUNT'; readonly amount: string }
-  | { readonly code: 'OVER_ALLOCATED'; readonly received: string; readonly allocated: string }
+/**
+ * Allocation violations, shared by receipts and credit notes.
+ *
+ * Both apply a sum of money against a set of open invoices under identical
+ * rules, so the checks live in one place. If they drift apart, one of the two
+ * settlement paths starts accepting something the other refuses.
+ */
+export type AllocationViolation =
   | { readonly code: 'NON_POSITIVE_ALLOCATION'; readonly invoiceId: string; readonly amount: string }
   | { readonly code: 'UNKNOWN_INVOICE'; readonly invoiceId: string }
   | { readonly code: 'EXCEEDS_AMOUNT_DUE'; readonly invoiceId: string; readonly allocated: string; readonly amountDue: string }
   | { readonly code: 'DUPLICATE_ALLOCATION'; readonly invoiceId: string }
-  | { readonly code: 'MIXED_CURRENCY'; readonly expected: Currency; readonly found: Currency }
-  | { readonly code: 'INVALID_PAYMENT_DATE'; readonly value: string };
+  | { readonly code: 'OVER_ALLOCATED'; readonly received: string; readonly allocated: string }
+  | { readonly code: 'MIXED_CURRENCY'; readonly expected: Currency; readonly found: Currency };
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+export interface AllocationOutcome {
+  readonly allocatedTotal: Money;
+  readonly unallocated: Money;
+}
 
 /**
- * Validate a receipt against the invoices it claims to settle.
- *
- * Over-allocating is an error rather than a silent truncation: paying RM 100
- * against an invoice with RM 80 outstanding means either the wrong invoice or
- * an overpayment the user must acknowledge, and guessing which is not the
- * software's call.
+ * Check that `allocations` can legitimately be applied against `openInvoices`,
+ * given a pot of `available` money (a receipt amount, or a credit note total).
  */
-export function validateReceipt(
-  input: ReceiptInput,
+export function validateAllocations(
+  available: Money,
+  allocations: readonly ReceiptAllocation[],
   openInvoices: readonly OpenInvoice[],
-): Result<ValidatedReceipt, ReceiptViolation[]> {
-  const violations: ReceiptViolation[] = [];
-  const currency = input.amount.currency;
-
-  if (!ISO_DATE.test(input.paymentDate) || Number.isNaN(Date.parse(input.paymentDate))) {
-    violations.push({ code: 'INVALID_PAYMENT_DATE', value: input.paymentDate });
-  }
-
-  if (!input.amount.isPositive()) {
-    violations.push({ code: 'NON_POSITIVE_AMOUNT', amount: input.amount.toDecimalString() });
-  }
-
+): Result<AllocationOutcome, AllocationViolation[]> {
+  const violations: AllocationViolation[] = [];
+  const currency = available.currency;
   const byId = new Map(openInvoices.map((i) => [i.invoiceId, i]));
   const seen = new Set<string>();
 
-  for (const allocation of input.allocations) {
+  for (const allocation of allocations) {
     if (allocation.amount.currency !== currency) {
-      violations.push({
-        code: 'MIXED_CURRENCY',
-        expected: currency,
-        found: allocation.amount.currency,
-      });
+      violations.push({ code: 'MIXED_CURRENCY', expected: currency, found: allocation.amount.currency });
       continue;
     }
 
@@ -142,24 +134,61 @@ export function validateReceipt(
 
   if (violations.length > 0) return err(violations);
 
-  const allocatedTotal = sumMoney(input.allocations.map((a) => a.amount), currency);
+  const allocatedTotal = sumMoney(allocations.map((a) => a.amount), currency);
 
-  if (allocatedTotal.compare(input.amount) > 0) {
+  if (allocatedTotal.compare(available) > 0) {
     return err([
       {
         code: 'OVER_ALLOCATED',
-        received: input.amount.toDecimalString(),
+        received: available.toDecimalString(),
         allocated: allocatedTotal.toDecimalString(),
       },
     ]);
   }
 
+  return ok({ allocatedTotal, unallocated: available.subtract(allocatedTotal) });
+}
+
+export type ReceiptViolation =
+  | AllocationViolation
+  | { readonly code: 'NON_POSITIVE_AMOUNT'; readonly amount: string }
+  | { readonly code: 'INVALID_PAYMENT_DATE'; readonly value: string };
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/**
+ * Validate a receipt against the invoices it claims to settle.
+ *
+ * Over-allocating is an error rather than a silent truncation: paying RM 100
+ * against an invoice with RM 80 outstanding means either the wrong invoice or
+ * an overpayment the user must acknowledge, and guessing which is not the
+ * software's call.
+ */
+export function validateReceipt(
+  input: ReceiptInput,
+  openInvoices: readonly OpenInvoice[],
+): Result<ValidatedReceipt, ReceiptViolation[]> {
+  const violations: ReceiptViolation[] = [];
+
+  if (!ISO_DATE.test(input.paymentDate) || Number.isNaN(Date.parse(input.paymentDate))) {
+    violations.push({ code: 'INVALID_PAYMENT_DATE', value: input.paymentDate });
+  }
+
+  if (!input.amount.isPositive()) {
+    violations.push({ code: 'NON_POSITIVE_AMOUNT', amount: input.amount.toDecimalString() });
+  }
+
+  if (violations.length > 0) return err(violations);
+
+  const allocated = validateAllocations(input.amount, input.allocations, openInvoices);
+  if (isErr(allocated)) return err(allocated.error);
+
   return ok({
     ...input,
     _validated: true,
-    allocatedTotal,
-    unallocated: input.amount.subtract(allocatedTotal),
-    currency,
+    allocatedTotal: allocated.value.allocatedTotal,
+    unallocated: allocated.value.unallocated,
+    currency: input.amount.currency,
   });
 }
 
