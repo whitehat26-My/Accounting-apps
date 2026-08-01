@@ -192,9 +192,12 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
     taxCodes['NONE'] = none!.id;
 
     const [customer] = await tx<{ id: string }[]>`
+        -- TIN shape is a FIXTURE, not an assertion about the real format.
+        -- The authoritative check is LHDN's TIN lookup; the local pattern is
+        -- configurable per tenant precisely because this cannot be asserted here.
         INSERT INTO contact (tenant_id, name, is_customer, tin, id_type, id_value,
                              payment_terms_days, default_currency)
-        VALUES (${tenantId}, 'Nusantara Retail Sdn Bhd', TRUE, 'C12345678901',
+        VALUES (${tenantId}, 'Nusantara Retail Sdn Bhd', TRUE, 'C9876543210',
                 'BRN', '202301012345', 30, 'MYR')
         RETURNING id
     `;

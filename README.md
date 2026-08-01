@@ -3,7 +3,8 @@
 Multi-tenant SaaS accounting for Malaysian SMEs and freelance accountants.
 Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-first.
 
-> **Status:** Ledger core, tax engine, invoicing, receipts and credit notes implemented and tested.
+> **Status:** Ledger core, tax engine, invoicing, receipts, credit notes and the MyInvois
+> submission lifecycle implemented and tested.
 > The full architecture specification lives in [`docs/architecture/`](docs/architecture/).
 
 ## Quick start
@@ -12,15 +13,15 @@ Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-f
 pnpm install
 ./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
 export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
-pnpm typecheck && pnpm test        # 197 tests
+pnpm typecheck && pnpm test        # 251 tests
 ```
 
 | Package | Contents |
 | --- | --- |
-| `packages/domain` | Pure core — `Money`, journal validation and reversal, the SST tax engine, document/posting construction, allocation, and credit notes. Zero IO, zero framework imports. |
-| `packages/db` | Schema, RLS policies, integrity triggers, and the four write paths: `postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`. |
+| `packages/domain` | Pure core — `Money`, journal validation and reversal, the SST tax engine, document/posting construction, allocation, credit notes, and the e-Invoice document model and state machine. Zero IO, zero framework imports. |
+| `packages/db` | Schema, RLS policies, integrity triggers, the four write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`) and the MyInvois submission lifecycle. |
 
-**What's proven, not just asserted.** 113 domain tests and 84 integration tests against a real
+**What's proven, not just asserted.** 143 domain tests and 108 integration tests against a real
 PostgreSQL.
 
 Property-based tests (fast-check) cover ledger invariants 1, 2 and 4, plus: tax lines always sum to
@@ -35,7 +36,13 @@ trigger, posted-entry / issued-invoice / recorded-payment immutability, gapless 
 rollback, AR control agreeing with the invoice subledger through partial settlement (invariant 6),
 rollup/journal agreement, effective-dated rates resolving at the tax point, over-settlement refused
 at the database level whether by payment or by credit, credit notes netting output tax down for the
-SST return, and NUMERIC never degrading to a float. None of that can be verified against a mock.
+SST return, e-Invoice documents assembled from the ledger reconciling to their own lines, and
+NUMERIC never degrading to a float. None of that can be verified against a mock.
+
+**Not implemented, deliberately:** the MyInvois HTTP client. `MyInvoisGateway` is declared as a port
+in the domain layer; the adapter is written against LHDN's published SDK and tested against their
+sandbox. A speculative client built against unverifiable endpoint paths would look finished and
+probably be wrong — worse than an obvious gap, because it invites trust.
 
 ## What makes this different from a localised Xero
 

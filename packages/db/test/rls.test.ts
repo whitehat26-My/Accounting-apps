@@ -100,23 +100,54 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     }
   });
 
+  /**
+   * Tables that deliberately hold NO tenant data and therefore carry no RLS.
+   *
+   * This list is the whole point of the guard below. A new table is presumed
+   * tenant-owned and must have RLS; exempting one is a deliberate, reviewed
+   * act recorded here, not something a developer can do by forgetting.
+   *
+   * Every entry needs a reason.
+   */
+  const NON_TENANT_TABLES: Record<string, string> = {
+    // Migration bookkeeping. No tenant data.
+    schema_migration: 'migration runner state',
+    // LHDN's published item classification list. Identical for every tenant,
+    // refreshed from LHDN, contains nothing tenant-specific. Read-only to the
+    // application role.
+    einvoice_classification_code: 'global LHDN reference data, read-only',
+  };
+
   it('every tenant-owned table has RLS enabled AND forced with a policy', async () => {
     // The CI guard from docs/architecture/06-data-model.md §6.2: a new table
     // without a policy must fail the build rather than silently leak.
-    const rows = await sql<{ tablename: string; rowsecurity: boolean; forced: boolean; policies: number }[]>`
+    const rows = await sql<{ tablename: string; rowsecurity: boolean; forced: boolean; policies: number; has_tenant_id: boolean }[]>`
         SELECT c.relname                AS tablename,
                c.relrowsecurity         AS rowsecurity,
                c.relforcerowsecurity    AS forced,
-               (SELECT COUNT(*) FROM pg_policy p WHERE p.polrelid = c.oid)::int AS policies
+               (SELECT COUNT(*) FROM pg_policy p WHERE p.polrelid = c.oid)::int AS policies,
+               EXISTS (SELECT 1 FROM pg_attribute a
+                        WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
+                          AND NOT a.attisdropped)                                AS has_tenant_id
           FROM pg_class c
           JOIN pg_namespace n ON n.oid = c.relnamespace
          WHERE n.nspname = 'public'
            AND c.relkind = 'r'
-           AND c.relname <> 'schema_migration'
     `;
 
     expect(rows.length).toBeGreaterThan(0);
+
     for (const row of rows) {
+      if (row.tablename in NON_TENANT_TABLES) {
+        // An exempt table must genuinely hold no tenant data. If someone adds
+        // a tenant_id to one, the exemption is no longer valid and this fails.
+        expect(
+          row.has_tenant_id,
+          `${row.tablename} is exempt from RLS but has a tenant_id column`,
+        ).toBe(false);
+        continue;
+      }
+
       expect(row.rowsecurity, `${row.tablename}: RLS not enabled`).toBe(true);
       expect(row.forced, `${row.tablename}: RLS not FORCED`).toBe(true);
       expect(row.policies, `${row.tablename}: no policy attached`).toBeGreaterThan(0);
