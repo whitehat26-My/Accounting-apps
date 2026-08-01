@@ -59,6 +59,35 @@ flowchart TB
 | `Session` | refresh_token_hash, device_fingerprint, ip, user_agent, revoked_at |
 | `ApiKey` | prefix, key_hash, scopes[], last_used_at, expires_at |
 
+**Implementation status.** Built: users, memberships, the eight-role permission matrix, refresh-token
+rotation with reuse detection, API keys, and `financial_event_log` — which **completes ledger
+invariant #9**. The NestJS API in `apps/api` exposes the whole system over HTTP.
+
+Four decisions worth knowing:
+
+- **Identity is GLOBAL and has no RLS policy** — because it cannot have one. A user spans
+  organisations by design, and authentication runs before any tenant is known. The mitigation is
+  stronger than a policy rather than weaker: the application role has **no grant at all** on
+  `app_user` and `user_session`, and every pre-tenant operation goes through a narrow
+  SECURITY DEFINER function. `rls.test.ts` asserts the absence of that grant, so it is a checked
+  property rather than a comment.
+- **`membership` carries the one policy that differs from every other table**:
+  `tenant_id = current_tenant_id() OR user_id = current_user_id()`. The organisation switcher has to
+  ask "which tenants may I act for", and that question has no tenant context by definition. It
+  widens visibility by exactly the caller's own rows and nothing more.
+- **Refresh-token reuse revokes the whole family**, not the presented token. When a spent token is
+  replayed, two parties hold copies and there is no way to tell the thief from the victim — revoking
+  only the presented one leaves a thief who refreshed first holding a live session, which is the
+  attack. The service returns a result rather than throwing, so the revocation **commits**; an
+  earlier version threw from inside the transaction and rolled back its own security response.
+- **RBAC is a guard, not an RLS policy.** RLS answers "may this connection see this tenant at all"
+  and is enforced by PostgreSQL; RBAC answers "may this member perform this action inside a tenant
+  they already belong to". An RBAC bug leaks within one tenant — bad, but bounded. An RLS bug leaks
+  across tenants. That asymmetry is why the boundary is the one the database enforces.
+
+**Deferred within M0**, stated rather than implied: SSO, MFA/TOTP (the column exists; the flow does
+not), OAuth2 clients, invitation email delivery, and Redis-backed rate limiting.
+
 **Boundary notes.** M0 is the only module that may write `Organisation`. It publishes `TenantContext` (tenant_id, user_id, permissions) which the gateway middleware attaches to every request. Domain modules receive it; they never re-derive it.
 
 ---

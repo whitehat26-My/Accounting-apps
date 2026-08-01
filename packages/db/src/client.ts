@@ -55,3 +55,33 @@ export async function withTenant<T>(
     return fn(tx);
   }) as Promise<T>;
 }
+
+/**
+ * Run `fn` bound to a USER but no tenant.
+ *
+ * ---------------------------------------------------------------------------
+ * Deliberately narrow, and not a general-purpose escape from `withTenant`.
+ *
+ * Authentication and the organisation switcher are pre-tenant by nature: you
+ * cannot ask "which organisations may I act for" from inside one of them. This
+ * is the only sanctioned way to run without a tenant, and the only things
+ * reachable from it are the identity SECURITY DEFINER functions and a user's
+ * own `membership` rows — every tenant-owned table's policy compares against
+ * `current_tenant_id()`, which is NULL here, so they return nothing.
+ *
+ * That last point is the safety property: forgetting to use `withTenant` and
+ * reaching for this instead does not leak, it returns an empty set.
+ * ---------------------------------------------------------------------------
+ */
+export async function withUser<T>(
+  sql: Sql,
+  userId: string | null,
+  fn: (tx: Tx) => Promise<T>,
+): Promise<T> {
+  return sql.begin(async (tx) => {
+    if (userId) {
+      await tx`SELECT set_config('app.user_id', ${userId}, true)`;
+    }
+    return fn(tx);
+  }) as Promise<T>;
+}

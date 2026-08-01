@@ -74,6 +74,34 @@ export async function postJournalEntry(
     );
   }
 
+  // The database refuses a posting into a LOCKED period unless
+  // `app.allow_locked_period` is set, which `withTenant` only sets when the
+  // caller holds `period.override`. That half of ledger invariant #9 has held
+  // since the ledger core landed.
+  //
+  // This is the other half: "...AND a financial-event log row". Written here
+  // rather than left to each caller, because a caller that forgets leaves an
+  // override with no trace, and the whole point of the permission is that
+  // exercising it is visible. Same transaction as the entry, so an override
+  // cannot be recorded without its posting or a posting without its override.
+  if (period.status === 'LOCKED') {
+    await tx`
+        INSERT INTO financial_event_log (
+            tenant_id, event_type, actor_user_id, permission,
+            entity_type, entity_id, detail
+        ) VALUES (
+            ${ctx.tenantId}, 'LOCKED_PERIOD_OVERRIDE', ${ctx.userId ?? null},
+            'period.override', 'FISCAL_PERIOD', ${period.id},
+            ${tx.json({
+              entryDate: entry.entryDate,
+              sourceModule: entry.sourceModule,
+              totalDebit: entry.totalDebit.toDecimalString(),
+              idempotencyKey: options.idempotencyKey ?? null,
+            })}
+        )
+    `;
+  }
+
   // ---- 3. Allocate a gapless entry number ----------------------------------
   const [numbered] = await tx<{ allocate_document_number: string }[]>`
       SELECT allocate_document_number('JOURNAL')

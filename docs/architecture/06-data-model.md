@@ -348,6 +348,13 @@ Encode these as property-based tests (`fast-check`) over generated transaction s
 Invariant 14 is the one to write first. It is the test that proves the isolation boundary works, and it should run against every table in the schema.
 
 **Coverage so far.** All fourteen are tested.
+
+Invariant 9 was half-tested for most of the build: the override permission has been enforced by the
+database since the ledger core landed, but the *financial-event log row* the invariant also requires
+had nowhere to go until `financial_event_log` arrived with M0. `postJournalEntry()` now writes it in
+the same transaction as the posting, so an override cannot be recorded without its entry or an entry
+without its override — and it is written there rather than by each caller, because a caller that
+forgets leaves an override with no trace, which defeats the point of the permission.
 Invariants 6 and 7 both compare the subledger to the control account in BASE currency at BOOKED
 rates (`amount_due * fx_rate`) — summing `amount_due` across currencies adds ringgit to dollars and
 reconciles to nothing. Invariant 7 additionally holds through partial payment, debit notes, and a

@@ -122,6 +122,24 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     report_template: 'global statement layout, read-only',
     report_template_line: 'global statement layout, read-only',
     report_template_line_map: 'global statement layout, read-only',
+    // Identity is GLOBAL, and deliberately so: one freelance accountant serves
+    // N client organisations from one login. A tenant-scoped user table would
+    // mean one account and one password per client, which breaks the model the
+    // product is differentiated on.
+    //
+    // Authentication is also pre-tenant by nature — resolving a user by email
+    // happens before any tenant is known — so no `tenant_id = current_tenant_id()`
+    // policy could express it.
+    //
+    // The mitigation is stronger than a policy, not weaker: the application
+    // role has NO GRANT on these tables at all. Every legitimate operation goes
+    // through a narrow SECURITY DEFINER function. Asserted below.
+    app_user: 'global identity; app role has no grant, access via SECURITY DEFINER only',
+    user_session: 'global session; app role has no grant, access via SECURITY DEFINER only',
+    // The role→permission matrix is the same for every tenant.
+    app_role: 'global role definitions, read-only',
+    app_permission: 'global permission definitions, read-only',
+    role_permission: 'global role/permission matrix, read-only',
   };
 
   it('every tenant-owned table has RLS enabled AND forced with a policy', async () => {
@@ -158,6 +176,39 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
       expect(row.forced, `${row.tablename}: RLS not FORCED`).toBe(true);
       expect(row.policies, `${row.tablename}: no policy attached`).toBeGreaterThan(0);
     }
+  });
+
+  it('the exempt identity tables really do have no grant to the app role', async () => {
+    // `app_user` and `user_session` are exempt from the RLS sweep because they
+    // are global. That exemption is only defensible because the application
+    // role cannot reach them AT ALL — so the claim is checked rather than
+    // described. If someone adds a convenience GRANT, this fails.
+    for (const table of ['app_user', 'user_session']) {
+      const [row] = await sql<{ has_any: boolean }[]>`
+          SELECT (
+              has_table_privilege('emil_app', ${table}, 'SELECT') OR
+              has_table_privilege('emil_app', ${table}, 'INSERT') OR
+              has_table_privilege('emil_app', ${table}, 'UPDATE') OR
+              has_table_privilege('emil_app', ${table}, 'DELETE')
+          ) AS has_any
+      `;
+      expect(row!.has_any, `${table} must not be reachable by emil_app`).toBe(false);
+    }
+  });
+
+  it('membership is the one policy that admits rows outside a tenant context', async () => {
+    // The organisation switcher has to ask "which tenants may I act for", and
+    // that question has no tenant context by definition. The policy widens
+    // visibility by exactly the caller's own rows — never another user's — and
+    // that boundary is asserted in identity.test.ts.
+    const [row] = await sql<{ qual: string }[]>`
+        SELECT pg_get_expr(p.polqual, p.polrelid) AS qual
+          FROM pg_policy p
+          JOIN pg_class c ON c.oid = p.polrelid
+         WHERE c.relname = 'membership'
+    `;
+    expect(row!.qual).toMatch(/current_tenant_id/);
+    expect(row!.qual).toMatch(/current_user_id/);
   });
 });
 

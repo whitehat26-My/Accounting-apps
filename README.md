@@ -8,7 +8,9 @@ Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-f
 > sides of the balance sheet, the financial statements (trial balance, SOPL, SOFP), and
 > purchases/AP — bills, supplier payments, debit notes, ageing and the withholding
 > mechanism — and banking: statement import, the reconciliation matching engine, and
-> reconciliation sessions. Implemented and tested.
+> reconciliation sessions — and M0: users, the multi-organisation model, roles and
+> permissions, refresh-token rotation with reuse detection, API keys, and a NestJS
+> HTTP API over the whole thing. Implemented and tested.
 >
 > **All fourteen ledger invariants now have tests behind them.**
 > The full architecture specification lives in [`docs/architecture/`](docs/architecture/).
@@ -19,16 +21,18 @@ Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-f
 pnpm install
 ./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
 export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
-pnpm typecheck && pnpm test        # 573 tests
+export JWT_SECRET=any-32-character-string-for-local-dev
+pnpm typecheck && pnpm test        # 666 tests
 ```
 
 | Package | Contents |
 | --- | --- |
 | `packages/domain` | Pure core — `Money`, journal validation and reversal, the SST tax engine, document/posting construction, allocation, credit and debit notes, the e-Invoice document model and state machine, FX conversion with realised and unrealised gain/loss, the statement engine, ageing, withholding, statement parsing and the bank matching engine. Zero IO, zero framework imports. |
-| `packages/db` | Schema, RLS policies, integrity triggers, the write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`, `enterBill()`, `paySupplier()`, `issueDebitNote()`, `runRevaluation()`, `importStatement()`, `confirmMatch()`) and the MyInvois submission lifecycle. |
+| `packages/db` | Schema, RLS policies, integrity triggers, the write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`, `enterBill()`, `paySupplier()`, `issueDebitNote()`, `runRevaluation()`, `importStatement()`, `confirmMatch()`), identity and sessions, and the MyInvois submission lifecycle. |
+| `apps/api` | NestJS on Fastify. The middleware chain from `docs/architecture/01-system-architecture.md` §1.3: request context → rate limit → authentication → tenant resolution → RBAC → idempotency → handler. Controllers translate and authorise; they contain no business logic. |
 
-**What's proven, not just asserted.** 355 domain tests and 218 integration tests against a real
-PostgreSQL.
+**What's proven, not just asserted.** 389 domain tests, 252 integration tests against a real
+PostgreSQL, and 25 end-to-end tests through the real HTTP application.
 
 Property-based tests (fast-check) cover ledger invariants 1, 2 and 4, plus: tax lines always sum to
 the document total under either rounding policy, the tax summary always reconciles to document
@@ -72,6 +76,14 @@ Payable` posting, and append-only evidence — but `wht_rate` ships EMPTY and a 
 withhold without a configured rate fails loudly. Rates depend on payment type and on any applicable
 double taxation agreement and must be verified against LHDN; a plausible-looking wrong rate is worse
 than an explicit gap, because the payer carries the liability for under-withholding.
+
+**Not implemented, deliberately:** SSO, MFA and OAuth2 clients. `app_user.mfa_secret` exists and
+the role set already distinguishes the cases MFA should be mandatory for, but a TOTP flow nobody has
+enrolled in is untested security machinery, which is worse than none. Rate limiting is in-memory
+rather than Redis-backed for the same reason — correct for one instance, stated as such, and behind
+an interface a Redis implementation drops into. Neither is the login protection: that is the
+per-account lockout in `record_login_outcome`, which survives a restart and cannot be evaded by
+changing source address.
 
 **Not implemented, deliberately:** live bank feeds. `BankFeedProvider` is a port with no adapter.
 Malaysia has no broad open banking, so CSV import is the product rather than a fallback, and a
