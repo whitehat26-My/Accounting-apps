@@ -219,7 +219,54 @@ async function loadCandidates(
          AND b.amount_due > 0
   `;
 
+  /*
+   * Posted gateway settlements.
+   *
+   * -------------------------------------------------------------------------
+   * A SETTLEMENT LINE MUST NOT MATCH THE PAYMENTS IT COVERS.
+   *
+   * Twelve FPX collections arrive on Monday and land in the CLEARING account,
+   * not the bank. On Wednesday the provider pays one figure into the bank, net
+   * of fees. Without this query the only candidates near that line are the
+   * twelve payments — which sum to the GROSS, never equal the line, and were
+   * already deposited somewhere else. Matching them would double-count the
+   * receipts and leave the clearing account permanently out.
+   *
+   * The settlement's own journal entry is the correct counterpart: one entry,
+   * one amount, exactly what the bank shows. It is offered as a JOURNAL
+   * candidate because that is what it is, and `matched_type` already permits
+   * it. The provider's batch id is the document number, so the reference
+   * extraction in text.ts can find it in a narrative like
+   * "FPX SETTLEMENT FPX-20260805-001".
+   * -------------------------------------------------------------------------
+   */
+  const settlements = await tx<
+    { journal_entry_id: string; provider_batch_id: string | null; provider: string;
+      settlement_date: Date; net_amount: string }[]
+  >`
+      SELECT s.journal_entry_id, s.provider_batch_id, s.provider,
+             s.settlement_date, s.net_amount
+        FROM gateway_settlement s
+       WHERE s.tenant_id = ${ctx.tenantId}
+         AND s.journal_entry_id IS NOT NULL
+         AND NOT EXISTS (
+               SELECT 1 FROM active_reconciliation_match m
+                WHERE m.tenant_id = s.tenant_id
+                  AND m.matched_type = 'JOURNAL' AND m.matched_id = s.journal_entry_id
+             )
+  `;
+
   return [
+    ...settlements.map(
+      (s): MatchCandidate => ({
+        id: s.journal_entry_id,
+        kind: 'JOURNAL',
+        documentNo: s.provider_batch_id ?? s.provider,
+        documentDate: toIsoDate(s.settlement_date),
+        amount: Money.fromDecimal(s.net_amount, baseCurrency),
+        direction: 'INFLOW',
+      }),
+    ),
     ...payments.map(
       (p): MatchCandidate => ({
         id: p.id,

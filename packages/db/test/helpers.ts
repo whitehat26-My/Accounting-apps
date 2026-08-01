@@ -132,6 +132,16 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
       ['1150', 'SST Claimable', 'ASSET'],
       // Withholding retained from a payment and owed to LHDN until remitted.
       ['2200', 'Withholding Tax Payable', 'LIABILITY'],
+      // Money a customer has paid and the gateway has not yet settled to the
+      // bank. Deliberately NOT tagged 'cash_and_bank': whether funds in transit
+      // from a payment provider present as a cash equivalent or as other
+      // receivables under MPERS is a presentation question for the reporting
+      // framework, and the ACCOUNT_TYPE catch-all keeps it on the SOFP either
+      // way. Flagged rather than decided here.
+      ['1200', 'Undeposited Funds', 'ASSET'],
+      // What the gateway keeps. An expense in its own right — see
+      // buildGatewayFeeJournal on why it is never netted into revenue.
+      ['6100', 'Payment Gateway Fees', 'EXPENSE'],
     ];
 
     const accounts: Record<string, string> = {};
@@ -191,7 +201,9 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, 'UNREALISED_FX',  ${accounts['6910']!}),
                (${tenantId}, 'AP_REVALUATION', ${accounts['2090']!}),
                (${tenantId}, 'SST_CLAIMABLE',  ${accounts['1150']!}),
-               (${tenantId}, 'WHT_PAYABLE',    ${accounts['2200']!})
+               (${tenantId}, 'WHT_PAYABLE',    ${accounts['2200']!}),
+               (${tenantId}, 'UNDEPOSITED_FUNDS', ${accounts['1200']!}),
+               (${tenantId}, 'GATEWAY_FEE',       ${accounts['6100']!})
     `;
 
     // Tags let the GLOBAL statement templates address this chart without
