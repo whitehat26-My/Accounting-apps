@@ -3,8 +3,29 @@
 Multi-tenant SaaS accounting for Malaysian SMEs and freelance accountants.
 Base currency **MYR (RM)**. Positioned as a Xero-class product, built Malaysia-first.
 
-> **Status:** architecture specification. No application code yet — the specification in
-> [`docs/architecture/`](docs/architecture/) is the current deliverable and the input to implementation.
+> **Status:** Phase 1 (ledger core) implemented and tested. The full architecture specification
+> lives in [`docs/architecture/`](docs/architecture/); `packages/domain` and `packages/db` are the
+> first working slice of it.
+
+## Quick start
+
+```bash
+pnpm install
+./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
+export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
+pnpm typecheck && pnpm test        # 72 tests
+```
+
+| Package | Contents |
+| --- | --- |
+| `packages/domain` | Pure ledger core — `Money`, chart-of-accounts classification, journal validation and reversal. Zero IO, zero framework imports. |
+| `packages/db` | Schema, RLS policies, integrity triggers, and `postJournalEntry()` — the single write path into the ledger. |
+
+**What's proven, not just asserted.** 39 domain tests (including property-based tests over ledger
+invariants 1, 2 and 4) and 33 integration tests against a real PostgreSQL. The database tests are
+the load-bearing ones: RLS tenant isolation, the deferred balanced-entry trigger, posted-entry
+immutability, gapless numbering surviving rollback, rollup/journal agreement, and NUMERIC never
+degrading to a float. None of that can be verified against a mock.
 
 ## What makes this different from a localised Xero
 

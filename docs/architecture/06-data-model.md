@@ -59,7 +59,11 @@ SET LOCAL app.tenant_id = '...';   -- LOCAL: transaction-scoped, cannot leak acr
 COMMIT;
 ```
 
-**CI guard:** a test that enumerates `information_schema.tables`, asserts RLS is enabled and forced on every tenant-owned table, and asserts a policy exists. A new table without a policy fails the build.
+**CI guard:** a test that enumerates `information_schema.tables`, asserts RLS is enabled and forced on every tenant-owned table, and asserts a policy exists. A new table without a policy fails the build. Implemented in `packages/db/test/rls.test.ts`.
+
+> ⚠️ **Superusers bypass RLS unconditionally — including `FORCE`.** `FORCE ROW LEVEL SECURITY` closes the *table owner* bypass, but any role with `SUPERUSER` or `BYPASSRLS` ignores policies entirely. The practical consequence is a trap: an integration suite that connects as `postgres` will watch every isolation assertion pass while the policies do nothing at all. This was caught during implementation — the first run of the isolation tests reported zero leaked rows, and only failed once the test client was switched to an unprivileged role, at which point `account` was found leaking 9 cross-tenant rows.
+>
+> Two rules follow. The application connects as a role with neither attribute. And the test harness asserts its own privileges before running (`packages/db/test/helpers.ts`), failing loudly rather than passing vacuously.
 
 ---
 

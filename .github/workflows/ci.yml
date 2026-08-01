@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      # The domain layer is pure, so these run without any infrastructure.
+      # Property-based tests over the ledger invariants live here.
+      - name: Domain tests (unit + property-based)
+        run: pnpm test:domain
+
+      # Integration tests against a real PostgreSQL. These are the ones that
+      # prove RLS, the deferred balance trigger and the immutability triggers
+      # actually work — none of it can be verified against a mock.
+      - name: Database tests (integration)
+        run: pnpm test:db

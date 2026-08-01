@@ -1,0 +1,163 @@
+import { randomUUID } from 'node:crypto';
+import postgres from 'postgres';
+import { createClient, withTenant, type Sql } from '../src/client.js';
+import { migrate } from '../src/migrate.js';
+
+export const ADMIN_URL =
+  process.env['DATABASE_URL'] ?? 'postgres://postgres@127.0.0.1:55432/postgres';
+
+/**
+ * The login role the tests use for anything that must be subject to RLS.
+ *
+ * This matters more than it looks. PostgreSQL superusers — and any role with
+ * BYPASSRLS — ignore row-level security entirely, INCLUDING `FORCE ROW LEVEL
+ * SECURITY`. A test suite that connects as the `postgres` superuser will watch
+ * every isolation assertion pass while the policies do nothing at all.
+ *
+ * So: provisioning runs as the owner, and every assertion runs as an
+ * unprivileged role that mirrors how the application actually connects.
+ */
+const APP_LOGIN_ROLE = 'emil_app_login';
+
+export interface TestDatabase {
+  /** Connected as the unprivileged application role. Subject to RLS. */
+  readonly sql: Sql;
+  /** Connected as the owner. Used for provisioning only. */
+  readonly admin: Sql;
+  readonly drop: () => Promise<void>;
+}
+
+export async function createTestDatabase(name: string): Promise<TestDatabase> {
+  const dbName = `emil_test_${name}_${Date.now().toString(36)}`;
+  const cluster = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
+
+  await cluster.unsafe(`
+      DO $$
+      BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_LOGIN_ROLE}') THEN
+              CREATE ROLE ${APP_LOGIN_ROLE} LOGIN NOBYPASSRLS;
+          END IF;
+      END $$;
+  `);
+  await cluster.unsafe(`CREATE DATABASE ${dbName}`);
+  await cluster.end();
+
+  const adminUrl = ADMIN_URL.replace(/\/[^/]*$/, `/${dbName}`);
+  await migrate(adminUrl);
+
+  const admin = createClient(adminUrl);
+  await admin.unsafe(`
+      GRANT emil_app TO ${APP_LOGIN_ROLE};
+      GRANT CONNECT ON DATABASE ${dbName} TO ${APP_LOGIN_ROLE};
+      GRANT USAGE ON SCHEMA public TO ${APP_LOGIN_ROLE};
+  `);
+
+  const appUrl = adminUrl.replace('//postgres@', `//${APP_LOGIN_ROLE}@`);
+  const sql = createClient(appUrl);
+
+  // Guard the guard: if this ever connects with RLS-bypassing privileges, every
+  // isolation test below becomes meaningless. Fail loudly instead.
+  const [priv] = await sql<{ superuser: boolean; bypassrls: boolean }[]>`
+      SELECT rolsuper AS superuser, rolbypassrls AS bypassrls
+        FROM pg_roles WHERE rolname = current_user
+  `;
+  if (priv?.superuser || priv?.bypassrls) {
+    throw new Error(
+      `Test client connected as a privileged role (${JSON.stringify(priv)}). ` +
+        'RLS would be bypassed and the isolation tests would pass vacuously.',
+    );
+  }
+
+  return {
+    sql,
+    admin,
+    drop: async () => {
+      await sql.end();
+      await admin.end();
+      const cleanup = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
+      await cleanup.unsafe(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
+      await cleanup.end();
+    },
+  };
+}
+
+export interface Tenant {
+  readonly tenantId: string;
+  readonly userId: string;
+  readonly periodId: string;
+  readonly lockedPeriodId: string;
+  readonly accounts: Record<string, string>;
+}
+
+/**
+ * Provision one organisation: a minimal Malaysian chart of accounts, a
+ * financial year with an open and a locked period, and document sequences.
+ *
+ * Runs on the ADMIN connection — tenant provisioning is an elevated operation
+ * in production too, not something a tenant session performs on itself.
+ */
+export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promise<Tenant> {
+  const tenantId = randomUUID();
+  const userId = randomUUID();
+
+  return withTenant(admin, { tenantId }, async (tx) => {
+    await tx`
+        INSERT INTO organisation (id, name, base_currency, fye_month, reporting_framework)
+        VALUES (${tenantId}, ${name}, 'MYR', 12, 'MPERS')
+    `;
+
+    const chart: [string, string, string][] = [
+      ['1000', 'Cash and Bank', 'ASSET'],
+      ['1100', 'Accounts Receivable', 'ASSET'],
+      ['2000', 'Accounts Payable', 'LIABILITY'],
+      ['2100', 'SST Payable', 'LIABILITY'],
+      ['3000', 'Retained Earnings', 'EQUITY'],
+      ['4000', 'Sales Revenue', 'INCOME'],
+      ['5000', 'Cost of Sales', 'EXPENSE'],
+      ['6000', 'Office Expenses', 'EXPENSE'],
+      ['6900', 'Foreign Exchange Gain/Loss', 'EXPENSE'],
+    ];
+
+    const accounts: Record<string, string> = {};
+    for (const [code, accountName, type] of chart) {
+      const [row] = await tx<{ id: string }[]>`
+          INSERT INTO account (tenant_id, code, name, type)
+          VALUES (${tenantId}, ${code}, ${accountName}, ${type})
+          RETURNING id
+      `;
+      accounts[code] = row!.id;
+    }
+
+    const [year] = await tx<{ id: string }[]>`
+        INSERT INTO fiscal_year (tenant_id, label, start_date, end_date)
+        VALUES (${tenantId}, 'FY2026', '2026-01-01', '2026-12-31')
+        RETURNING id
+    `;
+
+    const [openPeriod] = await tx<{ id: string }[]>`
+        INSERT INTO fiscal_period (tenant_id, fiscal_year_id, sequence, start_date, end_date, status)
+        VALUES (${tenantId}, ${year!.id}, 8, '2026-08-01', '2026-08-31', 'OPEN')
+        RETURNING id
+    `;
+
+    const [lockedPeriod] = await tx<{ id: string }[]>`
+        INSERT INTO fiscal_period (tenant_id, fiscal_year_id, sequence, start_date, end_date, status)
+        VALUES (${tenantId}, ${year!.id}, 1, '2026-01-01', '2026-01-31', 'LOCKED')
+        RETURNING id
+    `;
+
+    await tx`
+        INSERT INTO number_sequence (tenant_id, document_type, prefix, next_value, padding)
+        VALUES (${tenantId}, 'JOURNAL', 'JE-', 1, 5),
+               (${tenantId}, 'INVOICE', 'INV-', 1, 5)
+    `;
+
+    return {
+      tenantId,
+      userId,
+      periodId: openPeriod!.id,
+      lockedPeriodId: lockedPeriod!.id,
+      accounts,
+    };
+  });
+}
