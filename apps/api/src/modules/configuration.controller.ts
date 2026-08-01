@@ -1,11 +1,20 @@
-import { Body, Controller, Get, Inject, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
+  amendTaxReturn,
   endWithholdingRate,
+  getTaxReturn,
+  listTaxReturns,
   listWithholdingRates,
+  outstandingTaxPeriods,
+  prepareTaxReturn,
   seedSandboxStatutoryValues,
+  setSstRegistration,
   setWithholdingRate,
+  sstRegistrations,
+  submitTaxReturn,
+  taxReturnDocuments,
   tenantReadiness,
   withTenant,
   type Sql,
@@ -103,6 +112,126 @@ export class ConfigurationController {
     return withTenant(this.sql, ctx, (tx) => endWithholdingRate(tx, ctx, id, validTo));
   }
 
+  // ---- SST registration and returns ----------------------------------------
+
+  @Requires('tax.read')
+  @Get('sst-registrations')
+  async listRegistrations(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return { registrations: await withTenant(this.sql, ctx, (tx) => sstRegistrations(tx, ctx)) };
+  }
+
+  /**
+   * Record an SST registration and its taxable period cycle.
+   *
+   * The cadence is assigned by RMCD rather than chosen, and getting it wrong
+   * does not produce a wrong figure — it produces a return filed for the wrong
+   * period, or a period never filed. So it carries provenance, like a rate.
+   */
+  @Requires('tax.write')
+  @Post('sst-registrations')
+  async setRegistration(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = parse(registrationSchema, body);
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => setSstRegistration(tx, ctx, input));
+  }
+
+  @Requires('tax.read')
+  @Get('tax-returns')
+  async listReturns(
+    @Query('regime') regime: string | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = tenantContextOf(request);
+    const returns = await withTenant(this.sql, ctx, (tx) =>
+      listTaxReturns(tx, ctx, regime !== undefined ? { regime } : {}),
+    );
+    return { returns: returns.map(renderReturn) };
+  }
+
+  /**
+   * Periods that should have been filed and have not been.
+   *
+   * The most useful thing here. A wrong figure gets corrected by an amendment;
+   * a period nobody filed is invisible by nature, because nothing prompts you
+   * about a form you did not think about — and it is what draws an assessment.
+   */
+  @Requires('tax.read')
+  @Get('tax-returns/outstanding')
+  async outstanding(@Query('through') through: string, @Req() request: FastifyRequest) {
+    const date = parse(isoDate, through ?? new Date().toISOString().slice(0, 10));
+    const ctx = tenantContextOf(request);
+    return {
+      through: date,
+      outstanding: await withTenant(this.sql, ctx, (tx) =>
+        outstandingTaxPeriods(tx, ctx, date),
+      ),
+    };
+  }
+
+  @Requires('tax.write')
+  @Post('tax-returns')
+  async prepare(
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = parse(prepareSchema, body);
+    const ctx = tenantContextOf(request);
+    const prepared = await withTenant(this.sql, ctx, (tx) =>
+      prepareTaxReturn(tx, ctx, { ...input, idempotencyKey }),
+    );
+    return renderReturn(prepared);
+  }
+
+  @Requires('tax.read')
+  @Get('tax-returns/:id')
+  async getReturn(@Param('id') id: string, @Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return renderReturn(await withTenant(this.sql, ctx, (tx) => getTaxReturn(tx, ctx, id)));
+  }
+
+  /** The documents behind the figures — what makes the return checkable. */
+  @Requires('tax.read')
+  @Get('tax-returns/:id/documents')
+  async drilldown(@Param('id') id: string, @Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return {
+      documents: await withTenant(this.sql, ctx, (tx) => taxReturnDocuments(tx, ctx, id)),
+    };
+  }
+
+  @Requires('tax.write')
+  @Post('tax-returns/:id/submit')
+  async submit(@Param('id') id: string, @Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return renderReturn(await withTenant(this.sql, ctx, (tx) => submitTaxReturn(tx, ctx, id)));
+  }
+
+  /**
+   * Amend a filed return.
+   *
+   * The original is superseded, never edited. A return is a statement made to a
+   * tax authority on a date, and an amendment is only explicable next to the
+   * thing it amends.
+   */
+  @Requires('tax.write')
+  @Post('tax-returns/:id/amend')
+  async amend(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const { reason } = parse(z.object({ reason: z.string().min(1).max(500) }), body);
+    const ctx = tenantContextOf(request);
+    return renderReturn(
+      await withTenant(this.sql, ctx, (tx) =>
+        amendTaxReturn(tx, ctx, id, { reason, idempotencyKey }),
+      ),
+    );
+  }
+
   // ---- Sandbox -------------------------------------------------------------
 
   /**
@@ -136,6 +265,67 @@ export class ConfigurationController {
         'SANDBOX rather than READY.',
     };
   }
+}
+
+const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD');
+
+const registrationSchema = z.object({
+  regime: z.enum(['SST_SALES', 'SST_SERVICE']),
+  registrationNo: z.string().min(1).max(60),
+  cadenceMonths: z.number().int().min(1).max(12),
+  firstPeriodStart: isoDate,
+  sourceReference: z
+    .string()
+    .min(8, 'Record where the taxable period cycle was confirmed with RMCD')
+    .max(300),
+});
+
+const prepareSchema = z.object({
+  regime: z.enum(['SST_SALES', 'SST_SERVICE']),
+  periodStart: isoDate,
+  periodEnd: isoDate,
+});
+
+/**
+ * Money crosses the wire as a decimal string, never a JSON number.
+ *
+ * `inputTaxAbsorbed` is rendered under a name that says what it is. A field
+ * called `inputTax` sitting beside `netTaxPayable` invites exactly the
+ * subtraction that SST does not allow.
+ */
+function renderReturn(view: {
+  id: string; regime: string; periodStart: string; periodEnd: string; status: string;
+  currency: string; taxableSupplies: { toDecimalString(): string };
+  outputTaxCharged: { toDecimalString(): string };
+  outputTaxAdjustments: { toDecimalString(): string };
+  netTaxPayable: { toDecimalString(): string };
+  inputTaxAbsorbed: { toDecimalString(): string };
+  exemptSupplies: { toDecimalString(): string };
+  documentCount: number; supersedesId: string | null;
+  submittedAt: string | null; submittedBy: string | null;
+}) {
+  return {
+    id: view.id,
+    regime: view.regime,
+    periodStart: view.periodStart,
+    periodEnd: view.periodEnd,
+    status: view.status,
+    currency: view.currency,
+    taxableSupplies: view.taxableSupplies.toDecimalString(),
+    outputTaxCharged: view.outputTaxCharged.toDecimalString(),
+    outputTaxAdjustments: view.outputTaxAdjustments.toDecimalString(),
+    netTaxPayable: view.netTaxPayable.toDecimalString(),
+    inputTaxAbsorbed: view.inputTaxAbsorbed.toDecimalString(),
+    exemptSupplies: view.exemptSupplies.toDecimalString(),
+    documentCount: view.documentCount,
+    supersedesId: view.supersedesId,
+    submittedAt: view.submittedAt,
+    submittedBy: view.submittedBy,
+    note:
+      'inputTaxAbsorbed is reported, not deducted. SST is not a VAT: tax paid to ' +
+      'suppliers is a cost already in the accounts, and netTaxPayable is the output ' +
+      'tax in full.',
+  };
 }
 
 const withholdingRateSchema = z.object({

@@ -309,11 +309,15 @@ describe('what this deployment cannot do yet', () => {
       key: string; status: string; blockedBy?: string; source?: string;
     }[];
 
+    // Pinned deliberately. A capability added without a decision about how it
+    // reports fails here rather than appearing unannounced in an operator's
+    // readiness page.
     const keys = capabilities.map((c) => c.key).sort();
     expect(keys).toEqual([
       'duitnow_qr',
       'einvoice_submission',
       'gateway_collections',
+      'sst_return',
       'statement_import',
       'withholding',
     ]);

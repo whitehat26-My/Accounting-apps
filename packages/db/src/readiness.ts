@@ -59,6 +59,7 @@ export async function tenantReadiness(tx: Tx, ctx: TenantContext): Promise<Readi
     await gatewayCollectionCapability(tx, ctx),
     await einvoiceCapability(tx, ctx),
     await statementImportCapability(tx, ctx),
+    await sstReturnCapability(tx, ctx),
   ];
 
   const blocked = capabilities.filter((c) => c.status === 'BLOCKED').length;
@@ -214,6 +215,48 @@ async function einvoiceCapability(tx: Tx, ctx: TenantContext): Promise<Capabilit
     behaviourWhenBlocked:
       'Documents are assembled, validated and queued as normal — nothing is lost. They ' +
       'stay queued because there is nothing to drain them.',
+  };
+}
+
+/**
+ * The SST return.
+ *
+ * The arithmetic is built and verified. What is missing until a registration
+ * exists is the taxable period CYCLE — which periods must be filed, and from
+ * when — because that is assigned by RMCD rather than chosen, and getting it
+ * wrong produces returns filed for the wrong periods rather than wrong figures.
+ */
+async function sstReturnCapability(tx: Tx, ctx: TenantContext): Promise<Capability> {
+  const [row] = await tx<{ total: string; sandbox: string }[]>`
+      SELECT count(*)::text AS total,
+             count(*) FILTER (WHERE source_reference ILIKE 'SANDBOX%')::text AS sandbox
+        FROM sst_registration
+       WHERE tenant_id = ${ctx.tenantId} AND is_active
+  `;
+
+  if (Number(row!.total) === 0) {
+    return {
+      key: 'sst_return',
+      name: 'SST return preparation',
+      status: 'BLOCKED',
+      blockedBy: 'No SST registration, so no taxable period cycle is known.',
+      source:
+        'RMCD — the registration number and the taxable period cadence assigned to it. ' +
+        'Sales tax and service tax are separate registrations.',
+      behaviourWhenBlocked:
+        'Preparing a return is refused. Note that the SST-02 FORM LAYOUT is separately ' +
+        'unconfirmed: this system computes what is owed and does not claim to know ' +
+        'which box each figure goes in.',
+    };
+  }
+
+  return {
+    key: 'sst_return',
+    name: 'SST return preparation',
+    status: Number(row!.sandbox) > 0 ? 'SANDBOX' : 'READY',
+    ...(Number(row!.sandbox) > 0
+      ? { blockedBy: 'The taxable period cycle is a sandbox value, not confirmed with RMCD.' }
+      : {}),
   };
 }
 

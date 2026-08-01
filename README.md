@@ -23,7 +23,7 @@ pnpm install
 ./scripts/pg-dev.sh start          # local PostgreSQL 16 on :55432
 export DATABASE_URL=postgres://postgres@127.0.0.1:55432/postgres
 export JWT_SECRET=any-32-character-string-for-local-dev
-pnpm typecheck && pnpm test        # 881 tests
+pnpm typecheck && pnpm test        # 910 tests
 ```
 
 | Package | Contents |
@@ -32,7 +32,7 @@ pnpm typecheck && pnpm test        # 881 tests
 | `packages/db` | Schema, RLS policies, integrity triggers, the write paths (`postJournalEntry()`, `issueInvoice()`, `recordReceipt()`, `issueCreditNote()`, `enterBill()`, `paySupplier()`, `issueDebitNote()`, `runRevaluation()`, `importStatement()`, `confirmMatch()`), identity and sessions, and the MyInvois submission lifecycle. |
 | `apps/api` | NestJS on Fastify. The middleware chain from `docs/architecture/01-system-architecture.md` §1.3: request context → rate limit → authentication → tenant resolution → RBAC → idempotency → handler. Controllers translate and authorise; they contain no business logic. |
 
-**What's proven, not just asserted.** 473 domain tests, 344 integration tests against a real
+**What's proven, not just asserted.** 487 domain tests, 359 integration tests against a real
 PostgreSQL, and 64 end-to-end tests through the real HTTP application.
 
 Property-based tests (fast-check) cover ledger invariants 1, 2 and 4, plus: tax lines always sum to
@@ -135,7 +135,7 @@ probably be wrong — worse than an obvious gap, because it invites trust.
 Malaysian compliance is not a locale setting; it reaches into the write path of the ledger:
 
 - **LHDN e-Invoice (MyInvois)** — a full submission lifecycle with government UUIDs, validation results, and a bounded cancellation window, not a checkbox
-- **SST modelled correctly** — sales tax and service tax are two distinct regimes, and neither is a VAT. Most products retrofit a GST engine and get the P&L wrong.
+- **SST modelled correctly** — sales tax and service tax are two distinct regimes, and neither is a VAT. Most products retrofit a GST engine and get the P&L wrong. The return remits output tax in full and never deducts input tax, enforced by a database CHECK: input tax is a cost, and a return that offset it would under-declare by exactly that amount while looking entirely plausible on the form.
 - **Import-first bank reconciliation** — no mature open banking in Malaysia, so real CSV/MT940 handling for real Malaysian banks is the product, not a fallback
 - **FPX and DuitNow collections** — the rails Malaysian customers actually pay with
 - **MPERS and MFRS statement layouts** as data, so SOPL/SOFP presentation matches the tenant's reporting framework
