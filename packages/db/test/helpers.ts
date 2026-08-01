@@ -152,7 +152,8 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
     await tx`
         INSERT INTO number_sequence (tenant_id, document_type, prefix, next_value, padding)
         VALUES (${tenantId}, 'JOURNAL', 'JE-', 1, 5),
-               (${tenantId}, 'INVOICE', 'INV-', 1, 5)
+               (${tenantId}, 'INVOICE', 'INV-', 1, 5),
+               (${tenantId}, 'PAYMENT', 'PAY-', 1, 5)
     `;
 
     // Which account plays which structural role.

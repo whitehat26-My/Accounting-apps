@@ -4,3 +4,4 @@ export * from './account.js';
 export * from './journal-entry.js';
 export * from './tax.js';
 export * from './document.js';
+export * from './payment.js';
