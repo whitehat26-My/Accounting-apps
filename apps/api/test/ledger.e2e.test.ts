@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withTenant } from '@emil/db';
 import { loadConfig } from '../src/config.js';
 import {
   accessTokenFor,
@@ -415,5 +416,179 @@ describe('what this deployment cannot do yet', () => {
         EMIL_ENABLE_SANDBOX_VALUES: '1',
       } as NodeJS.ProcessEnv),
     ).toThrow(/never be set in production/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The year-end close
+//
+// M1's last missing piece: `RETAINED_EARNINGS` and `YEAR_END_CLOSED` were
+// reserved in migrations 0002 and 0012 and used by nothing until now.
+// ---------------------------------------------------------------------------
+
+describe('closing a fiscal year', () => {
+  let fiscalYearId: string;
+
+  beforeAll(async () => {
+    /*
+     * A fresh year, seeded directly.
+     *
+     * There is no route that creates a fiscal year — provisioning one is part
+     * of onboarding, which does not exist yet. Seeding it here rather than
+     * pretending otherwise; the tests below drive everything else over HTTP.
+     *
+     * The fixture's FY2026 is unusable for this: January is LOCKED and the
+     * period-close test above has closed February through August.
+     */
+    await withTenant(api.admin, { tenantId: tenant.tenantId }, async (tx) => {
+      const [year] = await tx<{ id: string }[]>`
+          INSERT INTO fiscal_year (tenant_id, label, start_date, end_date)
+          VALUES (${tenant.tenantId}, 'FY2027', '2027-01-01', '2027-12-31')
+          RETURNING id
+      `;
+      fiscalYearId = year!.id;
+      await tx`
+          INSERT INTO fiscal_period (tenant_id, fiscal_year_id, sequence,
+                                     start_date, end_date, status)
+          VALUES (${tenant.tenantId}, ${fiscalYearId}, 1,
+                  '2027-01-01', '2027-12-31', 'OPEN')
+      `;
+    });
+  });
+
+  it('lists fiscal years with their status', async () => {
+    const response = await call(api, { method: 'GET', ...as('/v1/fiscal-years') });
+
+    expect(response.status).toBe(200);
+    const years = response.body['fiscalYears'] as { label: string; status: string }[];
+    expect(years.find((y) => y.label === 'FY2027')?.status).toBe('OPEN');
+  });
+
+  it('closes the year, refuses a posting into it, then reopens it', async () => {
+    const traded = await call(api, {
+      method: 'POST',
+      ...as('/v1/journals'),
+      body: {
+        entryDate: '2027-06-15',
+        description: 'a year of trading, compressed',
+        lines: [
+          { accountId: tenant.accounts['1000'], side: 'DEBIT', amount: '80000.00' },
+          { accountId: tenant.accounts['4000'], side: 'CREDIT', amount: '80000.00' },
+          { accountId: tenant.accounts['6000'], side: 'DEBIT', amount: '30000.00' },
+          { accountId: tenant.accounts['1000'], side: 'CREDIT', amount: '30000.00' },
+        ],
+      },
+    });
+    expect(traded.status).toBe(201);
+
+    const closed = await call(api, {
+      method: 'POST',
+      ...as(`/v1/fiscal-years/${fiscalYearId}/close`),
+    });
+
+    expect(closed.status).toBe(201);
+    expect(closed.body['status']).toBe('CLOSED');
+    expect(closed.body['profitForYear']).toBe('50000.0000');
+    expect(closed.body['accountsClosed']).toBe(2);
+
+    // The defect this feature also fixed: `fiscal_year.status` accepted CLOSED
+    // from the first migration and `assert_period_open()` never looked at it,
+    // so a closed year took postings for as long as any of its periods was
+    // open — which was always.
+    const blocked = await call(api, {
+      method: 'POST',
+      ...as('/v1/journals'),
+      body: {
+        entryDate: '2027-06-20',
+        lines: [
+          { accountId: tenant.accounts['6000'], side: 'DEBIT', amount: '5.00' },
+          { accountId: tenant.accounts['2000'], side: 'CREDIT', amount: '5.00' },
+        ],
+      },
+    });
+    expect(blocked.status).toBe(422);
+    expect(blocked.body['message']).toMatch(/year FY2027 is CLOSED/i);
+
+    const withoutReason = await call(api, {
+      method: 'POST',
+      ...as(`/v1/fiscal-years/${fiscalYearId}/reopen`),
+      body: {},
+    });
+    expect(withoutReason.status).toBe(422);
+
+    const reopened = await call(api, {
+      method: 'POST',
+      ...as(`/v1/fiscal-years/${fiscalYearId}/reopen`),
+      body: { reason: 'a late supplier invoice, agreed with the client' },
+    });
+    expect(reopened.status).toBe(201);
+    expect(reopened.body['reversalEntryId']).toBeTruthy();
+
+    // And it takes postings again.
+    const allowed = await call(api, {
+      method: 'POST',
+      ...as('/v1/journals'),
+      body: {
+        entryDate: '2027-06-20',
+        lines: [
+          { accountId: tenant.accounts['6000'], side: 'DEBIT', amount: '5.00' },
+          { accountId: tenant.accounts['2000'], side: 'CREDIT', amount: '5.00' },
+        ],
+      },
+    });
+    expect(allowed.status).toBe(201);
+  });
+
+  it('answers 409 when the year is already closed', async () => {
+    await call(api, { method: 'POST', ...as(`/v1/fiscal-years/${fiscalYearId}/close`) });
+
+    const again = await call(api, {
+      method: 'POST',
+      ...as(`/v1/fiscal-years/${fiscalYearId}/close`),
+    });
+
+    // A state conflict, not a malformed request.
+    expect(again.status).toBe(409);
+  });
+
+  it('replays a retried close on the same Idempotency-Key', async () => {
+    // Rule 5. Reopen first so there is a close to retry.
+    await call(api, {
+      method: 'POST',
+      ...as(`/v1/fiscal-years/${fiscalYearId}/reopen`),
+      body: { reason: 'setting up the idempotency check' },
+    });
+
+    const key = randomUUID();
+    const first = await call(api, {
+      method: 'POST',
+      ...as(`/v1/fiscal-years/${fiscalYearId}/close`),
+      idempotencyKey: key,
+    });
+    const second = await call(api, {
+      method: 'POST',
+      ...as(`/v1/fiscal-years/${fiscalYearId}/close`),
+      idempotencyKey: key,
+    });
+
+    expect(first.status).toBe(201);
+    expect(second.status).toBe(201);
+    expect(second.body['replayed']).toBe(true);
+    expect(second.body['closingEntryId']).toBe(first.body['closingEntryId']);
+  });
+
+  it('answers 404 for another tenant’s fiscal year, never 403', async () => {
+    const other = await seedTenant(api.admin, 'Not Your Books Sdn Bhd');
+    const [theirYear] = await withTenant(api.admin, { tenantId: other.tenantId }, (tx) =>
+      tx<{ id: string }[]>`SELECT id FROM fiscal_year WHERE tenant_id = ${other.tenantId}`,
+    );
+
+    const response = await call(api, {
+      method: 'POST',
+      ...as(`/v1/fiscal-years/${theirYear!.id}/close`),
+    });
+
+    // Rule 9: 403 would confirm the record exists.
+    expect(response.status).toBe(404);
   });
 });

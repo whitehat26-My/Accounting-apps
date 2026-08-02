@@ -6,13 +6,16 @@ import { Money, isErr, validateJournalEntry, type JournalLineDraft } from '@emil
 import {
   changeAccountType,
   changePeriodStatus,
+  closeFiscalYear,
   createAccount,
   detectRollupDrift,
   getAccount,
   listAccounts,
+  listFiscalYears,
   listPeriods,
   loadBaseCurrency,
   postJournalEntry,
+  reopenFiscalYear,
   receivablesAtClosingRate,
   runRevaluation,
   updateAccount,
@@ -145,8 +148,12 @@ export class LedgerController {
    * needs a reason, closing out of order is refused, and both write a financial
    * event.
    */
+  // The document said `journalSchema` here — a copy-paste from the handler
+  // below. The conformance test only checks that a body-taking route HAS a
+  // schema, not that it is the right one, so the OpenAPI document has been
+  // telling clients this route accepts a journal entry.
   @Requires('period.lock')
-  @Doc({ request: () => journalSchema })
+  @Doc({ request: () => changePeriodStatusSchema })
   @Post('periods/:id/status')
   async changePeriodStatus(
     @Param('id') periodId: string,
@@ -159,6 +166,63 @@ export class LedgerController {
 
     const ctx = tenantContextOf(request);
     return withTenant(this.sql, ctx, (tx) => changePeriodStatus(tx, ctx, { ...input, periodId }));
+  }
+
+  // ---- Fiscal years and the year-end close ---------------------------------
+
+  @Requires('journal.read')
+  @Get('fiscal-years')
+  async listFiscalYears(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return { fiscalYears: await withTenant(this.sql, ctx, (tx) => listFiscalYears(tx, ctx)) };
+  }
+
+  /**
+   * Close a fiscal year.
+   *
+   * Under `period.lock` rather than `journal.post`: what the caller is deciding
+   * is that a year is FINISHED, and the entry that transfers the profit is a
+   * consequence of that decision rather than the point of it. The same
+   * permission gates locking a period, which is the same judgement one level
+   * down.
+   */
+  // No request schema: the close takes no body. Everything it needs is the
+  // year in the path and the Idempotency-Key in the header — there is no
+  // decision left for a payload to carry, and one would only invite a caller to
+  // override a figure the ledger already knows.
+  @Requires('period.lock')
+  @Post('fiscal-years/:id/close')
+  async closeFiscalYear(
+    @Param('id') fiscalYearId: string,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      closeFiscalYear(tx, ctx, { fiscalYearId, idempotencyKey }),
+    );
+  }
+
+  /**
+   * Reopen a closed year, reversing its closing entry.
+   *
+   * The reason is required by the service, not merely by this schema — a rule
+   * enforced only at the edge is one an API key or a background job walks past.
+   */
+  @Requires('period.lock')
+  @Doc({ request: () => reopenFiscalYearSchema })
+  @Post('fiscal-years/:id/reopen')
+  async reopenFiscalYear(
+    @Param('id') fiscalYearId: string,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = parse(reopenFiscalYearSchema, body);
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      reopenFiscalYear(tx, ctx, { fiscalYearId, reason: input.reason, idempotencyKey }),
+    );
   }
 
   // ---- Manual journals -----------------------------------------------------
@@ -349,6 +413,15 @@ const accountSchema = z.object({
   parentId: z.string().uuid().optional(),
   currency: z.string().length(3).optional(),
   tags: z.array(z.string().min(1)).optional(),
+});
+
+const reopenFiscalYearSchema = z.object({
+  /**
+   * Required, and `min(1)` rather than merely present. Reopening a closed year
+   * is the act most likely to be asked about in an audit, and "why" is the
+   * question. The service enforces this too — see `reopenFiscalYear`.
+   */
+  reason: z.string().min(1, 'Reopening a closed year requires a reason'),
 });
 
 const revaluationSchema = z.object({

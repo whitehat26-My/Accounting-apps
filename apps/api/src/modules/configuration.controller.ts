@@ -206,8 +206,10 @@ export class ConfigurationController {
     };
   }
 
+  // No request schema: submitting takes no body. The document said
+  // `amendSchema` — a copy-paste from the route below, advertising an
+  // `amendmentReason` field this handler never reads.
   @Requires('tax.write')
-  @Doc({ request: () => amendSchema })
   @Post('tax-returns/:id/submit')
   async submit(@Param('id') id: string, @Req() request: FastifyRequest) {
     const ctx = tenantContextOf(request);

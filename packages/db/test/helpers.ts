@@ -230,7 +230,10 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, 'SST_CLAIMABLE',  ${accounts['1150']!}),
                (${tenantId}, 'WHT_PAYABLE',    ${accounts['2200']!}),
                (${tenantId}, 'UNDEPOSITED_FUNDS', ${accounts['1200']!}),
-               (${tenantId}, 'GATEWAY_FEE',       ${accounts['6100']!})
+               (${tenantId}, 'GATEWAY_FEE',       ${accounts['6100']!}),
+               -- Where a closed year's profit is carried. In the CHECK since
+               -- 0002 and mapped by nothing until the year-end close existed.
+               (${tenantId}, 'RETAINED_EARNINGS', ${accounts['3000']!})
     `;
 
     // Tags let the GLOBAL statement templates address this chart without

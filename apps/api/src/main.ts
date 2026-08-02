@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
-import { Logger } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { FastifyRequest } from 'fastify';
@@ -20,7 +20,10 @@ export async function createApp(): Promise<NestFastifyApplication> {
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter({ trustProxy: true, bodyLimit: 8 * 1024 * 1024 }),
-    { logger: ['error', 'warn'] },
+    // `bodyParser: false` so the JSON parser registered below is the only one.
+    // Nest registers its own during `init()`, which would collide — and it is
+    // the one that rejects an empty body. See the parser for why that matters.
+    { logger: ['error', 'warn'], bodyParser: false },
   );
 
   // The request context is attached in a Fastify `onRequest` hook rather than
@@ -45,6 +48,35 @@ export async function createApp(): Promise<NestFastifyApplication> {
     });
     done();
   });
+
+  /*
+   * An empty body is `{}`, not a 400.
+   *
+   * Fastify's built-in JSON parser rejects a zero-length body outright when the
+   * request declares `Content-Type: application/json`. Two routes take no body
+   * at all — closing a fiscal year and submitting a tax return — and a client
+   * that sets the header anyway, which every HTTP library does by default on a
+   * POST, got "Body cannot be empty" with no hint that the body was never
+   * wanted. Nothing on the server had to change for the route to work; the
+   * request just had to say less.
+   *
+   * Registered here rather than worked around per route, because the next
+   * bodyless POST would hit it too.
+   */
+  app.getHttpAdapter().getInstance().addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (_request, body: string, done) => {
+      if (body.length === 0) return done(null, {});
+      try {
+        done(null, JSON.parse(body));
+      } catch {
+        // Malformed JSON is still a 400 — a body that was MEANT to say
+        // something and failed is a different case from one that says nothing.
+        done(new BadRequestException('Request body is not valid JSON'), undefined);
+      }
+    },
+  );
 
   // Without this Nest never calls `onApplicationShutdown`, and the database
   // pool in `DatabaseLifecycle` is never drained. `app.close()` alone tears

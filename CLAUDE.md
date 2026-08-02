@@ -7,7 +7,8 @@ document before implementing anything in that area.
 ## Non-negotiable rules
 
 1. **The ledger is append-only.** Posted journal entries are never updated or deleted.
-   Corrections are reversing entries that reference the original. Enforced by DB trigger.
+   Corrections are reversing entries that reference the original — via
+   `reversePostedEntry()`, which writes `journal_entry.reversal_of_id`. Enforced by DB trigger.
 2. **Money is `Money`** (integer minor units) in application code and `NUMERIC(19,4)` in
    PostgreSQL. Never a JavaScript `number`. Never a float. Ever.
 3. **Every tenant-owned table** has `tenant_id` as the first column of its primary key,
@@ -51,6 +52,13 @@ apps/web            Next.js
 packages/ui         Shared component library
 infra               Terraform
 ```
+
+**Everything outstanding is in `docs/SETTLEMENT-REGISTER.md`, categorised BUILT /
+DEFERRED-BY-DECISION / BLOCKED-ON-EXTERNAL / NOT-STARTED, with the exact unblocker named for
+each blocked item.** Read it before concluding something is missing by oversight — several
+things are absent on purpose, and the register says which and why. Add to it when you find a
+gap; a gap that lives only in a conversation is indistinguishable, six months later, from one
+nobody noticed.
 
 **The OpenAPI spec is GENERATED, and the "OpenAPI spec updated" line below is now enforced
 rather than aspirational.** It is not a second source of truth: `apps/api/src/openapi/scan.ts`

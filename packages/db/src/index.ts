@@ -26,4 +26,5 @@ export * from './statutory.js';
 export * from './readiness.js';
 export * from './sandbox.js';
 export * from './tax-return.js';
+export * from './year-end.js';
 export { migrate } from './migrate.js';

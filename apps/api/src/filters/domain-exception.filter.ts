@@ -109,7 +109,16 @@ function mapServiceError(exception: unknown): Mapped | undefined {
     return { status: HttpStatus.FORBIDDEN, body: { error: 'forbidden', message: exception.message } };
   }
 
-  if (code === 'EMAIL_TAKEN' || code === 'GL_ACCOUNT_IN_USE' || code === 'ALREADY_MATCHED') {
+  // A year that is already closed, or already open, is a state conflict rather
+  // than a malformed request — the caller asked for something reasonable and
+  // the world had moved on since they decided to ask.
+  if (
+    code === 'EMAIL_TAKEN' ||
+    code === 'GL_ACCOUNT_IN_USE' ||
+    code === 'ALREADY_MATCHED' ||
+    code === 'ALREADY_CLOSED' ||
+    code === 'NOT_CLOSED'
+  ) {
     return { status: HttpStatus.CONFLICT, body: { error: 'conflict', message: exception.message } };
   }
 
