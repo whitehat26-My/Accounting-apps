@@ -17,6 +17,10 @@ const config: NextConfig = demo
       output: 'export',
       basePath: process.env['DEMO_BASE_PATH'] ?? '',
       images: { unoptimized: true },
+      // login/index.html instead of login.html, so /login and /login/ BOTH
+      // resolve on a dumb file server. Without it, the trailing-slash form
+      // falls through to the 404 page — found the hard way on an iPad.
+      trailingSlash: true,
     }
   : {
       async rewrites() {
