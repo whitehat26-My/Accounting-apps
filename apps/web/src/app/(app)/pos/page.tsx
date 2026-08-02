@@ -264,9 +264,9 @@ export default function PosPage() {
                 variant="ghost"
                 className="w-full"
                 onClick={() =>
-                  void apiBlobUrl(`/v1/receipts/${result.receiptId}/pdf`).then((url) =>
-                    window.open(url, '_blank'),
-                  )
+                  void apiBlobUrl(`/v1/receipts/${result.receiptId}/pdf`)
+                    .then((url) => window.open(url, '_blank'))
+                    .catch((e: Error) => window.alert(e.message))
                 }
               >
                 Print receipt

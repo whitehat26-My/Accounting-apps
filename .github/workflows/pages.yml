@@ -1,0 +1,51 @@
+name: Deploy prototype to GitHub Pages
+
+# The static DEMO build of apps/web: the screens with an in-browser sample
+# backend. NOT the real system — the API and PostgreSQL cannot run on Pages.
+
+on:
+  push:
+    branches: [claude/emil-accounting-architecture-kqu1ay, main]
+    paths: ['apps/web/**', '.github/workflows/pages.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with: { version: 10 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22, cache: pnpm }
+      - run: pnpm install --frozen-lockfile
+      - name: Build static demo
+        run: pnpm --filter @emil/web build
+        env:
+          NEXT_PUBLIC_DEMO: '1'
+          DEMO_BASE_PATH: /${{ github.event.repository.name }}
+      - uses: actions/configure-pages@v5
+        with:
+          enablement: true
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/out
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

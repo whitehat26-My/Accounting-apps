@@ -1,8 +1,8 @@
 'use client';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useParams } from 'next/navigation';
-import { useState } from 'react';
+import { useSearchParams } from 'next/navigation';
+import { Suspense, useState } from 'react';
 import { api, apiBlobUrl } from '@/lib/api';
 import { qty, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
@@ -39,8 +39,21 @@ interface QuoteDraft {
   unitPrice: string;
 }
 
+/**
+ * Query-param route rather than /repairs/[id]: a dynamic segment cannot be
+ * statically exported, and the GitHub Pages demo is a static export. The
+ * real deployment renders it identically.
+ */
 export default function RepairDetailPage() {
-  const { id } = useParams<{ id: string }>();
+  return (
+    <Suspense>
+      <RepairDetail />
+    </Suspense>
+  );
+}
+
+function RepairDetail() {
+  const id = useSearchParams().get('id') ?? '';
   const queryClient = useQueryClient();
 
   const job = useQuery({
@@ -244,7 +257,9 @@ export default function RepairDetailPage() {
         <Button
           variant="ghost"
           onClick={() =>
-            void apiBlobUrl(`/v1/invoices/${j.invoiceId}/pdf`).then((url) => window.open(url, '_blank'))
+            void apiBlobUrl(`/v1/invoices/${j.invoiceId}/pdf`)
+              .then((url) => window.open(url, '_blank'))
+              .catch((e: Error) => window.alert(e.message))
           }
         >
           Print invoice

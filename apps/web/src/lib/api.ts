@@ -61,10 +61,27 @@ interface RequestOptions {
   readonly anonymous?: boolean;
 }
 
+/**
+ * NEXT_PUBLIC_DEMO=1 swaps the transport for the in-browser demo backend so
+ * the screens can live on a static host (GitHub Pages). Checked at build time:
+ * in a real build the demo module is never even imported.
+ */
+const DEMO = process.env['NEXT_PUBLIC_DEMO'] === '1';
+
 export async function api<T = Record<string, unknown>>(
   path: string,
   options: RequestOptions = {},
 ): Promise<T> {
+  if (DEMO) {
+    const { demoApi } = await import('./demo');
+    try {
+      return demoApi(path, options.method ?? 'GET', options.body) as T;
+    } catch (e) {
+      const err = e as { status?: number; body?: Record<string, unknown> };
+      throw new ApiError(err.status ?? 500, err.body ?? { message: String(e) });
+    }
+  }
+
   const attempt = async (): Promise<Response> => {
     const session = options.anonymous ? null : loadSession();
     const headers: Record<string, string> = { 'content-type': 'application/json' };
@@ -151,6 +168,10 @@ function refreshAccessToken(): Promise<boolean> {
  * path as every other request, no token in any URL.
  */
 export async function apiBlobUrl(path: string): Promise<string> {
+  if (DEMO) {
+    const { DEMO_PDF_MESSAGE } = await import('./demo');
+    throw new ApiError(501, { message: DEMO_PDF_MESSAGE });
+  }
   const session = loadSession();
   const response = await fetch(`/api${path}`, {
     headers: session

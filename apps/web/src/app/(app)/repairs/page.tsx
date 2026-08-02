@@ -83,7 +83,7 @@ export default function RepairsPage() {
               {open.map((job) => (
                 <Link
                   key={job.id}
-                  href={`/repairs/${job.id}`}
+                  href={`/repairs/job?id=${job.id}`}
                   className="block rounded-md border border-neutral-100 p-3 hover:border-emerald-500"
                 >
                   <div className="flex items-center justify-between">
@@ -106,7 +106,7 @@ export default function RepairsPage() {
               {closed.slice(0, 10).map((job) => (
                 <Link
                   key={job.id}
-                  href={`/repairs/${job.id}`}
+                  href={`/repairs/job?id=${job.id}`}
                   className="flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-neutral-50"
                 >
                   <span className="text-neutral-600">
