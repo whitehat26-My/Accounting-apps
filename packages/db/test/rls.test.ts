@@ -116,6 +116,11 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     // refreshed from LHDN, contains nothing tenant-specific. Read-only to the
     // application role.
     einvoice_classification_code: 'global LHDN reference data, read-only',
+    // Same shape, same reasoning: the MyInvois unit-of-measure code list is
+    // identical for every tenant. Ships EMPTY pending LHDN's published
+    // reference data, because a plausible-looking wrong code on a submission to
+    // a tax authority is worse than an explicit gap.
+    einvoice_uom_code: 'global LHDN reference data, read-only',
     // Statement layouts are the same for every tenant and contain no tenant
     // data. Read-only to the application role; tenant-specific overrides,
     // when they exist, will live in separate tenant-scoped tables.

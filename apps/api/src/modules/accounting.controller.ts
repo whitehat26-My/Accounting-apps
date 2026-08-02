@@ -359,13 +359,27 @@ const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-D
 
 const quantity = z.string().regex(/^\d+(\.\d{1,4})?$/, 'Quantity must be a decimal string');
 
+/**
+ * One document line.
+ *
+ * `description`, `unitPrice`, `accountId` and `taxCodeId` became OPTIONAL when
+ * the item catalogue landed: a line carrying an `itemId` takes them from the
+ * item, and anything supplied overrides. The service refuses a line that has
+ * neither an item nor the fields, naming what is missing — Zod cannot express
+ * "required unless a sibling field is present" without a refinement that would
+ * report the failure less clearly than the service does.
+ *
+ * `quantity` stays required. An item has no inherent quantity, and a line that
+ * silently became "1" is a wrong invoice.
+ */
 const documentLine = z.object({
-  description: z.string().min(1),
   quantity,
-  unitPrice: decimal,
-  accountId: z.string().uuid(),
-  taxCodeId: z.string().uuid(),
   itemId: z.string().uuid().optional(),
+  description: z.string().min(1).optional(),
+  unitPrice: decimal.optional(),
+  accountId: z.string().uuid().optional(),
+  taxCodeId: z.string().uuid().optional(),
+  unitOfMeasure: z.string().min(1).max(50).optional(),
   discountBasisPoints: z.number().int().min(0).max(10_000).optional(),
   /**
    * LHDN item classification, per line.
@@ -376,6 +390,34 @@ const documentLine = z.object({
    * caller supply one.
    */
   classificationCode: z.string().max(20).optional(),
+});
+
+/**
+ * A credit-note line.
+ *
+ * ---------------------------------------------------------------------------
+ * DELIBERATELY NOT ITEM-AWARE, WHERE INVOICES AND BILLS ARE.
+ *
+ * A credit note reverses something that was already charged, so its price must
+ * come from what the customer was ACTUALLY billed — not from the catalogue as
+ * it stands today. Defaulting an item's current price onto a credit note
+ * against a six-month-old invoice would credit RM 95 against a sale of RM 80,
+ * and the difference lands in revenue with nothing flagging it.
+ *
+ * Crediting from the original document is the right feature and is not built.
+ * Until it is, the line carries its own figures, which is at least honest about
+ * where they came from.
+ * ---------------------------------------------------------------------------
+ */
+const reversalLine = z.object({
+  description: z.string().min(1),
+  quantity,
+  unitPrice: decimal,
+  accountId: z.string().uuid(),
+  taxCodeId: z.string().uuid(),
+  itemId: z.string().uuid().optional(),
+  discountBasisPoints: z.number().int().min(0).max(10_000).optional(),
+  classificationCode: z.string().min(1).max(20).optional(),
 });
 
 const invoiceSchema = z.object({
@@ -441,7 +483,7 @@ const creditNoteSchema = z.object({
   reasonDetail: z.string().optional(),
   currency: z.string().length(3).optional(),
   amountsAreTaxInclusive: z.boolean().optional(),
-  lines: z.array(documentLine).min(1),
+  lines: z.array(reversalLine).min(1),
   allocations: z.array(z.object({ invoiceId: z.string().uuid(), amount: decimal })).optional(),
 });
 

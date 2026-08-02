@@ -69,6 +69,8 @@ export type Permission =
   | 'apikey.manage'
   | 'audit.read'
   | 'system.read'
+  | 'item.read'
+  | 'item.write'
   | 'org.manage'
   | 'org.delete';
 

@@ -389,14 +389,17 @@ reconciliation workspace UI.
 - Unified `Contact` that can be customer, supplier, or both; multiple addresses and contact persons; per-contact defaults (currency, payment terms, tax code, revenue/expense account, price tier)
 - Malaysian identity block: TIN, SSM/BRN, NRIC/passport for individuals, SST registration number, MSIC code — validated in format and, where possible, verified against LHDN
 - Credit limit and credit hold; statement delivery preferences; e-invoice requirement flag (drives individual vs consolidated submission)
-- `Item` catalogue: goods/services, sale and purchase pricing, default accounts, default tax codes, **MyInvois classification code**, unit of measure
-- Light stock-on-hand tracking (quantity only) with a clear upgrade path to full costing in v1.1
+- `Item` catalogue: goods/services, sale and purchase pricing, default accounts, default tax codes, **MyInvois classification code**, unit of measure. **An item's values are COPIED onto a document line at issue, never referenced from it** — raising a price in June must leave May's invoice reading what the customer was actually charged, which is the same snapshot discipline versioned tax rates and the stored e-Invoice payload get. `item_id` is retained for reporting and must never be joined to for an amount.
+- **Light stock-on-hand tracking is NOT built, and is not a near-term gap.** Perpetual inventory needs a costing method (weighted average, FIFO, standard), posts to the ledger on movement rather than on invoice, needs stock takes and variance accounts, and under MPERS §13 the measurement basis carries disclosure consequences. A `quantity_on_hand` column maintained by nothing would be a number that looks like stock and ends up on a balance sheet. The catalogue is honest about being a catalogue.
+- **The MyInvois unit-of-measure code is a reference list, not a derivation.** "box", "carton" and "ctn" are one thing to a human and three strings here; inferring a code from free text would put an unverified value on a submission to a tax authority. `einvoice_uom_code` ships EMPTY pending LHDN's published SDK reference data, and an item is refused a code the list does not contain.
+- **An item price is in the base currency and is not converted.** `item.sale_unit_price` is NUMERIC with no currency column, so defaulting RM 1,000 onto a USD invoice would produce a line reading $1,000 — arithmetically consistent all the way through the ledger and therefore invisible to every check. A foreign-currency line must carry its own price until a per-currency price list exists.
 - Import/export via CSV with a dry-run validation pass and a row-level error report
 - Merge duplicates with full history retention
 
 **Data models**
 
-`Contact` · `ContactAddress` · `ContactPerson` · `ContactTaxProfile` · `ContactDefaults` · `Item` · `ItemPrice` · `PriceList` · `UnitOfMeasure` · `StockLevel`
+`Contact` · `ContactAddress` · `ContactPerson` · `ContactTaxProfile` · `ContactDefaults` · `Item` · `EInvoiceUomCode`
+(`ItemPrice`, `PriceList` and `StockLevel` are not built — see the notes above on per-currency pricing and inventory.)
 
 ---
 
