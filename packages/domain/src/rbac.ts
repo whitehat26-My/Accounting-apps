@@ -74,6 +74,8 @@ export type Permission =
   | 'stock.read'
   | 'stock.adjust'
   | 'pos.sale'
+  | 'repair.read'
+  | 'repair.write'
   | 'org.manage'
   | 'org.delete';
 

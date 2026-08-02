@@ -29,4 +29,5 @@ export * from './tax-return.js';
 export * from './year-end.js';
 export * from './inventory.js';
 export * from './pos.js';
+export * from './repair.js';
 export { migrate } from './migrate.js';

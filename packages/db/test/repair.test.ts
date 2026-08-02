@@ -1,0 +1,335 @@
+import { randomUUID } from 'node:crypto';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { withTenant, type Sql } from '../src/client.js';
+import { enterBill } from '../src/bill.js';
+import { createItem } from '../src/item.js';
+import {
+  collectRepairJob,
+  createRepairJob,
+  getRepairJob,
+  listRepairJobs,
+  quoteRepairJob,
+  setFittedSerials,
+  transitionRepairJob,
+} from '../src/repair.js';
+import { findSerial, stockLevels } from '../src/inventory.js';
+import { detectRollupDrift } from '../src/ledger.js';
+import { createTestDatabase, seedTenant, type Tenant } from './helpers.js';
+
+/**
+ * A repair, the way the workshop runs one: laptop in with a dead SSD, quote,
+ * approval by WhatsApp, the replacement fitted, paid in cash at collection.
+ */
+
+let sql: Sql;
+let admin: Sql;
+let drop: () => Promise<void>;
+let tenant: Tenant;
+let ctx: { tenantId: string; userId: string };
+let ssdId: string;
+let labourId: string;
+let jobId: string;
+
+beforeAll(async () => {
+  const db = await createTestDatabase('repair');
+  sql = db.sql;
+  admin = db.admin;
+  drop = db.drop;
+  tenant = await seedTenant(admin, 'Workshop Sdn Bhd');
+  ctx = { tenantId: tenant.tenantId, userId: tenant.userId };
+
+  const ssd = await withTenant(sql, ctx, (tx) =>
+    createItem(tx, ctx, {
+      code: 'SSD-500',
+      name: '500GB NVMe SSD',
+      itemType: 'GOODS',
+      isTracked: true,
+      isSerialised: true,
+      isSold: true,
+      isPurchased: true,
+      sale: { unitPrice: '220.00', accountId: tenant.accounts['4000']!, taxCodeId: tenant.taxCodes['NONE']! },
+      purchase: { accountId: tenant.accounts['5000']!, taxCodeId: tenant.taxCodes['NONE']! },
+    }),
+  );
+  ssdId = ssd.id;
+
+  const labour = await withTenant(sql, ctx, (tx) =>
+    createItem(tx, ctx, {
+      code: 'LABOUR-STD',
+      name: 'Bench labour',
+      itemType: 'SERVICE',
+      isSold: true,
+      sale: { unitPrice: '80.00', accountId: tenant.accounts['4000']!, taxCodeId: tenant.taxCodes['NONE']! },
+    }),
+  );
+  labourId = labour.id;
+
+  await withTenant(sql, ctx, (tx) =>
+    enterBill(tx, ctx, {
+      supplierId: tenant.supplierId,
+      billNo: 'PARTS-01',
+      billDate: '2026-08-03',
+      lines: [
+        {
+          itemId: ssdId,
+          quantity: '2',
+          unitPrice: '150.00',
+          serialNumbers: ['NV-A1', 'NV-A2'],
+        },
+      ],
+      idempotencyKey: randomUUID(),
+    }),
+  );
+}, 60_000);
+
+afterAll(async () => {
+  await drop?.();
+});
+
+describe('intake', () => {
+  it('takes a device in and numbers the job', async () => {
+    const job = await withTenant(sql, ctx, (tx) =>
+      createRepairJob(tx, ctx, {
+        contactId: tenant.customerId,
+        deviceDescription: 'Acer Aspire 5, silver, charger included',
+        deviceSerial: 'NXHS8SM00123',
+        reportedFault: 'Does not boot; clicking noise from the drive bay',
+        receivedOn: '2026-08-04',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    expect(job.jobNo).toMatch(/^JOB-\d{5}$/);
+    jobId = job.id;
+
+    const view = await withTenant(sql, ctx, (tx) => getRepairJob(tx, ctx, jobId));
+    expect(view.status).toBe('RECEIVED');
+  });
+
+  it('replays a double-submitted intake instead of taking the laptop in twice', async () => {
+    const key = randomUUID();
+    const input = {
+      contactId: tenant.customerId,
+      deviceDescription: 'The same laptop',
+      reportedFault: 'The same fault',
+      receivedOn: '2026-08-04',
+      idempotencyKey: key,
+    };
+
+    const first = await withTenant(sql, ctx, (tx) => createRepairJob(tx, ctx, input));
+    const second = await withTenant(sql, ctx, (tx) => createRepairJob(tx, ctx, input));
+
+    expect(second.replayed).toBe(true);
+    expect(second.id).toBe(first.id);
+  });
+});
+
+describe('quoting and approval', () => {
+  it('quotes parts and labour at agreed prices', async () => {
+    const view = await withTenant(sql, ctx, (tx) =>
+      quoteRepairJob(tx, ctx, jobId, {
+        diagnosis: 'Failed HDD. Replace with 500GB NVMe and clone what is recoverable.',
+        lines: [
+          // Quoted BELOW the catalogue's 220 — the agreement wins at invoice.
+          { itemId: ssdId, description: 'Replace failed drive with 500GB NVMe', quantity: '1', unitPrice: '200.00' },
+          { itemId: labourId, description: 'Diagnosis, fitting and data clone', quantity: '1', unitPrice: '120.00' },
+        ],
+      }),
+    );
+
+    expect(view.status).toBe('QUOTED');
+    expect(view.lines).toHaveLength(2);
+  });
+
+  it('refuses collection before approval', async () => {
+    await expect(
+      withTenant(sql, ctx, (tx) =>
+        collectRepairJob(tx, ctx, jobId, {
+          collectDate: '2026-08-05',
+          idempotencyKey: randomUUID(),
+        }),
+      ),
+    ).rejects.toThrow(/QUOTED/);
+  });
+
+  it('records the approval and how it was given', async () => {
+    const view = await withTenant(sql, ctx, (tx) =>
+      transitionRepairJob(tx, ctx, jobId, {
+        to: 'APPROVED',
+        approvalNote: 'Approved by WhatsApp, 14:32',
+      }),
+    );
+
+    expect(view.status).toBe('APPROVED');
+    expect(view.approvalNote).toBe('Approved by WhatsApp, 14:32');
+  });
+
+  it('refuses COLLECTED as a status change from anywhere', async () => {
+    // From APPROVED it is not even reachable, so the transition table refuses
+    // first; the collect-specific message fires from READY (checked below).
+    await expect(
+      withTenant(sql, ctx, (tx) => transitionRepairJob(tx, ctx, jobId, { to: 'COLLECTED' })),
+    ).rejects.toThrow(/APPROVED job cannot become COLLECTED/);
+  });
+});
+
+describe('collection', () => {
+  it('moves to READY, then collects cash — invoice, receipt, stock and serial in one', async () => {
+    await withTenant(sql, ctx, (tx) => transitionRepairJob(tx, ctx, jobId, { to: 'READY' }));
+
+    // Even from READY, COLLECTED is not a status you can SET — the invoice is
+    // the collection, or the work walks out unbilled.
+    await expect(
+      withTenant(sql, ctx, (tx) => transitionRepairJob(tx, ctx, jobId, { to: 'COLLECTED' })),
+    ).rejects.toThrow(/invoicing it/);
+
+    /*
+     * The exact unit fitted is decided on the bench, so the serial arrives at
+     * collection time via a final quote revision... except revising is only
+     * legal pre-approval. The serial was NOT set at quote time in this test,
+     * so collection must fail asking for it — proving the serialised-part
+     * requirement survives the conversion.
+     */
+    await expect(
+      withTenant(sql, ctx, (tx) =>
+        collectRepairJob(tx, ctx, jobId, {
+          collectDate: '2026-08-06',
+          payment: { method: 'CASH', depositAccountId: tenant.accounts['1000']! },
+          idempotencyKey: randomUUID(),
+        }),
+      ),
+    ).rejects.toThrow(/serial number/);
+
+    // Name the unit the bench fitted — through the operation that exists for
+    // exactly this: serials only, after approval, never the agreed price.
+    await withTenant(sql, ctx, (tx) => setFittedSerials(tx, ctx, jobId, 1, ['NV-A1']));
+
+    const collected = await withTenant(sql, ctx, (tx) =>
+      collectRepairJob(tx, ctx, jobId, {
+        collectDate: '2026-08-06',
+        payment: {
+          method: 'CASH',
+          depositAccountId: tenant.accounts['1000']!,
+          tenderedAmount: '350.00',
+        },
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    // 200 + 120, quoted prices — not the catalogue's 220.
+    expect(collected.total).toBe('320.0000');
+    expect(collected.changeDue).toBe('30.0000');
+    expect(collected.paid).toBe(true);
+    expect(collected.invoiceNo).toMatch(/^INV-/);
+
+    const view = await withTenant(sql, ctx, (tx) => getRepairJob(tx, ctx, jobId));
+    expect(view.status).toBe('COLLECTED');
+    expect(view.invoiceId).toBe(collected.invoiceId);
+
+    // The fitted SSD left stock, by name, bound to this invoice.
+    const matches = await withTenant(sql, ctx, (tx) => findSerial(tx, ctx, 'NV-A1'));
+    expect(matches[0]!.status).toBe('SOLD');
+    expect(matches[0]!.issuedTo?.documentId).toBe(collected.invoiceId);
+
+    const levels = await withTenant(sql, ctx, (tx) => stockLevels(tx, ctx));
+    expect(levels.find((l) => l.code === 'SSD-500')?.quantityOnHand).toBe('1.0000');
+  });
+
+  it('replays a double-clicked collection instead of invoicing twice', async () => {
+    const view = await withTenant(sql, ctx, (tx) => getRepairJob(tx, ctx, jobId));
+
+    // Same key as stored → replay. (A different key on a COLLECTED job is an
+    // illegal transition and refused by the state machine.)
+    const [job] = await withTenant(sql, ctx, (tx) =>
+      tx<{ collect_idempotency_key: string }[]>`
+          SELECT collect_idempotency_key FROM repair_job
+           WHERE tenant_id = ${ctx.tenantId} AND id = ${jobId}
+      `,
+    );
+
+    const replayed = await withTenant(sql, ctx, (tx) =>
+      collectRepairJob(tx, ctx, jobId, {
+        collectDate: '2026-08-06',
+        idempotencyKey: job!.collect_idempotency_key,
+      }),
+    );
+
+    expect(replayed.invoiceId).toBe(view.invoiceId);
+    expect(replayed.total).toBe('320.0000');
+
+    const [invoices] = await withTenant(sql, ctx, (tx) =>
+      tx<{ n: string }[]>`
+          SELECT COUNT(*)::text AS n FROM invoice WHERE tenant_id = ${ctx.tenantId}
+      `,
+    );
+    expect(invoices!.n).toBe('1');
+  });
+});
+
+describe('declines and the queue', () => {
+  it('declines with a reason, re-quotes cheaper, and shows up in the queue by status', async () => {
+    const job = await withTenant(sql, ctx, (tx) =>
+      createRepairJob(tx, ctx, {
+        contactId: tenant.customerId,
+        deviceDescription: 'Dell XPS 13',
+        reportedFault: 'Cracked screen',
+        receivedOn: '2026-08-05',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    await withTenant(sql, ctx, (tx) =>
+      quoteRepairJob(tx, ctx, job.id, {
+        diagnosis: 'Panel replacement required',
+        lines: [{ itemId: labourId, description: 'OEM panel + fitting', quantity: '1', unitPrice: '850.00' }],
+      }),
+    );
+
+    await expect(
+      withTenant(sql, ctx, (tx) => transitionRepairJob(tx, ctx, job.id, { to: 'DECLINED' })),
+    ).rejects.toThrow(/requires a reason/);
+
+    await withTenant(sql, ctx, (tx) =>
+      transitionRepairJob(tx, ctx, job.id, { to: 'DECLINED', reason: 'Too expensive for the age of the machine' }),
+    );
+
+    // "What about a compatible panel instead?"
+    const requoted = await withTenant(sql, ctx, (tx) =>
+      quoteRepairJob(tx, ctx, job.id, {
+        diagnosis: 'Panel replacement — compatible part',
+        lines: [{ itemId: labourId, description: 'Compatible panel + fitting', quantity: '1', unitPrice: '520.00' }],
+      }),
+    );
+    expect(requoted.status).toBe('QUOTED');
+
+    const quoted = await withTenant(sql, ctx, (tx) => listRepairJobs(tx, ctx, { status: 'QUOTED' }));
+    expect(quoted.some((j) => j.id === job.id)).toBe(true);
+  });
+
+  it('answers not-found for another tenant’s job', async () => {
+    const other = await seedTenant(admin, 'Rival Workshop Sdn Bhd');
+    const theirs = await withTenant(
+      sql,
+      { tenantId: other.tenantId, userId: other.userId },
+      (tx) =>
+        createRepairJob(tx, { tenantId: other.tenantId, userId: other.userId }, {
+          contactId: other.customerId,
+          deviceDescription: 'Their machine',
+          reportedFault: 'Their problem',
+          receivedOn: '2026-08-05',
+          idempotencyKey: randomUUID(),
+        }),
+    );
+
+    await expect(
+      withTenant(sql, ctx, (tx) => getRepairJob(tx, ctx, theirs.id)),
+    ).rejects.toThrow(/not found/i);
+  });
+});
+
+describe('the books after the workshop', () => {
+  it('rollup drift stays empty', async () => {
+    const drift = await withTenant(sql, ctx, (tx) => detectRollupDrift(tx, ctx));
+    expect(drift).toEqual([]);
+  });
+});

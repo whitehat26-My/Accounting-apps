@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0028`, 114 HTTP routes, 1,249 tests
-(594 domain · 483 db · 134 api · 21 worker · 17 contracts).
+Last reconciled against the tree: migration `0029`, 120 HTTP routes, 1,271 tests
+(602 domain · 494 db · 137 api · 21 worker · 17 contracts).
 
 **Context that reshaped the roadmap (2026-08-02):** the first real tenant is a computer
 shop, revenue ≈ RM 50–60k/month. That makes the SHOP track (§5) the product, not an
@@ -237,11 +237,23 @@ Not in the slice: RMA/warranty-claim workflow states on a unit (a unit is IN_STO
 or WRITTEN_OFF; "out for repair with the vendor" lands with repair jobs §5.3), and serial
 capture on credit-note returns (waits on §5.4 restocking).
 
-### 5.3 Repair / service jobs — NOT STARTED
+### 5.3 Repair / service jobs — BUILT (`0029`, `packages/db/src/repair.ts`)
 
-Intake → diagnose → quote → approve → repair → collect. A job card that consumes tracked
-parts (stock issue against the job) and labour, then converts to an invoice on collection.
-The approval flow from bills (0013) is the pattern to reuse for quote approval.
+Intake → quote → approve → (bench) → ready → collect, with a state machine that refuses
+what a workshop must not do: quote a price of nothing, decline or cancel without a reason,
+or mark a job COLLECTED by hand — the invoice IS the collection, or the work walks out
+unbilled. Quotes carry AGREED prices that survive catalogue changes; collection converts
+them verbatim to an invoice through the POS path (paid at the counter) or plain invoicing
+(on account), so stock relief, COGS, serials and SST all reuse tested machinery. Fitted
+serials are recorded on the bench via a serials-only operation — the agreed price cannot
+drift in through that door. Approvals record HOW the yes was given ("WhatsApp 14:32"),
+which is the sentence that settles the dispute.
+
+**Deliberate simplification, stated:** parts fitted mid-repair stay on the shelf in the
+system until collection. WIP accounting (Dr WIP / Cr Inventory at fitting, Dr COGS / Cr
+WIP at invoice) is the honest treatment for week-scale jobs and is future work; for
+same-week repairs the WIP balance rounds to noise. Also not in the slice: customer
+notification on READY (waits on §4.4 email), and a printed job sheet (waits on §4.5 PDF).
 
 ### 5.4 Credit-note restocking — DEFERRED, BY DECISION
 
