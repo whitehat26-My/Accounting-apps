@@ -133,6 +133,8 @@ const itemSchema = z.object({
   isPurchased: z.boolean().optional(),
   /** Perpetual inventory. GOODS only; the database refuses it on a service. */
   isTracked: z.boolean().optional(),
+  /** Serial-number tracking. Requires isTracked. */
+  isSerialised: z.boolean().optional(),
   sale: sideSchema,
   purchase: sideSchema,
 });

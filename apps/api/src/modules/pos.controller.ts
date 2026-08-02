@@ -61,6 +61,8 @@ const cashSaleSchema = z.object({
         accountId: uuid.optional(),
         taxCodeId: uuid.optional(),
         discountBasisPoints: z.number().int().min(0).max(10_000).optional(),
+        /** For a serialised item: scan each unit being sold. */
+        serialNumbers: z.array(z.string().min(1).max(120)).max(1000).optional(),
       }),
     )
     .min(1),

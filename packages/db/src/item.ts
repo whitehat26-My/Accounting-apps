@@ -52,6 +52,8 @@ export interface ItemView {
   readonly isPurchased: boolean;
   /** Perpetual inventory: quantities and weighted-average cost are kept. */
   readonly isTracked: boolean;
+  /** Every unit carries a serial. Requires isTracked. */
+  readonly isSerialised: boolean;
   readonly isActive: boolean;
   readonly sale: { unitPrice: string | null; accountId: string | null; taxCodeId: string | null };
   readonly purchase: { unitPrice: string | null; accountId: string | null; taxCodeId: string | null };
@@ -70,6 +72,7 @@ export interface UpsertItemInput {
   readonly isSold?: boolean;
   readonly isPurchased?: boolean;
   readonly isTracked?: boolean;
+  readonly isSerialised?: boolean;
   readonly sale?: { unitPrice?: string; accountId?: string; taxCodeId?: string };
   readonly purchase?: { unitPrice?: string; accountId?: string; taxCodeId?: string };
 }
@@ -80,7 +83,8 @@ export interface UpsertItemInput {
 
 const SELECT_COLUMNS = `
     i.id, i.code, i.name, i.description, i.item_type, i.unit_of_measure,
-    i.uom_code, i.classification_code, i.is_sold, i.is_purchased, i.is_tracked, i.is_active,
+    i.uom_code, i.classification_code, i.is_sold, i.is_purchased, i.is_tracked,
+    i.is_serialised, i.is_active,
     i.sale_unit_price, i.sale_account_id, i.sale_tax_code_id,
     i.purchase_unit_price, i.purchase_account_id, i.purchase_tax_code_id
 `;
@@ -89,7 +93,8 @@ interface ItemRow {
   id: string; code: string; name: string; description: string | null;
   item_type: ItemType; unit_of_measure: string; uom_code: string | null;
   classification_code: string | null;
-  is_sold: boolean; is_purchased: boolean; is_tracked: boolean; is_active: boolean;
+  is_sold: boolean; is_purchased: boolean; is_tracked: boolean; is_serialised: boolean;
+  is_active: boolean;
   sale_unit_price: string | null; sale_account_id: string | null; sale_tax_code_id: string | null;
   purchase_unit_price: string | null; purchase_account_id: string | null;
   purchase_tax_code_id: string | null;
@@ -172,7 +177,7 @@ export async function createItem(
   const [row] = await tx<ItemRow[]>`
       INSERT INTO item (
           tenant_id, code, name, description, item_type, unit_of_measure, uom_code,
-          classification_code, is_sold, is_purchased, is_tracked,
+          classification_code, is_sold, is_purchased, is_tracked, is_serialised,
           sale_unit_price, sale_account_id, sale_tax_code_id,
           purchase_unit_price, purchase_account_id, purchase_tax_code_id
       ) VALUES (
@@ -180,6 +185,7 @@ export async function createItem(
           ${input.itemType ?? 'SERVICE'}, ${input.unitOfMeasure ?? 'UNIT'},
           ${input.uomCode ?? null}, ${input.classificationCode ?? null},
           ${draft.isSold}, ${draft.isPurchased}, ${input.isTracked ?? false},
+          ${input.isSerialised ?? false},
           ${input.sale?.unitPrice ?? null}, ${input.sale?.accountId ?? null},
           ${input.sale?.taxCodeId ?? null},
           ${input.purchase?.unitPrice ?? null}, ${input.purchase?.accountId ?? null},
@@ -241,6 +247,30 @@ export async function updateItem(
     }
   }
 
+  /*
+   * Toggling serial tracking is only possible through an empty shelf, in
+   * EITHER direction. Turning it ON with stock on hand would leave units the
+   * system holds no serials for — serial drift by construction. Turning it OFF
+   * with units IN_STOCK would strand unit records nothing can ever issue.
+   * Count to zero, flip the flag, count back in (with serials, if turning on).
+   */
+  const serialisedChanging =
+    input.isSerialised !== undefined && input.isSerialised !== current.isSerialised;
+  if (serialisedChanging) {
+    const [stock] = await tx<{ quantity_on_hand: string }[]>`
+        SELECT quantity_on_hand FROM item_stock
+         WHERE tenant_id = ${ctx.tenantId} AND item_id = ${id}
+    `;
+    if (stock && Number(stock.quantity_on_hand) !== 0) {
+      throw new ItemError(
+        'ITEM_HAS_STOCK',
+        `Item ${current.code} has ${stock.quantity_on_hand} on hand. Serial tracking can ` +
+          'only be switched on or off through an empty shelf — count to zero first, then ' +
+          'count back in.',
+      );
+    }
+  }
+
   if (code !== current.code) {
     const [clash] = await tx<{ id: string }[]>`
         SELECT id FROM item
@@ -261,6 +291,7 @@ export async function updateItem(
              is_sold              = ${draft.isSold},
              is_purchased         = ${draft.isPurchased},
              is_tracked           = ${input.isTracked ?? current.isTracked},
+             is_serialised        = ${input.isSerialised ?? current.isSerialised},
              sale_unit_price      = ${input.sale?.unitPrice ?? null},
              sale_account_id      = ${input.sale?.accountId ?? null},
              sale_tax_code_id     = ${input.sale?.taxCodeId ?? null},
@@ -409,6 +440,16 @@ async function validate(
   draft: ItemMaster,
   input: UpsertItemInput,
 ): Promise<void> {
+  // Friendlier than the database CHECK it duplicates: the constraint names a
+  // column, this names the decision.
+  if (input.isSerialised === true && input.isTracked === false) {
+    throw new ItemError(
+      'ITEM_INVALID',
+      'A serialised item must be stock-tracked: serials are identity for units, and ' +
+        'without tracking there are no units to identify.',
+    );
+  }
+
   const check = checkItem(draft);
   if (!check.valid) {
     throw new ItemError(
@@ -513,6 +554,7 @@ function toView(row: ItemRow, baseCurrency: string): ItemView {
     isSold: row.is_sold,
     isPurchased: row.is_purchased,
     isTracked: row.is_tracked,
+    isSerialised: row.is_serialised,
     isActive: row.is_active,
     sale: {
       unitPrice: row.sale_unit_price,

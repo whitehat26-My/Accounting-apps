@@ -1,12 +1,15 @@
-import { Body, Controller, Get, Headers, Inject, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { isoDate, positiveDecimal, uuid } from '@emil/contracts';
 import {
   countStock,
+  detectSerialDrift,
   detectStockDrift,
+  findSerial,
   stockLevels,
   stockMovements,
+  stockUnits,
   withTenant,
   type Sql,
 } from '@emil/db';
@@ -66,18 +69,54 @@ export class StockController {
     );
   }
 
+  /** The units of a serialised item, optionally by status. */
+  @Requires('stock.read')
+  @Get('items/:itemId/units')
+  async units(
+    @Param('itemId') itemId: string,
+    @Query('status') status: string | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const parsed = status === undefined ? undefined : parse(unitStatusSchema, status);
+    const ctx = tenantContextOf(request);
+    return {
+      units: await withTenant(this.sql, ctx, (tx) =>
+        stockUnits(tx, ctx, itemId, ...(parsed !== undefined ? [parsed] : [])),
+      ),
+    };
+  }
+
   /**
-   * The canary: `item_stock` recomputed from `stock_movement`. Rows mean the
-   * cache is wrong and the movements are right — the stock twin of
-   * `GET /v1/ledger/drift`.
+   * The warranty question. A customer is at the counter holding a device;
+   * this answers what it is, when it came in on which document, and when it
+   * left on which. An empty list — "we have never seen this serial" — is
+   * itself the answer, so it is a 200, never a 404.
+   */
+  @Requires('stock.read')
+  @Get('serials/:serialNo')
+  async serial(@Param('serialNo') serialNo: string, @Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return { matches: await withTenant(this.sql, ctx, (tx) => findSerial(tx, ctx, serialNo)) };
+  }
+
+  /**
+   * The canaries: `item_stock` recomputed from `stock_movement`, and IN_STOCK
+   * unit counts against pool quantities for serialised items. Rows mean the
+   * cache (or the unit ledger) disagrees with the movements — the stock twin
+   * of `GET /v1/ledger/drift`.
    */
   @Requires('stock.read')
   @Get('drift')
   async drift(@Req() request: FastifyRequest) {
     const ctx = tenantContextOf(request);
-    return { drift: await withTenant(this.sql, ctx, (tx) => detectStockDrift(tx, ctx)) };
+    return withTenant(this.sql, ctx, async (tx) => ({
+      drift: await detectStockDrift(tx, ctx),
+      serialDrift: await detectSerialDrift(tx, ctx),
+    }));
   }
 }
+
+const unitStatusSchema = z.enum(['IN_STOCK', 'SOLD', 'WRITTEN_OFF']);
 
 const countSchema = z.object({
   itemId: uuid,
@@ -89,6 +128,8 @@ const countSchema = z.object({
   reason: z.string().min(1, 'A count with no reason is a write-off nobody explains'),
   /** For a count UP with a known cost — opening stock, an unbilled delivery. */
   unitCost: positiveDecimal.optional(),
+  /** For a serialised item: the units that appeared or went missing. */
+  serialNumbers: z.array(z.string().min(1).max(120)).max(1000).optional(),
   /** Defaults to the STOCK_SHRINKAGE posting role. */
   offsetAccountId: uuid.optional(),
 });

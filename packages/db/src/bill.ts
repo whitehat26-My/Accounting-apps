@@ -79,6 +79,8 @@ export interface EnterBillLine {
   readonly taxCodeId?: string;
   readonly discountBasisPoints?: number;
   readonly unitOfMeasure?: string;
+  /** For a serialised item: one serial per unit received. */
+  readonly serialNumbers?: readonly string[];
 }
 
 /** A line with every field settled — from the item, the caller, or both. */
@@ -410,6 +412,7 @@ export async function enterBill(
             baseCost: convert
               ? convert(net)
               : Money.fromDecimal(net.toDecimalString(), baseCurrency),
+            ...(line.serialNumbers !== undefined ? { serialNumbers: line.serialNumbers } : {}),
           },
         ];
       }),

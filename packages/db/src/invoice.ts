@@ -78,6 +78,8 @@ export interface IssueInvoiceLine {
   readonly discountBasisPoints?: number;
   readonly classificationCode?: string;
   readonly unitOfMeasure?: string;
+  /** For a serialised item: WHICH units are being sold. */
+  readonly serialNumbers?: readonly string[];
 }
 
 /** A line with every field settled — from the item, the caller, or both. */
@@ -362,7 +364,15 @@ export async function issueInvoice(
       idempotencyKey: input.idempotencyKey,
       lines: input.lines.flatMap((line) =>
         line.itemId !== undefined && trackedSet.has(line.itemId)
-          ? [{ itemId: line.itemId, quantity: line.quantity }]
+          ? [
+              {
+                itemId: line.itemId,
+                quantity: line.quantity,
+                ...(line.serialNumbers !== undefined
+                  ? { serialNumbers: line.serialNumbers }
+                  : {}),
+              },
+            ]
           : [],
       ),
     });

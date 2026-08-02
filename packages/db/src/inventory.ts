@@ -3,11 +3,13 @@ import {
   isErr,
   issueStock,
   Money,
+  normaliseSerial,
   quantityToUnits,
   receiveStock,
   STOCK_QUANTITY_SCALE,
   unitsToQuantity,
   validateJournalEntry,
+  validateSerialSet,
   weightedAverageCost,
   type JournalLineDraft,
   type StockPool,
@@ -48,7 +50,10 @@ export class StockError extends Error {
       | 'INSUFFICIENT_STOCK'
       | 'NO_INVENTORY_ACCOUNTS'
       | 'INVALID_QUANTITY'
-      | 'STOCK_JOURNAL_INVALID',
+      | 'STOCK_JOURNAL_INVALID'
+      | 'SERIAL_REQUIRED'
+      | 'SERIAL_INVALID'
+      | 'SERIAL_NOT_AVAILABLE',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -159,8 +164,8 @@ interface MovementRow {
   readonly idempotencyKey?: string;
 }
 
-async function writeMovement(tx: Tx, ctx: TenantContext, m: MovementRow) {
-  await tx`
+async function writeMovement(tx: Tx, ctx: TenantContext, m: MovementRow): Promise<string> {
+  const [row] = await tx<{ id: string }[]>`
       INSERT INTO stock_movement (
           tenant_id, item_id, movement_type, quantity, value_delta,
           source_document_type, source_document_id, journal_entry_id,
@@ -172,7 +177,9 @@ async function writeMovement(tx: Tx, ctx: TenantContext, m: MovementRow) {
           ${m.movedOn}, ${m.reason ?? null}, ${m.idempotencyKey ?? null},
           ${ctx.userId ?? null}
       )
+      RETURNING id
   `;
+  return row!.id;
 }
 
 export interface TrackedReceiptLine {
@@ -181,6 +188,118 @@ export interface TrackedReceiptLine {
   readonly quantity: string;
   /** What the units actually cost, BASE currency, net of tax. */
   readonly baseCost: Money;
+  /** Required for a serialised item: one serial per unit received. */
+  readonly serialNumbers?: readonly string[];
+}
+
+/** item id → serial requirement, with the code for error messages. */
+async function serialFlags(
+  tx: Tx,
+  ctx: TenantContext,
+  itemIds: readonly string[],
+): Promise<Map<string, { code: string; serialised: boolean }>> {
+  if (itemIds.length === 0) return new Map();
+  const rows = await tx<{ id: string; code: string; is_serialised: boolean }[]>`
+      SELECT id, code, is_serialised FROM item
+       WHERE tenant_id = ${ctx.tenantId} AND id = ANY(${itemIds as string[]})
+  `;
+  return new Map(rows.map((r) => [r.id, { code: r.code, serialised: r.is_serialised }]));
+}
+
+/**
+ * Check a movement's serial set and return it normalised, or throw with every
+ * problem named. `context` is for the message: 'received', 'sold', 'counted'.
+ */
+function settleSerials(
+  itemCode: string,
+  quantityUnits: bigint,
+  serials: readonly string[] | undefined,
+  context: string,
+): string[] {
+  if (serials === undefined || serials.length === 0) {
+    throw new StockError(
+      'SERIAL_REQUIRED',
+      `${itemCode} is serialised: every unit ${context} must be identified by its serial number.`,
+    );
+  }
+
+  const result = validateSerialSet(quantityUnits, serials);
+  if (result.violations.length > 0) {
+    throw new StockError(
+      'SERIAL_INVALID',
+      `Serials for ${itemCode} do not match the movement: ` +
+        result.violations
+          .map((v) => {
+            switch (v.code) {
+              case 'FRACTIONAL_QUANTITY':
+                return `quantity ${v.quantity} is not a whole number of units`;
+              case 'COUNT_MISMATCH':
+                return `${v.serialCount} serial(s) for a quantity of ${v.quantity}`;
+              case 'EMPTY_SERIAL':
+                return `serial ${v.index + 1} is blank`;
+              case 'DUPLICATE_SERIAL':
+                return `${v.serial} appears twice`;
+            }
+          })
+          .join('; '),
+      result.violations,
+    );
+  }
+
+  return result.serials;
+}
+
+/**
+ * Bring serials into stock against a receiving movement.
+ *
+ * A serial already IN_STOCK is refused — the physical unit is on the shelf, so
+ * a second arrival is a mis-scan or a duplicate label, both worth stopping at
+ * the door. A serial that was SOLD or WRITTEN_OFF is RESURRECTED instead: the
+ * same physical unit coming back (an RMA return, a written-off machine found
+ * in the storeroom) is one unit with a longer story, not two units — and its
+ * history survives in the audit log the 0016 trigger keeps.
+ */
+async function bringSerialsIn(
+  tx: Tx,
+  ctx: TenantContext,
+  itemId: string,
+  itemCode: string,
+  serials: readonly string[],
+  receivedMovementId: string,
+): Promise<void> {
+  const existing = await tx<{ serial_no: string; status: string }[]>`
+      SELECT serial_no, status FROM stock_unit
+       WHERE tenant_id = ${ctx.tenantId} AND item_id = ${itemId}
+         AND serial_no = ANY(${serials as string[]})
+         FOR UPDATE
+  `;
+
+  const inStock = existing.filter((e) => e.status === 'IN_STOCK').map((e) => e.serial_no);
+  if (inStock.length > 0) {
+    throw new StockError(
+      'SERIAL_INVALID',
+      `${itemCode} serial(s) ${inStock.join(', ')} are already in stock. Receiving a serial ` +
+        'twice is a mis-scan or a duplicate label.',
+    );
+  }
+
+  const returning = new Set(existing.map((e) => e.serial_no));
+
+  for (const serial of serials) {
+    if (returning.has(serial)) {
+      await tx`
+          UPDATE stock_unit
+             SET status = 'IN_STOCK', received_movement_id = ${receivedMovementId},
+                 issued_movement_id = NULL, updated_at = now()
+           WHERE tenant_id = ${ctx.tenantId} AND item_id = ${itemId} AND serial_no = ${serial}
+      `;
+    } else {
+      await tx`
+          INSERT INTO stock_unit (tenant_id, item_id, serial_no, received_movement_id)
+          VALUES (${ctx.tenantId}, ${itemId}, ${serial}, ${receivedMovementId})
+      `;
+    }
+  }
 }
 
 /**
@@ -204,6 +323,7 @@ export async function receiveTrackedStock(
 ): Promise<void> {
   if (input.lines.length === 0) return;
   const baseCurrency = await loadBaseCurrency(tx, ctx);
+  const flags = await serialFlags(tx, ctx, input.lines.map((l) => l.itemId));
 
   // Locked in sorted order so two documents touching the same two items
   // cannot deadlock by locking them in opposite orders.
@@ -215,6 +335,11 @@ export async function receiveTrackedStock(
       throw new StockError('INVALID_QUANTITY', `Quantity ${line.quantity} is not a valid amount`);
     }
 
+    const flag = flags.get(line.itemId);
+    const serials = flag?.serialised
+      ? settleSerials(flag.code, units, line.serialNumbers, 'received')
+      : null;
+
     const pool = await lockPool(tx, ctx, line.itemId, baseCurrency);
     const result = receiveStock(pool, units, line.baseCost);
     if (isErr(result)) {
@@ -222,7 +347,7 @@ export async function receiveTrackedStock(
     }
 
     await savePool(tx, ctx, line.itemId, result.value.pool);
-    await writeMovement(tx, ctx, {
+    const movementId = await writeMovement(tx, ctx, {
       itemId: line.itemId,
       movementType: 'RECEIPT',
       quantityUnits: units,
@@ -232,12 +357,66 @@ export async function receiveTrackedStock(
       journalEntryId: input.journalEntryId,
       movedOn: input.movedOn,
     });
+
+    if (serials !== null) {
+      await bringSerialsIn(tx, ctx, line.itemId, flag!.code, serials, movementId);
+    }
   }
 }
 
 export interface TrackedIssueLine {
   readonly itemId: string;
   readonly quantity: string;
+  /** Required for a serialised item: WHICH units are leaving. */
+  readonly serialNumbers?: readonly string[];
+}
+
+/**
+ * Mark named units SOLD (or WRITTEN_OFF) against an issuing movement.
+ *
+ * The units are locked FOR UPDATE first: two counters selling the same
+ * physical machine must serialise here, and the loser's serial is no longer
+ * IN_STOCK when its turn comes — refused by name rather than oversold.
+ */
+async function takeSerialsOut(
+  tx: Tx,
+  ctx: TenantContext,
+  itemId: string,
+  itemCode: string,
+  serials: readonly string[],
+  issuedMovementId: string,
+  toStatus: 'SOLD' | 'WRITTEN_OFF',
+): Promise<void> {
+  const found = await tx<{ serial_no: string; status: string }[]>`
+      SELECT serial_no, status FROM stock_unit
+       WHERE tenant_id = ${ctx.tenantId} AND item_id = ${itemId}
+         AND serial_no = ANY(${serials as string[]})
+         FOR UPDATE
+  `;
+
+  const byStatus = new Map(found.map((f) => [f.serial_no, f.status]));
+  const problems = serials
+    .map((serial) => {
+      const status = byStatus.get(serial);
+      if (status === undefined) return `${serial} has never been received`;
+      if (status !== 'IN_STOCK') return `${serial} is ${status}`;
+      return null;
+    })
+    .filter((p): p is string => p !== null);
+
+  if (problems.length > 0) {
+    throw new StockError(
+      'SERIAL_NOT_AVAILABLE',
+      `${itemCode}: ${problems.join('; ')}. Only a unit that is IN_STOCK can leave.`,
+    );
+  }
+
+  await tx`
+      UPDATE stock_unit
+         SET status = ${toStatus}, issued_movement_id = ${issuedMovementId}, updated_at = now()
+       WHERE tenant_id = ${ctx.tenantId} AND item_id = ${itemId}
+         AND serial_no = ANY(${serials as string[]})
+  `;
 }
 
 /**
@@ -261,17 +440,30 @@ export async function issueTrackedStockForInvoice(
 ): Promise<{ cogsEntryId: string | null; totalCost: string }> {
   const baseCurrency = await loadBaseCurrency(tx, ctx);
   const accounts = await loadStockAccounts(tx, ctx);
+  const flags = await serialFlags(tx, ctx, input.lines.map((l) => l.itemId));
 
   const sorted = [...input.lines].sort((a, b) => a.itemId.localeCompare(b.itemId));
 
   let totalCost = Money.zero(baseCurrency);
-  const applied: { itemId: string; units: bigint; cost: Money; pool: StockPool }[] = [];
+  const applied: {
+    itemId: string;
+    units: bigint;
+    cost: Money;
+    pool: StockPool;
+    serials: string[] | null;
+    itemCode: string;
+  }[] = [];
 
   for (const line of sorted) {
     const units = quantityToUnits(line.quantity);
     if (units === null) {
       throw new StockError('INVALID_QUANTITY', `Quantity ${line.quantity} is not a valid amount`);
     }
+
+    const flag = flags.get(line.itemId);
+    const serials = flag?.serialised
+      ? settleSerials(flag.code, units, line.serialNumbers, 'sold')
+      : null;
 
     const pool = await lockPool(tx, ctx, line.itemId, baseCurrency);
     const result = issueStock(pool, units);
@@ -295,7 +487,14 @@ export async function issueTrackedStockForInvoice(
 
     const cost = result.value.movementValue.negate();
     totalCost = totalCost.add(cost);
-    applied.push({ itemId: line.itemId, units, cost, pool: result.value.pool });
+    applied.push({
+      itemId: line.itemId,
+      units,
+      cost,
+      pool: result.value.pool,
+      serials,
+      itemCode: flag?.code ?? line.itemId,
+    });
   }
 
   // Zero-cost issues (stock received free, or a pool that was all relief) move
@@ -344,7 +543,7 @@ export async function issueTrackedStockForInvoice(
 
   for (const a of applied) {
     await savePool(tx, ctx, a.itemId, a.pool);
-    await writeMovement(tx, ctx, {
+    const movementId = await writeMovement(tx, ctx, {
       itemId: a.itemId,
       movementType: 'ISSUE',
       quantityUnits: -a.units,
@@ -354,6 +553,10 @@ export async function issueTrackedStockForInvoice(
       journalEntryId: cogsEntryId,
       movedOn: input.entryDate,
     });
+
+    if (a.serials !== null) {
+      await takeSerialsOut(tx, ctx, a.itemId, a.itemCode, a.serials, movementId, 'SOLD');
+    }
   }
 
   return { cogsEntryId, totalCost: totalCost.toDecimalString() };
@@ -379,6 +582,13 @@ export interface CountStockInput {
    * shrinkage: opening stock offsets to an opening-balance equity account.
    */
   readonly offsetAccountId?: string;
+  /**
+   * For a serialised item, WHICH units the count moved: the serials that
+   * appeared (count up) or the serials that are missing (count down). Required
+   * whenever the count changes a serialised item's quantity — "one is gone but
+   * we will not say which" defeats the point of tracking them.
+   */
+  readonly serialNumbers?: readonly string[];
   readonly idempotencyKey: string;
 }
 
@@ -433,8 +643,10 @@ export async function countStock(
     };
   }
 
-  const [item] = await tx<{ id: string; code: string; is_tracked: boolean }[]>`
-      SELECT id, code, is_tracked FROM item
+  const [item] = await tx<
+    { id: string; code: string; is_tracked: boolean; is_serialised: boolean }[]
+  >`
+      SELECT id, code, is_tracked, is_serialised FROM item
        WHERE tenant_id = ${ctx.tenantId} AND id = ${input.itemId}
   `;
   if (!item) {
@@ -534,8 +746,15 @@ export async function countStock(
   }
 
   if (deltaUnits !== 0n) {
+    // For a serialised item the count must NAME the moved units — validated
+    // before anything is written, so a bad serial list leaves no half-count.
+    const absDelta = deltaUnits < 0n ? -deltaUnits : deltaUnits;
+    const serials = item.is_serialised
+      ? settleSerials(item.code, absDelta, input.serialNumbers, 'counted')
+      : null;
+
     await savePool(tx, ctx, input.itemId, result.value.pool);
-    await writeMovement(tx, ctx, {
+    const movementId = await writeMovement(tx, ctx, {
       itemId: input.itemId,
       movementType: 'ADJUSTMENT',
       quantityUnits: deltaUnits,
@@ -547,6 +766,16 @@ export async function countStock(
       reason: input.reason,
       idempotencyKey: `stock-count:${input.idempotencyKey}`,
     });
+
+    if (serials !== null) {
+      if (deltaUnits > 0n) {
+        await bringSerialsIn(tx, ctx, input.itemId, item.code, serials, movementId);
+      } else {
+        // Missing units are WRITTEN_OFF, not deleted: the serial's history is
+        // exactly what a later "it turned up" or an insurance claim needs.
+        await takeSerialsOut(tx, ctx, input.itemId, item.code, serials, movementId, 'WRITTEN_OFF');
+      }
+    }
 
     await tx`
         INSERT INTO financial_event_log (
@@ -698,6 +927,148 @@ export async function detectStockDrift(
   ` as unknown as Promise<
     { itemId: string; cachedQuantity: string; actualQuantity: string; cachedValue: string; actualValue: string }[]
   >;
+}
+
+// ------------------------------------------------------------------- serials
+
+export interface StockUnitView {
+  readonly serialNo: string;
+  readonly status: string;
+  readonly receivedOn: string;
+  readonly receivedFrom: { type: string; documentId: string | null };
+  readonly issuedOn: string | null;
+  readonly issuedTo: { type: string; documentId: string | null } | null;
+}
+
+/** The units of one item, newest first. `status` filters when given. */
+export async function stockUnits(
+  tx: Tx,
+  ctx: TenantContext,
+  itemId: string,
+  status?: 'IN_STOCK' | 'SOLD' | 'WRITTEN_OFF',
+): Promise<StockUnitView[]> {
+  const [item] = await tx<{ id: string }[]>`
+      SELECT id FROM item WHERE tenant_id = ${ctx.tenantId} AND id = ${itemId}
+  `;
+  if (!item) throw new StockError('ITEM_NOT_FOUND', `Item ${itemId} not found`);
+
+  const rows = await tx<UnitRow[]>`
+      SELECT u.serial_no, u.status,
+             rm.moved_on              AS received_on,
+             rm.source_document_type  AS received_type,
+             rm.source_document_id    AS received_doc,
+             im.moved_on              AS issued_on,
+             im.source_document_type  AS issued_type,
+             im.source_document_id    AS issued_doc
+        FROM stock_unit u
+        JOIN stock_movement rm
+          ON rm.tenant_id = u.tenant_id AND rm.id = u.received_movement_id
+        LEFT JOIN stock_movement im
+          ON im.tenant_id = u.tenant_id AND im.id = u.issued_movement_id
+       WHERE u.tenant_id = ${ctx.tenantId} AND u.item_id = ${itemId}
+         AND (${status ?? null}::text IS NULL OR u.status = ${status ?? null})
+       ORDER BY u.created_at DESC, u.serial_no
+  `;
+
+  return rows.map(toUnitView);
+}
+
+export interface SerialLookup extends StockUnitView {
+  readonly itemId: string;
+  readonly itemCode: string;
+  readonly itemName: string;
+}
+
+/**
+ * The warranty question. It arrives with a DEVICE, not a catalogue entry — a
+ * customer at the counter holding a machine — so it searches by serial across
+ * every item and answers with the full story: what it is, when it came in on
+ * which document, when it left on which.
+ */
+export async function findSerial(
+  tx: Tx,
+  ctx: TenantContext,
+  serialNo: string,
+): Promise<SerialLookup[]> {
+  const needle = normaliseSerial(serialNo);
+
+  const rows = await tx<(UnitRow & { item_id: string; item_code: string; item_name: string })[]>`
+      SELECT u.serial_no, u.status,
+             i.id                     AS item_id,
+             i.code                   AS item_code,
+             i.name                   AS item_name,
+             rm.moved_on              AS received_on,
+             rm.source_document_type  AS received_type,
+             rm.source_document_id    AS received_doc,
+             im.moved_on              AS issued_on,
+             im.source_document_type  AS issued_type,
+             im.source_document_id    AS issued_doc
+        FROM stock_unit u
+        JOIN item i ON i.tenant_id = u.tenant_id AND i.id = u.item_id
+        JOIN stock_movement rm
+          ON rm.tenant_id = u.tenant_id AND rm.id = u.received_movement_id
+        LEFT JOIN stock_movement im
+          ON im.tenant_id = u.tenant_id AND im.id = u.issued_movement_id
+       WHERE u.tenant_id = ${ctx.tenantId} AND u.serial_no = ${needle}
+       ORDER BY i.code
+  `;
+
+  // An empty list, not a 404: "we have never seen this serial" is itself the
+  // answer the warranty conversation needs.
+  return rows.map((r) => ({
+    ...toUnitView(r),
+    itemId: r.item_id,
+    itemCode: r.item_code,
+    itemName: r.item_name,
+  }));
+}
+
+/**
+ * The serial canary: for every serialised item, the number of IN_STOCK units
+ * must equal the pool's quantity on hand. Disagreement means a movement
+ * changed quantity without naming units — the failure serial tracking exists
+ * to make impossible, so a row here is a bug, not bad data entry.
+ */
+export async function detectSerialDrift(
+  tx: Tx,
+  ctx: TenantContext,
+): Promise<{ itemId: string; code: string; quantityOnHand: string; unitsInStock: string }[]> {
+  return tx`
+      SELECT i.id                           AS "itemId",
+             i.code,
+             s.quantity_on_hand::text       AS "quantityOnHand",
+             COUNT(u.id) FILTER (WHERE u.status = 'IN_STOCK')::text AS "unitsInStock"
+        FROM item i
+        JOIN item_stock s ON s.tenant_id = i.tenant_id AND s.item_id = i.id
+        LEFT JOIN stock_unit u ON u.tenant_id = i.tenant_id AND u.item_id = i.id
+       WHERE i.tenant_id = ${ctx.tenantId} AND i.is_serialised
+       GROUP BY i.id, i.code, s.quantity_on_hand
+      HAVING s.quantity_on_hand <> COUNT(u.id) FILTER (WHERE u.status = 'IN_STOCK')
+  ` as unknown as Promise<
+    { itemId: string; code: string; quantityOnHand: string; unitsInStock: string }[]
+  >;
+}
+
+interface UnitRow {
+  serial_no: string;
+  status: string;
+  received_on: Date;
+  received_type: string;
+  received_doc: string | null;
+  issued_on: Date | null;
+  issued_type: string | null;
+  issued_doc: string | null;
+}
+
+function toUnitView(r: UnitRow): StockUnitView {
+  return {
+    serialNo: r.serial_no,
+    status: r.status,
+    receivedOn: toIsoDate(r.received_on),
+    receivedFrom: { type: r.received_type, documentId: r.received_doc },
+    issuedOn: r.issued_on ? toIsoDate(r.issued_on) : null,
+    issuedTo: r.issued_type ? { type: r.issued_type, documentId: r.issued_doc } : null,
+  };
 }
 
 // ------------------------------------------------------------------ internal

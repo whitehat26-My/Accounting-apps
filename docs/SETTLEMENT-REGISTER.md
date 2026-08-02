@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0027`, 112 HTTP routes, 1,222 tests
-(587 domain · 468 db · 129 api · 21 worker · 17 contracts).
+Last reconciled against the tree: migration `0028`, 114 HTTP routes, 1,249 tests
+(594 domain · 483 db · 134 api · 21 worker · 17 contracts).
 
 **Context that reshaped the roadmap (2026-08-02):** the first real tenant is a computer
 shop, revenue ≈ RM 50–60k/month. That makes the SHOP track (§5) the product, not an
@@ -219,12 +219,23 @@ Not in the slice: receipt PRINTING (a rendering concern, waits with PDF in §4.5
 orders/quotes, split tender (half cash half card), and cash-drawer float tracking. Split
 tender is the first of these a real counter misses.
 
-### 5.2 Serial number tracking — NOT STARTED
+### 5.2 Serial number tracking — BUILT (`0028`, `packages/domain/src/serials.ts`)
 
-Computers carry serials: warranty claims, RMAs and theft disputes all turn on "which
-unit". A `stock_unit` table (serial per unit, FK to the receiving movement and the issuing
-movement) rides on top of the pool — the VALUATION stays weighted-average; serials only
-answer *which one went where*, not *what it cost*.
+`stock_unit` rides on the movement log: each unit points at the movement that brought it
+in and the one that took it out, and through them at the bill and the invoice. Serialised
+items must name their serials on every receipt, sale and count; a sale that doesn't scan
+the unit is refused. `GET /v1/stock/serials/:serialNo` answers the warranty walk-up —
+what the device is, when it arrived on which document, which invoice sold it — searching
+by serial alone, case-insensitively, because the customer brings a device, not a
+catalogue entry. A written-off unit that turns up again is RESURRECTED, not duplicated:
+one machine, longer story. Valuation stays weighted-average throughout — a serial says
+*which* machine, never *what it cost* (per-serial cost would be specific identification
+smuggled in through a tracking feature). `detectSerialDrift` asserts IN_STOCK unit counts
+equal pool quantities.
+
+Not in the slice: RMA/warranty-claim workflow states on a unit (a unit is IN_STOCK, SOLD
+or WRITTEN_OFF; "out for repair with the vendor" lands with repair jobs §5.3), and serial
+capture on credit-note returns (waits on §5.4 restocking).
 
 ### 5.3 Repair / service jobs — NOT STARTED
 

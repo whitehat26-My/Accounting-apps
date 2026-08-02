@@ -398,6 +398,8 @@ const documentLine = z.object({
   taxCodeId: z.string().uuid().optional(),
   unitOfMeasure: z.string().min(1).max(50).optional(),
   discountBasisPoints: z.number().int().min(0).max(10_000).optional(),
+  /** For a serialised item: one serial per unit on this line. */
+  serialNumbers: z.array(z.string().min(1).max(120)).max(1000).optional(),
   /**
    * LHDN item classification, per line.
    *
