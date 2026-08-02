@@ -20,6 +20,7 @@ import { ReportsController } from './modules/reports.controller.js';
 import { SystemController } from './modules/system.controller.js';
 import { ItemsController } from './modules/items.controller.js';
 import { StockController } from './modules/stock.controller.js';
+import { PosController } from './modules/pos.controller.js';
 import { PublicPayController } from './modules/public-pay.controller.js';
 import { GatewayRegistry } from './gateways/registry.js';
 import { FakeGateway } from '@emil/db';
@@ -49,6 +50,7 @@ export const API_CONTROLLERS = [
   SystemController,
   ItemsController,
   StockController,
+  PosController,
   PublicPayController,
   OpenApiController,
 ] as const;

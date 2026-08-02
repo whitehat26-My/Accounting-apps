@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0026`, 110 HTTP routes, 1,209 tests
-(587 domain · 459 db · 125 api · 21 worker · 17 contracts).
+Last reconciled against the tree: migration `0027`, 112 HTTP routes, 1,222 tests
+(587 domain · 468 db · 129 api · 21 worker · 17 contracts).
 
 **Context that reshaped the roadmap (2026-08-02):** the first real tenant is a computer
 shop, revenue ≈ RM 50–60k/month. That makes the SHOP track (§5) the product, not an
@@ -205,14 +205,19 @@ before there is something to deploy beyond the API.
 
 Perpetual inventory (§1) is the foundation. What remains, in build order:
 
-### 5.1 Point of sale — NOT STARTED, next up
+### 5.1 Point of sale — BUILT (`0027`, `packages/db/src/pos.ts`)
 
-A walk-in customer pays cash or card at the counter. Today that means raising an invoice
-and recording a receipt as two API calls with a contact id — a till needs one operation:
-cash-sale (invoice + immediate receipt against a walk-in customer, one Idempotency-Key,
-one receipt printed). The pieces all exist (`issueInvoice`, `recordReceipt`, inventory
-relief now automatic); the slice is the composition plus a daily takings summary
-(Z-report: cash/card/QR by day, reconciled against the drawer).
+`POST /v1/pos/sales` rings the counter: invoice, stock relief, COGS and the receipt in
+one transaction, against a lazily-created per-tenant walk-in contact (or a named
+customer). Change is computed from the tender; an under-tender or an empty shelf refuses
+the WHOLE sale before any money is taken. `GET /v1/pos/takings?date=` is the Z-report:
+takings by method and landing account for the drawer count, plus the day's COGS and gross
+profit. Under a dedicated `pos.sale` permission that SALES holds — deliberately narrower
+than `receipt.create`, which stays with the bookkeeping roles.
+
+Not in the slice: receipt PRINTING (a rendering concern, waits with PDF in §4.5), held
+orders/quotes, split tender (half cash half card), and cash-drawer float tracking. Split
+tender is the first of these a real counter misses.
 
 ### 5.2 Serial number tracking — NOT STARTED
 
