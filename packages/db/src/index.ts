@@ -32,4 +32,5 @@ export * from './pos.js';
 export * from './repair.js';
 export * from './onboarding.js';
 export * from './document-data.js';
+export * from './dunning.js';
 export { migrate } from './migrate.js';

@@ -252,6 +252,7 @@ describe('scheduledJobs', () => {
     expect(rows.map((r) => r.name).sort()).toEqual([
       'einvoice-retry',
       'outbox-sweep',
+      'payment-reminders',
       'rollup-drift',
     ]);
     // Job names and timings only — no tenant data — which is why an ordinary

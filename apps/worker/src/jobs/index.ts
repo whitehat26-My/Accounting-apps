@@ -8,6 +8,7 @@ import {
   type Sql,
   type TenantContext,
 } from '@emil/db';
+import { runFollowUpPass } from '@emil/db';
 import type { Logger } from '../logger.js';
 
 /**
@@ -228,8 +229,48 @@ export const outboxSweep: Job = async ({ sql, log }) => {
  * retried forever — an operator can add a schedule, but only code can add a
  * job, and a name with nothing behind it is a typo somebody should hear about.
  */
+/**
+ * The daily payment follow-up: cancel reminders for invoices since paid, then
+ * raise the next escalation tier for everything overdue, message composed and
+ * ready to send.
+ *
+ * Note what this job does NOT do: send anything. No email transport exists
+ * (settlement register §4.4), and the einvoice-retry lesson applies — a job
+ * that pretends to deliver is a lie told to a dashboard. It fills the queue; a
+ * human works it over WhatsApp today, and a transport handler will work it
+ * tomorrow, against the same rows.
+ */
+export const paymentReminders: Job = async ({ sql, log, now }) => {
+  const tenants = await everyTenant(sql);
+  const today = now.toISOString().slice(0, 10);
+
+  let queued = 0;
+  let cancelled = 0;
+  let ownerAlerts = 0;
+
+  for (const tenantId of tenants) {
+    const ctx: TenantContext = { tenantId };
+    const result = await withTenant(sql, ctx, (tx) => runFollowUpPass(tx, ctx, today));
+    queued += result.queued;
+    cancelled += result.cancelledAsPaid;
+    ownerAlerts += result.ownerAlerts;
+
+    if (result.ownerAlerts > 0) {
+      // Loud on purpose: tier 3 exists to reach the owner, and a log line is
+      // the only channel the worker has until notifications exist.
+      log.error('payment follow-up: invoices escalated to the owner', {
+        tenantId,
+        ownerAlerts: result.ownerAlerts,
+      });
+    }
+  }
+
+  return { tenantsChecked: tenants.length, queued, cancelledAsPaid: cancelled, ownerAlerts };
+};
+
 export const jobs: Readonly<Record<string, Job>> = {
   'rollup-drift': rollupDrift,
   'einvoice-retry': einvoiceRetry,
   'outbox-sweep': outboxSweep,
+  'payment-reminders': paymentReminders,
 };

@@ -14,9 +14,15 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0030`, 129 HTTP routes, 1,281 tests
-(602 domain · 494 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0031`, 134 HTTP routes, 1,301 tests
+(610 domain · 506 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
+
+**The AUTOMATION track (started 2026-08-02):** the target is the full
+"business operating system" loop — automated follow-up, cash forecasting, weekly digest,
+inbound email — built brains-first: every engine works today with a human pressing send,
+and gains a transport when credentials exist. Slice 1 (payment follow-up) is BUILT; the
+remaining slices are §4.9.
 
 **Context that reshaped the roadmap (2026-08-02):** the first real tenant is a computer
 shop, revenue ≈ RM 50–60k/month. That makes the SHOP track (§5) the product, not an
@@ -191,7 +197,30 @@ Needs an object store decision (S3-compatible) before the schema is worth writin
 ### 4.4 Outbound notification
 
 `financial_event_log` records what happened; nothing tells anybody. No email transport is
-configured. Invoice delivery, payment receipts and approval requests all want it.
+configured. Invoice delivery, payment receipts and approval requests all want it — and the
+payment-reminder queue (0031) is DESIGNED for it: reminders sit QUEUED with message text
+composed, worked manually over WhatsApp today; a transport handler flips the same rows.
+**Unblocked by:** one email-service API key (e.g. Resend, free tier) from the owner.
+
+### 4.9 The automation track — remaining slices
+
+- **Payment follow-up — BUILT** (`0031`, `packages/domain/src/dunning.ts`). Three-tier
+  escalation (day 3 friendly / day 7 firm / day 14 owner alert, tenant-tunable), daily
+  worker job plus on-demand `POST /v1/collections/run`, WhatsApp-ready message text
+  composed at queue time with the figures as they were, mark-sent/cancel with provenance,
+  and the pass cancels queued reminders for since-paid invoices FIRST — the system must
+  never chase settled money. An old invoice discovered late gets ONE owner alert, not a
+  barrage.
+- **Cash position + 30/60/90-day forecast** — NOT STARTED, buildable now from AR/AP due
+  dates and recurring patterns. Pure domain + one screen.
+- **Weekly digest ("anything off?")** — NOT STARTED, buildable now: worker job compiling
+  the week's takings/expenses/unpaid + anomaly flags, stored as a report; emailed when
+  §4.4 unblocks.
+- **Bank auto-categorisation rules** — NOT STARTED: payee/narrative → account rules
+  applied at statement import, on top of the existing matching engine.
+- **Inbound email monitoring (contract → invoice draft)** — BLOCKED: needs the owner's
+  Google OAuth credentials, plus an invoice DRAFT state (issue-immediately is the only
+  flow today).
 
 ### 4.5 Document rendering — PDF BUILT; XLSX not started
 

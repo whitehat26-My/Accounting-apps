@@ -422,6 +422,7 @@ describe('GET /v1/system/queues', () => {
     expect(jobs.map((j) => j.name).sort()).toEqual([
       'einvoice-retry',
       'outbox-sweep',
+      'payment-reminders',
       'rollup-drift',
     ]);
   });

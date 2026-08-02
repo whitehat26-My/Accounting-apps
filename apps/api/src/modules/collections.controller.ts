@@ -1,10 +1,15 @@
-import { Body, Controller, Get, Headers, Inject, Param, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { decimal } from '@emil/contracts';
 import {
+  cancelReminder,
+  collectionsOverview,
   createPaymentLink,
+  listReminders,
+  markReminderSent,
   recordSettlement,
+  runFollowUpPass,
   unsettledCollections,
   withTenant,
   type Sql,
@@ -106,7 +111,86 @@ export class CollectionsController {
       recordSettlement(tx, ctx, { ...input, provider, idempotencyKey }),
     );
   }
+
+  // ---- Payment follow-up ---------------------------------------------------
+  //
+  // The three-tier escalation. Reminders are QUEUED with their message text
+  // composed; a human sends them (WhatsApp, today) and marks them SENT. An
+  // email transport, when it exists, works the same queue.
+
+  /** Every overdue invoice with its escalation state — the morning scan. */
+  @Requires('invoice.read')
+  @Get('collections/overdue')
+  async overdue(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return {
+      overdue: await withTenant(this.sql, ctx, (tx) =>
+        collectionsOverview(tx, ctx, kualaLumpurToday()),
+      ),
+    };
+  }
+
+  /**
+   * Run the follow-up pass now rather than waiting for the nightly job —
+   * idempotent, so running it after every coffee is harmless.
+   */
+  @Requires('collections.chase')
+  @Post('collections/run')
+  async run(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) => runFollowUpPass(tx, ctx, kualaLumpurToday()));
+  }
+
+  @Requires('invoice.read')
+  @Get('collections/reminders')
+  async reminders(@Query('status') status: string | undefined, @Req() request: FastifyRequest) {
+    const parsed = status === undefined ? undefined : parse(reminderStatusSchema, status);
+    const ctx = this.ctx(request);
+    return {
+      reminders: await withTenant(this.sql, ctx, (tx) =>
+        listReminders(tx, ctx, {
+          today: kualaLumpurToday(),
+          ...(parsed !== undefined ? { status: parsed } : {}),
+        }),
+      ),
+    };
+  }
+
+  @Requires('collections.chase')
+  @Doc({ request: () => markSentSchema })
+  @Post('collections/reminders/:id/sent')
+  async markSent(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = parse(markSentSchema, body);
+    const ctx = this.ctx(request);
+    await withTenant(this.sql, ctx, (tx) => markReminderSent(tx, ctx, id, input.channel));
+    return { id, status: 'SENT' };
+  }
+
+  @Requires('collections.chase')
+  @Doc({ request: () => cancelReminderSchema })
+  @Post('collections/reminders/:id/cancel')
+  async cancel(@Param('id') id: string, @Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = parse(cancelReminderSchema, body);
+    const ctx = this.ctx(request);
+    await withTenant(this.sql, ctx, (tx) => cancelReminder(tx, ctx, id, input.reason));
+    return { id, status: 'CANCELLED' };
+  }
 }
+
+/** The shop's "today", Asia/Kuala_Lumpur — rule 8. */
+function kualaLumpurToday(): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+}
+
+const reminderStatusSchema = z.enum(['QUEUED', 'SENT', 'CANCELLED']);
+const markSentSchema = z.object({
+  channel: z.enum(['WHATSAPP', 'EMAIL', 'PHONE', 'OTHER']),
+});
+const cancelReminderSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
 
 const settlementSchema = z.object({
   providerBatchId: z.string().min(1),
