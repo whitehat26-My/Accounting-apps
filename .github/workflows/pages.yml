@@ -2,6 +2,11 @@ name: Deploy prototype to GitHub Pages
 
 # The static DEMO build of apps/web: the screens with an in-browser sample
 # backend. NOT the real system — the API and PostgreSQL cannot run on Pages.
+#
+# Published by pushing the build to the gh-pages BRANCH rather than through
+# the Pages API: the workflow token may not CREATE a Pages site
+# ("Resource not accessible by integration", run 30752175245), but creating
+# a gh-pages branch auto-enables Pages with the classic branch source.
 
 on:
   push:
@@ -10,16 +15,14 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
   cancel-in-progress: true
 
 jobs:
-  build:
+  build-and-publish:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -35,19 +38,11 @@ jobs:
         env:
           NEXT_PUBLIC_DEMO: '1'
           DEMO_BASE_PATH: /${{ github.event.repository.name }}
-      - uses: actions/configure-pages@v5
+      - name: Disable Jekyll processing
+        run: touch apps/web/out/.nojekyll
+      - name: Publish to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          enablement: true
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: apps/web/out
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: apps/web/out
+          force_orphan: true
