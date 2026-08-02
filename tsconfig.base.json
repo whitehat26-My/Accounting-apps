@@ -6,6 +6,8 @@
     "moduleResolution": "Bundler",
     "strict": true,
     "noUncheckedIndexedAccess": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noImplicitOverride": true,
     "exactOptionalPropertyTypes": true,
     "noFallthroughCasesInSwitch": true,

@@ -517,18 +517,18 @@ function renderAgeing(report: AgeingReport) {
 }
 
 const decideApprovalSchema = z.object({
-        sequence: z.number().int().min(1),
-        decision: z.enum(['APPROVE', 'REJECT']),
-        comment: z.string().optional(),
-      });
+  sequence: z.number().int().min(1),
+  decision: z.enum(['APPROVE', 'REJECT']),
+  comment: z.string().optional(),
+});
 
 const createApprovalRuleSchema = z.object({
-        name: z.string().min(1),
-        minAmount: decimal,
-        maxAmount: decimal.optional(),
-        requiredRole: z.enum([
-          'OWNER', 'ADMIN', 'ACCOUNTANT', 'APPROVER',
-          'BOOKKEEPER', 'SALES', 'READ_ONLY', 'EXTERNAL_AUDITOR',
-        ]),
-        sequence: z.number().int().min(1),
-      });
+  name: z.string().min(1),
+  minAmount: decimal,
+  maxAmount: decimal.optional(),
+  requiredRole: z.enum([
+    'OWNER', 'ADMIN', 'ACCOUNTANT', 'APPROVER',
+    'BOOKKEEPER', 'SALES', 'READ_ONLY', 'EXTERNAL_AUDITOR',
+  ]),
+  sequence: z.number().int().min(1),
+});

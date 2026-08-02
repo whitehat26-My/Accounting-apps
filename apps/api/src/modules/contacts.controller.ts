@@ -85,6 +85,6 @@ const contactSchema = z.object({
 });
 
 const listSchema = z.object({
-        role: z.enum(['CUSTOMER', 'SUPPLIER']).optional(),
-        includeInactive: z.boolean().optional(),
-      });
+  role: z.enum(['CUSTOMER', 'SUPPLIER']).optional(),
+  includeInactive: z.boolean().optional(),
+});

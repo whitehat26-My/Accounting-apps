@@ -1,7 +1,5 @@
 import { Inject, Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { CONFIG } from '../tokens.js';
-import type { ApiConfig } from '../config.js';
 import { RateLimitedError } from '../errors.js';
 
 /**
@@ -75,7 +73,10 @@ export class FixedWindowRateLimiter implements RateLimiter {
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   constructor(
-    @Inject(CONFIG) private readonly config: ApiConfig,
+    // No CONFIG here: the budgets are baked into the two limiters by their
+    // factories in `app.module.ts`, so injecting the config as well would be a
+    // dependency this class does not have and a second place to look for the
+    // numbers.
     @Inject(Symbol.for('RATE_LIMITER')) private readonly limiter: RateLimiter,
     @Inject(Symbol.for('PUBLIC_RATE_LIMITER')) private readonly publicLimiter: RateLimiter,
   ) {}

@@ -9,7 +9,6 @@ import {
   issueInvoiceFor,
   seedEInvoiceTenant,
   seedTenant,
-  type Tenant,
 } from './helpers.js';
 
 let sql: Sql;

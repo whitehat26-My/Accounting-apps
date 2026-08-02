@@ -385,20 +385,20 @@ const journalSchema = z.object({
 });
 
 const listAccountsSchema = z.object({
-        type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']).optional(),
-        includeInactive: z.boolean().optional(),
-      });
+  type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']).optional(),
+  includeInactive: z.boolean().optional(),
+});
 
 const updateAccountSchema = z.object({
-        name: z.string().min(1).optional(),
-        code: z.string().min(1).max(20).optional(),
-        subtype: z.string().optional(),
-        isActive: z.boolean().optional(),
-      });
+  name: z.string().min(1).optional(),
+  code: z.string().min(1).max(20).optional(),
+  subtype: z.string().optional(),
+  isActive: z.boolean().optional(),
+});
 
 const changeTypeSchema = z.object({ type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']) });
 
 const changePeriodStatusSchema = z.object({
-        status: z.enum(['OPEN', 'CLOSED', 'LOCKED']),
-        reason: z.string().min(1).max(500).optional(),
-      });
+  status: z.enum(['OPEN', 'CLOSED', 'LOCKED']),
+  reason: z.string().min(1).max(500).optional(),
+});

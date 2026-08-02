@@ -322,21 +322,21 @@ const debitNoteSchema = z.object({
 });
 
 const transactionsSchema = z.object({
-        status: z.enum(['UNRECONCILED', 'MATCHED', 'RECONCILED', 'IGNORED']).optional(),
-        asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      });
+  status: z.enum(['UNRECONCILED', 'MATCHED', 'RECONCILED', 'IGNORED']).optional(),
+  asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+});
 
 const removeMatchSchema = z.object({ reason: z.string().min(1).max(500) });
 
 const journalFromLineSchema = z.object({
-        // The expense or income account the other side of the bank line
-        // belongs in. Bank charges, interest received, a direct debit.
-        accountId: z.string().uuid(),
-        description: z.string().optional(),
-        contactId: z.string().uuid().optional(),
-      });
+  // The expense or income account the other side of the bank line
+  // belongs in. Bank charges, interest received, a direct debit.
+  accountId: z.string().uuid(),
+  description: z.string().optional(),
+  contactId: z.string().uuid().optional(),
+});
 
 const completeSchema = z.object({
-        periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      });
+  periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});

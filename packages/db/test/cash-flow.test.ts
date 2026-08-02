@@ -248,7 +248,6 @@ describe('the statement reconciles against real postings', () => {
 
   it('a reversal nets out rather than vanishing', async () => {
     const t = await seedTenant(admin, 'Reversal Sdn Bhd');
-    const c = ctxOf(t);
 
     const entry = await post(t, '2026-02-01', 'Mistaken payment', [
       [t.accounts['6000']!, 'DEBIT', '900.00'],

@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { isErr, validateForSubmission } from '@emil/domain';
+import { validateForSubmission } from '@emil/domain';
 import { withTenant, type Sql } from '../src/client.js';
 import { issueInvoice } from '../src/invoice.js';
 import { issueCreditNote } from '../src/credit-note.js';

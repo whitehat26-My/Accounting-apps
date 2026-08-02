@@ -263,22 +263,22 @@ const switchOrganisationSchema = switchBody.extend({ refreshToken: z.string().mi
 const logoutSchema = z.object({ sessionId: z.string().uuid() });
 
 const addMemberSchema = z.object({
-        userId: z.string().uuid(),
-        role: z.enum([
-          'OWNER',
-          'ADMIN',
-          'ACCOUNTANT',
-          'APPROVER',
-          'BOOKKEEPER',
-          'SALES',
-          'READ_ONLY',
-          'EXTERNAL_AUDITOR',
-        ]),
-        expiresAt: z.string().datetime().optional(),
-      });
+  userId: z.string().uuid(),
+  role: z.enum([
+    'OWNER',
+    'ADMIN',
+    'ACCOUNTANT',
+    'APPROVER',
+    'BOOKKEEPER',
+    'SALES',
+    'READ_ONLY',
+    'EXTERNAL_AUDITOR',
+  ]),
+  expiresAt: z.string().datetime().optional(),
+});
 
 const createApiKeySchema = z.object({
-        name: z.string().min(1),
-        scopes: z.array(z.string()).min(1),
-        expiresAt: z.string().datetime().optional(),
-      });
+  name: z.string().min(1),
+  scopes: z.array(z.string()).min(1),
+  expiresAt: z.string().datetime().optional(),
+});

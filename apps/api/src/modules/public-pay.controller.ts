@@ -24,8 +24,7 @@ import {
   withTenant,
   type Sql,
 } from '@emil/db';
-import { SQL, CONFIG } from '../tokens.js';
-import type { ApiConfig } from '../config.js';
+import { SQL } from '../tokens.js';
 import { GATEWAYS } from '../tokens.js';
 import type { GatewayRegistry } from '../gateways/registry.js';
 import { NoIdempotencyKey, Public } from '../guards/decorators.js';
@@ -65,7 +64,6 @@ import { parse } from '../validation.js';
 export class PublicPayController {
   constructor(
     @Inject(SQL) private readonly sql: Sql,
-    @Inject(CONFIG) private readonly config: ApiConfig,
     @Inject(GATEWAYS) private readonly gateways: GatewayRegistry,
   ) {}
 
@@ -316,6 +314,6 @@ function headersOf(request: FastifyRequest): Record<string, string> {
 }
 
 const initiateSchema = z.object({
-        provider: z.string().min(1),
-        returnUrl: z.string().url(),
-      });
+  provider: z.string().min(1),
+  returnUrl: z.string().url(),
+});

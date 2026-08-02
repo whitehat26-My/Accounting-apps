@@ -235,6 +235,57 @@ describe('GET /openapi.json', () => {
     }
   });
 
+  it('gives every operation a unique operationId', async () => {
+    /*
+     * Not a formality. `operationId` is what a code generator names the method
+     * it emits, so a duplicate silently overwrites one endpoint with another —
+     * the generated client compiles, and one of the two routes is simply
+     * unreachable through it.
+     *
+     * The id is derived from controller + handler, so a collision means two
+     * controllers whose names match after the `Controller` suffix is stripped,
+     * which TypeScript would not catch.
+     */
+    const response = await call(api, { method: 'GET', url: '/openapi.json' });
+    const paths = response.body['paths'] as Record<
+      string,
+      Record<string, { operationId: string }>
+    >;
+
+    const ids = Object.values(paths).flatMap((methods) =>
+      Object.values(methods).map((op) => op.operationId),
+    );
+    const duplicates = ids.filter((id, i) => ids.indexOf(id) !== i);
+
+    expect(duplicates, 'duplicate operationIds').toEqual([]);
+    expect(ids.length).toBeGreaterThan(90);
+  });
+
+  it('resolves every $ref it emits', async () => {
+    // A dangling `$ref` fails every parser and every generator. There is only
+    // one today — the shared error envelope — and that is exactly the sort of
+    // thing that is correct until somebody adds a second.
+    const response = await call(api, { method: 'GET', url: '/openapi.json' });
+    const document = response.body;
+
+    const refs = [...JSON.stringify(document).matchAll(/"\$ref":"([^"]+)"/g)].map((m) => m[1]!);
+    expect(refs.length).toBeGreaterThan(0);
+
+    for (const ref of new Set(refs)) {
+      expect(ref.startsWith('#/'), `external $ref: ${ref}`).toBe(true);
+
+      const resolved = ref
+        .slice(2)
+        .split('/')
+        .reduce<unknown>(
+          (node, key) => (node as Record<string, unknown> | undefined)?.[key],
+          document,
+        );
+
+      expect(resolved, `unresolvable $ref: ${ref}`).toBeTruthy();
+    }
+  });
+
   it('documents the 404-not-403 rule wherever a record is addressed by id', async () => {
     /*
      * CLAUDE.md §9. Documenting it is not a formality: a client author who sees

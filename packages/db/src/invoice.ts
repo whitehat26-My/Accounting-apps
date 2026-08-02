@@ -512,7 +512,17 @@ export async function loadBaseCurrency(tx: Tx, ctx: TenantContext): Promise<stri
  */
 export async function resolveRate(
   tx: Tx,
-  ctx: TenantContext,
+  /*
+   * Unused, and kept anyway.
+   *
+   * The tenant filter comes from the session: `rate_on_or_before` reads
+   * `current_tenant_id()` itself, which `withTenant` has already set. Dropping
+   * the parameter would give this function a signature suggesting it is
+   * tenant-agnostic, which it is not — every other service here takes
+   * `(tx, ctx, …)` and a reader should not have to check whether this one is
+   * special.
+   */
+  _ctx: TenantContext,
   currency: string,
   baseCurrency: string,
   date: string,
