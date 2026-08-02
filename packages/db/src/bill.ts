@@ -14,6 +14,7 @@ import { loadBaseCurrency, loadTaxCodes, resolveRate } from './invoice.js';
 import { addDays, decimalToScaled } from './internal.js';
 import { routeBillForApproval } from './approval.js';
 import { resolveLineFromItem } from './item.js';
+import { loadStockAccounts, receiveTrackedStock, trackedItems } from './inventory.js';
 
 /**
  * BillService.enter() — the DRAFT -> ENTERED transition (M3).
@@ -202,6 +203,36 @@ export async function enterBill(
   const baseCurrency = await loadBaseCurrency(tx, ctx);
   const lines = await settleBillLines(tx, ctx, input.lines, currency, baseCurrency);
 
+  /*
+   * ---- Perpetual inventory: a tracked purchase is an ASSET -----------------
+   *
+   * A tracked line's expense account is REPLACED with the INVENTORY posting
+   * role before the journal is built. This is what perpetual inventory means:
+   * buying twenty laptops is not a cost, it is stock — the cost happens when
+   * one SELLS, posted by `issueTrackedStockForInvoice` at weighted average.
+   * Without this override the spend would hit an expense on entry AND COGS on
+   * sale: counted twice, and the balance sheet would not know the shelf exists.
+   *
+   * Overridden rather than refused: the account on the line came from the item
+   * defaults, and asking the user to hand-pick the inventory account on every
+   * purchase line is asking them to get it wrong once.
+   */
+  const tracked = await trackedItems(
+    tx,
+    ctx,
+    input.lines.flatMap((l) => (l.itemId !== undefined ? [l.itemId] : [])),
+  );
+
+  if (tracked.size > 0) {
+    const stockAccounts = await loadStockAccounts(tx, ctx);
+    for (const [index, line] of lines.entries()) {
+      const itemId = input.lines[index]!.itemId;
+      if (itemId !== undefined && tracked.has(itemId)) {
+        lines[index] = { ...line, accountId: stockAccounts.inventoryId };
+      }
+    }
+  }
+
   // ---- Compute (pure domain) ----------------------------------------------
   const documentLines: DocumentLine[] = lines.map((line, index) => ({
     lineId: `L${index + 1}`,
@@ -351,6 +382,39 @@ export async function enterBill(
          SET status = 'ENTERED', journal_entry_id = ${journalEntryId}
        WHERE tenant_id = ${ctx.tenantId} AND id = ${billId}
   `;
+
+  /*
+   * ---- Receive tracked stock ----------------------------------------------
+   *
+   * The quantity side of the Dr Inventory the journal above just posted. Cost
+   * is the line's NET amount in base currency — tax is not part of stock cost
+   * here, because under SST a registered trader's input tax on goods for
+   * resale is the supplier's output tax already inside the price, and a
+   * COST-treatment tax line lands in the expense the tax engine routed it to.
+   * Same transaction as the bill: a crash leaves neither ledger nor shelf.
+   */
+  if (tracked.size > 0) {
+    const convert = rate.isOne() ? null : converter(rate, baseCurrency);
+    await receiveTrackedStock(tx, ctx, {
+      sourceDocumentType: 'BILL',
+      sourceDocumentId: billId,
+      journalEntryId,
+      movedOn: input.billDate,
+      lines: input.lines.flatMap((line, index) => {
+        if (line.itemId === undefined || !tracked.has(line.itemId)) return [];
+        const net = doc.lines[index]!.netAmount;
+        return [
+          {
+            itemId: line.itemId,
+            quantity: line.quantity,
+            baseCost: convert
+              ? convert(net)
+              : Money.fromDecimal(net.toDecimalString(), baseCurrency),
+          },
+        ];
+      }),
+    });
+  }
 
   // Routed in the SAME transaction as the bill. A bill that committed without
   // its approval request would be payable by a caller who never saw a rule —

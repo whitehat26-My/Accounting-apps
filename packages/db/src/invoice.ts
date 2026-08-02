@@ -15,6 +15,7 @@ import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
 import { addDays, decimalToScaled, toIsoDate } from './internal.js';
 import { resolveLineFromItem } from './item.js';
+import { issueTrackedStockForInvoice, trackedItems } from './inventory.js';
 
 /**
  * InvoiceService.issue() — the DRAFT -> ISSUED transition (M2).
@@ -334,6 +335,38 @@ export async function issueInvoice(
          SET status = 'ISSUED', journal_entry_id = ${journalEntryId}
        WHERE tenant_id = ${ctx.tenantId} AND id = ${invoiceId}
   `;
+
+  /*
+   * ---- Perpetual inventory: the cost of what just sold ---------------------
+   *
+   * For every line carrying a tracked item, stock is relieved at weighted
+   * average and ONE further entry posts — Dr COGS / Cr Inventory — in the same
+   * transaction as the sale. This is what makes gross profit per sale a real
+   * number instead of a year-end estimate.
+   *
+   * It also means an invoice for stock the system says is not there is
+   * REFUSED, before anything commits. The message tells the user the two
+   * honest fixes: enter the purchase bill, or post a counted adjustment.
+   */
+  const trackedSet = await trackedItems(
+    tx,
+    ctx,
+    input.lines.flatMap((l) => (l.itemId !== undefined ? [l.itemId] : [])),
+  );
+
+  if (trackedSet.size > 0) {
+    await issueTrackedStockForInvoice(tx, ctx, {
+      invoiceId,
+      invoiceNo,
+      entryDate: input.issueDate,
+      idempotencyKey: input.idempotencyKey,
+      lines: input.lines.flatMap((line) =>
+        line.itemId !== undefined && trackedSet.has(line.itemId)
+          ? [{ itemId: line.itemId, quantity: line.quantity }]
+          : [],
+      ),
+    });
+  }
 
   return {
     id: invoiceId,

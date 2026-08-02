@@ -169,6 +169,11 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
       // What the gateway keeps. An expense in its own right — see
       // buildGatewayFeeJournal on why it is never netted into revenue.
       ['6100', 'Payment Gateway Fees', 'EXPENSE'],
+      // Perpetual inventory: the shelf as an asset, its relief on sale, and
+      // the line shrinkage posts to so it stays visible (0026).
+      ['1300', 'Inventory on Hand', 'ASSET'],
+      ['5100', 'Cost of Goods Sold', 'EXPENSE'],
+      ['5900', 'Stock Shrinkage', 'EXPENSE'],
     ];
 
     const accounts: Record<string, string> = {};
@@ -233,7 +238,10 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, 'GATEWAY_FEE',       ${accounts['6100']!}),
                -- Where a closed year's profit is carried. In the CHECK since
                -- 0002 and mapped by nothing until the year-end close existed.
-               (${tenantId}, 'RETAINED_EARNINGS', ${accounts['3000']!})
+               (${tenantId}, 'RETAINED_EARNINGS', ${accounts['3000']!}),
+               (${tenantId}, 'INVENTORY',       ${accounts['1300']!}),
+               (${tenantId}, 'COGS',            ${accounts['5100']!}),
+               (${tenantId}, 'STOCK_SHRINKAGE', ${accounts['5900']!})
     `;
 
     // Tags let the GLOBAL statement templates address this chart without

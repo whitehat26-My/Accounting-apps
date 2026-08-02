@@ -29,7 +29,8 @@ export class ItemError extends Error {
       | 'DUPLICATE_CODE'
       | 'ACCOUNT_NOT_FOUND'
       | 'UNKNOWN_UOM_CODE'
-      | 'ITEM_IN_USE',
+      | 'ITEM_IN_USE'
+      | 'ITEM_HAS_STOCK',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -49,6 +50,8 @@ export interface ItemView {
   readonly classificationCode: string | null;
   readonly isSold: boolean;
   readonly isPurchased: boolean;
+  /** Perpetual inventory: quantities and weighted-average cost are kept. */
+  readonly isTracked: boolean;
   readonly isActive: boolean;
   readonly sale: { unitPrice: string | null; accountId: string | null; taxCodeId: string | null };
   readonly purchase: { unitPrice: string | null; accountId: string | null; taxCodeId: string | null };
@@ -66,6 +69,7 @@ export interface UpsertItemInput {
   readonly classificationCode?: string;
   readonly isSold?: boolean;
   readonly isPurchased?: boolean;
+  readonly isTracked?: boolean;
   readonly sale?: { unitPrice?: string; accountId?: string; taxCodeId?: string };
   readonly purchase?: { unitPrice?: string; accountId?: string; taxCodeId?: string };
 }
@@ -76,7 +80,7 @@ export interface UpsertItemInput {
 
 const SELECT_COLUMNS = `
     i.id, i.code, i.name, i.description, i.item_type, i.unit_of_measure,
-    i.uom_code, i.classification_code, i.is_sold, i.is_purchased, i.is_active,
+    i.uom_code, i.classification_code, i.is_sold, i.is_purchased, i.is_tracked, i.is_active,
     i.sale_unit_price, i.sale_account_id, i.sale_tax_code_id,
     i.purchase_unit_price, i.purchase_account_id, i.purchase_tax_code_id
 `;
@@ -85,7 +89,7 @@ interface ItemRow {
   id: string; code: string; name: string; description: string | null;
   item_type: ItemType; unit_of_measure: string; uom_code: string | null;
   classification_code: string | null;
-  is_sold: boolean; is_purchased: boolean; is_active: boolean;
+  is_sold: boolean; is_purchased: boolean; is_tracked: boolean; is_active: boolean;
   sale_unit_price: string | null; sale_account_id: string | null; sale_tax_code_id: string | null;
   purchase_unit_price: string | null; purchase_account_id: string | null;
   purchase_tax_code_id: string | null;
@@ -168,14 +172,14 @@ export async function createItem(
   const [row] = await tx<ItemRow[]>`
       INSERT INTO item (
           tenant_id, code, name, description, item_type, unit_of_measure, uom_code,
-          classification_code, is_sold, is_purchased,
+          classification_code, is_sold, is_purchased, is_tracked,
           sale_unit_price, sale_account_id, sale_tax_code_id,
           purchase_unit_price, purchase_account_id, purchase_tax_code_id
       ) VALUES (
           ${ctx.tenantId}, ${code}, ${input.name}, ${input.description ?? null},
           ${input.itemType ?? 'SERVICE'}, ${input.unitOfMeasure ?? 'UNIT'},
           ${input.uomCode ?? null}, ${input.classificationCode ?? null},
-          ${draft.isSold}, ${draft.isPurchased},
+          ${draft.isSold}, ${draft.isPurchased}, ${input.isTracked ?? false},
           ${input.sale?.unitPrice ?? null}, ${input.sale?.accountId ?? null},
           ${input.sale?.taxCodeId ?? null},
           ${input.purchase?.unitPrice ?? null}, ${input.purchase?.accountId ?? null},
@@ -215,6 +219,28 @@ export async function updateItem(
   const draft = draftFrom(input, code, baseCurrency);
   await validate(tx, ctx, draft, input);
 
+  /*
+   * Untracking an item that still holds stock is refused. The pool's value is
+   * sitting on the balance sheet in the INVENTORY account; flipping the flag
+   * would strand that value with no movement path left to relieve it — an
+   * asset the system can no longer explain. Count the stock to zero first (the
+   * write-off says where the value went), then untrack.
+   */
+  if (current.isTracked && input.isTracked === false) {
+    const [stock] = await tx<{ quantity_on_hand: string; stock_value: string }[]>`
+        SELECT quantity_on_hand, stock_value FROM item_stock
+         WHERE tenant_id = ${ctx.tenantId} AND item_id = ${id}
+    `;
+    if (stock && (Number(stock.quantity_on_hand) !== 0 || Number(stock.stock_value) !== 0)) {
+      throw new ItemError(
+        'ITEM_HAS_STOCK',
+        `Item ${current.code} still has ${stock.quantity_on_hand} on hand worth ` +
+          `${stock.stock_value}. Count it to zero before untracking, so the write-down ` +
+          'says where the value went.',
+      );
+    }
+  }
+
   if (code !== current.code) {
     const [clash] = await tx<{ id: string }[]>`
         SELECT id FROM item
@@ -234,6 +260,7 @@ export async function updateItem(
              classification_code  = ${input.classificationCode ?? null},
              is_sold              = ${draft.isSold},
              is_purchased         = ${draft.isPurchased},
+             is_tracked           = ${input.isTracked ?? current.isTracked},
              sale_unit_price      = ${input.sale?.unitPrice ?? null},
              sale_account_id      = ${input.sale?.accountId ?? null},
              sale_tax_code_id     = ${input.sale?.taxCodeId ?? null},
@@ -485,6 +512,7 @@ function toView(row: ItemRow, baseCurrency: string): ItemView {
     classificationCode: row.classification_code,
     isSold: row.is_sold,
     isPurchased: row.is_purchased,
+    isTracked: row.is_tracked,
     isActive: row.is_active,
     sale: {
       unitPrice: row.sale_unit_price,

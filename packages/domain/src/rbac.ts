@@ -71,6 +71,8 @@ export type Permission =
   | 'system.read'
   | 'item.read'
   | 'item.write'
+  | 'stock.read'
+  | 'stock.adjust'
   | 'org.manage'
   | 'org.delete';
 

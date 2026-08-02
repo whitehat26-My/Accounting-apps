@@ -131,6 +131,8 @@ const itemSchema = z.object({
   classificationCode: z.string().min(1).max(20).optional(),
   isSold: z.boolean().optional(),
   isPurchased: z.boolean().optional(),
+  /** Perpetual inventory. GOODS only; the database refuses it on a service. */
+  isTracked: z.boolean().optional(),
   sale: sideSchema,
   purchase: sideSchema,
 });

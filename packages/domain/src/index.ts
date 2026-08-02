@@ -8,6 +8,7 @@ export * from './equity-statement.js';
 export * from './csv.js';
 export * from './year-end.js';
 export * from './item.js';
+export * from './inventory.js';
 export * from './account.js';
 export * from './journal-entry.js';
 export * from './tax.js';
