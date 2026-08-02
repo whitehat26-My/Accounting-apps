@@ -149,6 +149,11 @@ describe('the specification describes the application, not an intention about it
       'post /v1/auth/refresh',
       'post /v1/auth/register',
       'post /v1/auth/switch',
+      // First-run organisation creation. Public in the same sense as /switch:
+      // the refresh token in the body IS the authentication, checked in the
+      // handler — a brand-new user belongs to no tenant the guard could
+      // resolve a principal for.
+      'post /v1/organisations',
     ]);
   });
 

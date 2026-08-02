@@ -22,6 +22,8 @@ import { ItemsController } from './modules/items.controller.js';
 import { StockController } from './modules/stock.controller.js';
 import { PosController } from './modules/pos.controller.js';
 import { RepairsController } from './modules/repairs.controller.js';
+import { OnboardingController } from './modules/onboarding.controller.js';
+import { DocumentsController } from './modules/documents.controller.js';
 import { PublicPayController } from './modules/public-pay.controller.js';
 import { GatewayRegistry } from './gateways/registry.js';
 import { FakeGateway } from '@emil/db';
@@ -53,6 +55,8 @@ export const API_CONTROLLERS = [
   StockController,
   PosController,
   RepairsController,
+  OnboardingController,
+  DocumentsController,
   PublicPayController,
   OpenApiController,
 ] as const;

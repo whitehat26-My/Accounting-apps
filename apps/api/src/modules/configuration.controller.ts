@@ -4,7 +4,9 @@ import { z } from 'zod';
 import { isoDate } from '@emil/contracts';
 import {
   amendTaxReturn,
+  createTaxCode,
   endWithholdingRate,
+  loadTaxCodes,
   getTaxReturn,
   listTaxReturns,
   listWithholdingRates,
@@ -64,6 +66,50 @@ export class ConfigurationController {
   async readiness(@Req() request: FastifyRequest) {
     const ctx = tenantContextOf(request);
     return withTenant(this.sql, ctx, (tx) => tenantReadiness(tx, ctx));
+  }
+
+  // ---- Tax codes -----------------------------------------------------------
+
+  @Requires('tax.read')
+  @Get('tax-codes')
+  async taxCodes(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    const codes = await withTenant(this.sql, ctx, (tx) => loadTaxCodes(tx, ctx));
+
+    // The domain holds rates as bigint basis points, which JSON cannot carry.
+    // The wire gets numbers: 10,000 bp fits comfortably.
+    return {
+      taxCodes: codes.map((code) => ({
+        id: code.id,
+        code: code.code,
+        name: code.name,
+        regime: code.regime,
+        inputTreatment: code.inputTreatment,
+        rates: code.versions.map((v) => ({
+          rateBasisPoints: Number(v.rateBasisPoints),
+          validFrom: v.validFrom,
+          validTo: v.validTo,
+          legislationRef: v.legislationRef ?? null,
+        })),
+      })),
+    };
+  }
+
+  /**
+   * Create a tax code with its rate versions.
+   *
+   * Every rate must cite the instrument it came from — the 0018 provenance
+   * rule, applied to SST exactly as to withholding. Onboarding seeds only the
+   * out-of-scope 'NONE' code; everything with a real rate arrives HERE, with
+   * its citation, so a reviewer can check the claim when the law changes.
+   */
+  @Requires('tax.write')
+  @Doc({ request: () => taxCodeSchema })
+  @Post('tax-codes')
+  async createTaxCode(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = parse(taxCodeSchema, body);
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => createTaxCode(tx, ctx, input));
   }
 
   // ---- Withholding rates ---------------------------------------------------
@@ -353,3 +399,21 @@ const withholdingRateSchema = z.object({
 const endRateSchema = z.object({ validTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD') });
 
 const amendSchema = z.object({ reason: z.string().min(1).max(500) });
+
+const taxCodeSchema = z.object({
+  code: z.string().min(1).max(20),
+  name: z.string().min(1).max(100),
+  regime: z.enum(['SST_SALES', 'SST_SERVICE', 'NONE']),
+  inputTreatment: z.enum(['COST', 'RECOVERABLE']),
+  rates: z
+    .array(
+      z.object({
+        rateBasisPoints: z.number().int().min(0).max(10_000),
+        validFrom: isoDate,
+        validTo: isoDate.optional(),
+        /** The instrument the rate came from. "n/a" does not fit. */
+        legislationRef: z.string().min(8).max(300),
+      }),
+    )
+    .min(1),
+});

@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0029`, 120 HTTP routes, 1,271 tests
-(602 domain · 494 db · 137 api · 21 worker · 17 contracts).
+Last reconciled against the tree: migration `0030`, 129 HTTP routes, 1,281 tests
+(602 domain · 494 db · 147 api · 21 worker · 17 contracts).
 
 **Context that reshaped the roadmap (2026-08-02):** the first real tenant is a computer
 shop, revenue ≈ RM 50–60k/month. That makes the SHOP track (§5) the product, not an
@@ -157,15 +157,20 @@ There is no user interface. Everything in this repository is reachable only over
 bearer token. This is the largest single outstanding item by effort, and the one a customer
 would notice first.
 
-### 4.2 Onboarding
+### 4.2 Onboarding — BUILT (`0030`, `packages/db/src/onboarding.ts`)
 
-**There is no way to create an organisation or a fiscal year through the API.** Both are
-seeded directly in every test, including the year-end e2e, which has to insert `fiscal_year`
-and `fiscal_period` rows on the admin connection before it can close anything.
+`POST /v1/organisations` provisions everything in one transaction: the organisation, the
+creator's OWNER membership, a Malaysian SME chart with every posting role mapped, statement
+tags, the first fiscal year with twelve monthly periods, and the document sequences.
+Authenticated by refresh token (the `/auth/switch` shape) since a new user belongs to no
+tenant the guard could resolve; returns a working access token, so "just registered" to
+"can issue an invoice" is one round trip. The onboarding e2e proves it with NOTHING seeded:
+register → org → tax code (citation required) → supplier → item → bill → cash sale → PDFs.
 
-So a real first-time user cannot get to a state where any of the 106 routes is useful. Small
-in code, load-bearing in practice: an organisation, its chart of accounts, its fiscal calendar
-and its posting account map, created together in one transaction.
+Statutory discipline holds at the front door: onboarding seeds only the out-of-scope 'NONE'
+code at 0% (zero is the definition, not a rate). Real SST codes arrive via the new
+`POST /v1/tax-codes`, each rate citing its instrument — the 0018 provenance rule applied to
+SST exactly as to withholding.
 
 ### 4.3 Attachments
 
@@ -177,10 +182,13 @@ Needs an object store decision (S3-compatible) before the schema is worth writin
 `financial_event_log` records what happened; nothing tells anybody. No email transport is
 configured. Invoice delivery, payment receipts and approval requests all want it.
 
-### 4.5 Document rendering — PDF and XLSX
+### 4.5 Document rendering — PDF BUILT; XLSX not started
 
-An invoice a customer can be sent, and a report an accountant can open in Excel. CSV export
-exists (`packages/domain/src/csv.ts`, with the formula-injection guard); PDF and XLSX do not.
+`GET /v1/invoices/:id/pdf` and `GET /v1/receipts/:id/pdf` (pdfkit, `apps/api/src/pdf/`).
+Presentation only: every figure is READ from what issuance stored, never recomputed, so a
+reprinted 2024 invoice shows 2024's figures. Dates print DD/MM/YYYY (rule 8), amounts as
+RM with grouping. Not yet rendered: credit notes, bills, statements/reports, the repair job
+sheet — the renderer exists, each is now an afternoon. XLSX export remains not started.
 
 ### 4.6 Per-currency price lists
 
