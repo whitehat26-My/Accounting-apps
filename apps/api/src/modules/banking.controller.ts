@@ -1,7 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { decimal, isoDate } from '@emil/contracts';
+import { decimal, isoDate, quantity } from '@emil/contracts';
 import {
   bankTransactions,
   bookBalance,
@@ -9,6 +9,7 @@ import {
   confirmMatch,
   createBankAccount,
   createEntryFromBankLine,
+  debitFromBill,
   issueDebitNote,
   previewStatement,
   unmatch,
@@ -233,6 +234,30 @@ export class BankingController {
 
   // ---- Debit notes ---------------------------------------------------------
 
+  /**
+   * Raise a debit note from the bill it corrects.
+   *
+   * The payables mirror of `POST /v1/invoices/:id/credit-note`: every figure —
+   * the supplier's price, their tax code, the account the spend landed in —
+   * comes off the bill rather than being retyped, and the tax rate is the one
+   * the supplier charged rather than today's.
+   */
+  @Requires('debitnote.create')
+  @Doc({ request: () => debitFromBillSchema })
+  @Post('bills/:id/debit-note')
+  async debitBill(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = parse(debitFromBillSchema, body);
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      debitFromBill(tx, ctx, { ...input, billId: parse(billIdParam, id), idempotencyKey }),
+    );
+  }
+
   @Requires('debitnote.create')
   @Doc({ request: () => debitNoteSchema })
   @Post('debit-notes')
@@ -339,4 +364,21 @@ const journalFromLineSchema = z.object({
 const completeSchema = z.object({
   periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
   periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+});
+
+const billIdParam = z.string().uuid();
+
+const debitFromBillSchema = z.object({
+  debitDate: isoDate,
+  reason: z.enum(['RETURN', 'OVERCHARGE', 'DISCOUNT', 'CANCELLATION', 'BAD_DEBT', 'OTHER']),
+  reasonDetail: z.string().max(500).optional(),
+  /*
+   * Omit to reverse everything not already reversed. Quantity is the ONLY
+   * thing a caller may choose — price, account and tax code all come from the
+   * bill, because a debit note that differs from it is not a reversal of it.
+   */
+  lines: z
+    .array(z.object({ billLineId: billIdParam, quantity: quantity.optional() }))
+    .min(1)
+    .optional(),
 });

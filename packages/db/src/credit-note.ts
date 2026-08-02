@@ -1,7 +1,7 @@
 import {
-  deriveCreditLines,
-  type CreditableLine,
-  type CreditDerivationViolation,
+  deriveCorrectionLines,
+  type CorrectableLine,
+  type CorrectionDerivationViolation,
   buildCreditNoteJournal,
   computeDocument,
   isErr,
@@ -77,7 +77,7 @@ export interface IssueCreditNoteInput {
 
 export interface IssueCreditNoteLine {
   /** The invoice line this reverses. Set by `creditFromInvoice`. */
-  readonly sourceInvoiceLineId?: string;
+  readonly sourceLineId?: string;
   readonly description: string;
   readonly quantity: string;
   readonly unitPrice: string;
@@ -350,7 +350,7 @@ export async function issueCreditNote(
             ${computedLine.taxAmount.toDecimalString()},
             ${computedLine.lineTotal.toDecimalString()},
             ${line.classificationCode ?? null},
-            ${line.sourceInvoiceLineId ?? null}
+            ${line.sourceLineId ?? null}
         )
     `;
   }
@@ -645,8 +645,8 @@ export async function creditFromInvoice(
        ORDER BY il.line_no
   `;
 
-  const creditable: CreditableLine[] = lineRows.map((r) => ({
-    invoiceLineId: r.id,
+  const creditable: CorrectableLine[] = lineRows.map((r) => ({
+    sourceLineId: r.id,
     lineNo: r.line_no,
     description: r.description,
     quantity: r.quantity,
@@ -659,9 +659,14 @@ export async function creditFromInvoice(
     alreadyCredited: r.already_credited,
   }));
 
-  const derived = deriveCreditLines(
+  const derived = deriveCorrectionLines(
     creditable,
-    input.lines !== undefined ? { lines: input.lines } : {},
+    // The public input names an INVOICE line, because that is what a caller is
+    // holding. The deriver is document-agnostic — the same logic backs debit
+    // notes against bills — so the name is neutralised here at the boundary.
+    input.lines !== undefined
+      ? { lines: input.lines.map((l) => ({ sourceLineId: l.invoiceLineId, ...(l.quantity !== undefined ? { quantity: l.quantity } : {}) })) }
+      : {},
   );
 
   if (isErr(derived)) {
@@ -683,7 +688,7 @@ export async function creditFromInvoice(
     ...(input.reasonDetail !== undefined ? { reasonDetail: input.reasonDetail } : {}),
     currency: invoice.currency,
     lines: derived.value.map((l) => ({
-      sourceInvoiceLineId: l.sourceInvoiceLineId,
+      sourceLineId: l.sourceLineId,
       description: l.description,
       quantity: l.quantity,
       unitPrice: l.unitPrice.toDecimalString(),
@@ -701,15 +706,15 @@ export async function creditFromInvoice(
   });
 }
 
-function describeDerivation(v: CreditDerivationViolation): string {
+function describeDerivation(v: CorrectionDerivationViolation): string {
   switch (v.code) {
-    case 'NO_SUCH_INVOICE_LINE':
-      return `Invoice line ${v.invoiceLineId} is not on this invoice`;
+    case 'NO_SUCH_LINE':
+      return `Invoice line ${v.sourceLineId} is not on this invoice`;
     case 'NOTHING_TO_CREDIT':
       return 'Every line on this invoice has already been credited in full';
     case 'EXCEEDS_REMAINING':
-      return `Line ${v.invoiceLineId}: asked to credit ${v.requested}, only ${v.remaining} remains uncredited`;
+      return `Line ${v.sourceLineId}: asked to credit ${v.requested}, only ${v.remaining} remains uncredited`;
     case 'NON_POSITIVE_QUANTITY':
-      return `Line ${v.invoiceLineId}: ${v.quantity} is not a creditable quantity`;
+      return `Line ${v.sourceLineId}: ${v.quantity} is not a creditable quantity`;
   }
 }

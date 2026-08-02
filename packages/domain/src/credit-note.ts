@@ -283,14 +283,14 @@ export type { Currency };
 // ---------------------------------------------------------------------------
 
 /**
- * One line of the invoice being credited, as the deriver sees it.
+ * One line of the document being corrected, as the deriver sees it.
  *
  * `quantity` is a decimal STRING, matching how it travels everywhere else in
  * this codebase — see `document.ts` on why quantities are scaled integers
  * internally and strings at every boundary.
  */
-export interface CreditableLine {
-  readonly invoiceLineId: string;
+export interface CorrectableLine {
+  readonly sourceLineId: string;
   readonly lineNo: number;
   readonly description: string;
   readonly quantity: string;
@@ -305,12 +305,12 @@ export interface CreditableLine {
 }
 
 /** What the caller wants to credit. Omit `lines` to credit the whole invoice. */
-export interface CreditSelection {
-  readonly lines?: readonly { invoiceLineId: string; quantity?: string }[];
+export interface CorrectionSelection {
+  readonly lines?: readonly { sourceLineId: string; quantity?: string }[];
 }
 
-export interface DerivedCreditLine {
-  readonly sourceInvoiceLineId: string;
+export interface DerivedCorrectionLine {
+  readonly sourceLineId: string;
   readonly description: string;
   readonly quantity: string;
   readonly unitPrice: Money;
@@ -321,16 +321,16 @@ export interface DerivedCreditLine {
   readonly itemId?: string;
 }
 
-export type CreditDerivationViolation =
-  | { readonly code: 'NO_SUCH_INVOICE_LINE'; readonly invoiceLineId: string }
+export type CorrectionDerivationViolation =
+  | { readonly code: 'NO_SUCH_LINE'; readonly sourceLineId: string }
   | { readonly code: 'NOTHING_TO_CREDIT' }
   | {
       readonly code: 'EXCEEDS_REMAINING';
-      readonly invoiceLineId: string;
+      readonly sourceLineId: string;
       readonly requested: string;
       readonly remaining: string;
     }
-  | { readonly code: 'NON_POSITIVE_QUANTITY'; readonly invoiceLineId: string; readonly quantity: string };
+  | { readonly code: 'NON_POSITIVE_QUANTITY'; readonly sourceLineId: string; readonly quantity: string };
 
 /** Quantities are decimal strings; compare them as scaled integers, not floats. */
 const QUANTITY_SCALE = 4;
@@ -379,12 +379,12 @@ function fromScaled(units: bigint): string {
  * A document-level check passes happily when one line is credited twice and
  * another not at all, which nets to the right total and is two wrong lines.
  */
-export function deriveCreditLines(
-  invoiceLines: readonly CreditableLine[],
-  selection: CreditSelection = {},
-): Result<DerivedCreditLine[], CreditDerivationViolation[]> {
-  const violations: CreditDerivationViolation[] = [];
-  const byId = new Map(invoiceLines.map((l) => [l.invoiceLineId, l]));
+export function deriveCorrectionLines(
+  documentLines: readonly CorrectableLine[],
+  selection: CorrectionSelection = {},
+): Result<DerivedCorrectionLine[], CorrectionDerivationViolation[]> {
+  const violations: CorrectionDerivationViolation[] = [];
+  const byId = new Map(documentLines.map((l) => [l.sourceLineId, l]));
 
   /*
    * No selection means the whole invoice — specifically, everything not yet
@@ -404,14 +404,14 @@ export function deriveCreditLines(
   const explicit = selection.lines !== undefined;
   const requested =
     selection.lines ??
-    invoiceLines.map((l) => ({ invoiceLineId: l.invoiceLineId, quantity: undefined }));
+    documentLines.map((l) => ({ sourceLineId: l.sourceLineId, quantity: undefined }));
 
-  const derived: DerivedCreditLine[] = [];
+  const derived: DerivedCorrectionLine[] = [];
 
   for (const request of requested) {
-    const line = byId.get(request.invoiceLineId);
+    const line = byId.get(request.sourceLineId);
     if (!line) {
-      violations.push({ code: 'NO_SUCH_INVOICE_LINE', invoiceLineId: request.invoiceLineId });
+      violations.push({ code: 'NO_SUCH_LINE', sourceLineId: request.sourceLineId });
       continue;
     }
 
@@ -420,7 +420,7 @@ export function deriveCreditLines(
     if (invoiced === null || credited === null) {
       violations.push({
         code: 'NON_POSITIVE_QUANTITY',
-        invoiceLineId: line.invoiceLineId,
+        sourceLineId: line.sourceLineId,
         quantity: line.quantity,
       });
       continue;
@@ -435,7 +435,7 @@ export function deriveCreditLines(
         if (explicit) {
           violations.push({
             code: 'EXCEEDS_REMAINING',
-            invoiceLineId: line.invoiceLineId,
+            sourceLineId: line.sourceLineId,
             requested: fromScaled(invoiced),
             remaining: '0',
           });
@@ -448,7 +448,7 @@ export function deriveCreditLines(
       if (parsed === null || parsed <= 0n) {
         violations.push({
           code: 'NON_POSITIVE_QUANTITY',
-          invoiceLineId: line.invoiceLineId,
+          sourceLineId: line.sourceLineId,
           quantity: request.quantity,
         });
         continue;
@@ -459,7 +459,7 @@ export function deriveCreditLines(
     if (wanted > remaining) {
       violations.push({
         code: 'EXCEEDS_REMAINING',
-        invoiceLineId: line.invoiceLineId,
+        sourceLineId: line.sourceLineId,
         requested: fromScaled(wanted),
         remaining: fromScaled(remaining > 0n ? remaining : 0n),
       });
@@ -467,7 +467,7 @@ export function deriveCreditLines(
     }
 
     derived.push({
-      sourceInvoiceLineId: line.invoiceLineId,
+      sourceLineId: line.sourceLineId,
       description: line.description,
       quantity: fromScaled(wanted),
       unitPrice: line.unitPrice,

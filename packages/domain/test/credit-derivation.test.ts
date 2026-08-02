@@ -2,12 +2,12 @@ import { describe, expect, it } from 'vitest';
 import fc from 'fast-check';
 import { Money } from '../src/money.js';
 import { isErr, unwrap } from '../src/result.js';
-import { deriveCreditLines, type CreditableLine } from '../src/credit-note.js';
+import { deriveCorrectionLines, type CorrectableLine } from '../src/credit-note.js';
 
 const rm = (v: string) => Money.fromDecimal(v, 'MYR');
 
-const line = (over: Partial<CreditableLine> = {}): CreditableLine => ({
-  invoiceLineId: 'il-1',
+const line = (over: Partial<CorrectableLine> = {}): CorrectableLine => ({
+  sourceLineId: 'il-1',
   lineNo: 1,
   description: 'Consulting',
   quantity: '10',
@@ -18,7 +18,7 @@ const line = (over: Partial<CreditableLine> = {}): CreditableLine => ({
   ...over,
 });
 
-const errorsOf = (r: ReturnType<typeof deriveCreditLines>) => (isErr(r) ? r.error : []);
+const errorsOf = (r: ReturnType<typeof deriveCorrectionLines>) => (isErr(r) ? r.error : []);
 
 // ---------------------------------------------------------------------------
 // Carrying the original
@@ -34,13 +34,13 @@ describe('every figure comes from the invoice', () => {
      * two accounts wrong by one amount.
      */
     const derived = unwrap(
-      deriveCreditLines([
+      deriveCorrectionLines([
         line({ classificationCode: '022', itemId: 'item-1', discountBasisPoints: 500 }),
       ]),
     );
 
     expect(derived[0]).toMatchObject({
-      sourceInvoiceLineId: 'il-1',
+      sourceLineId: 'il-1',
       description: 'Consulting',
       accountId: 'acct-4000',
       taxCodeId: 'tax-svc',
@@ -52,11 +52,11 @@ describe('every figure comes from the invoice', () => {
   });
 
   it('credits the whole remaining quantity when none is named', () => {
-    expect(unwrap(deriveCreditLines([line()]))[0]!.quantity).toBe('10');
+    expect(unwrap(deriveCorrectionLines([line()]))[0]!.quantity).toBe('10');
   });
 
   it('credits only what remains on a partly-credited line', () => {
-    const derived = unwrap(deriveCreditLines([line({ alreadyCredited: '4' })]));
+    const derived = unwrap(deriveCorrectionLines([line({ alreadyCredited: '4' })]));
     expect(derived[0]!.quantity).toBe('6');
   });
 });
@@ -67,13 +67,13 @@ describe('every figure comes from the invoice', () => {
 
 describe('over-crediting', () => {
   it('refuses more than remains, naming both figures', () => {
-    const result = deriveCreditLines([line({ alreadyCredited: '4' })], {
-      lines: [{ invoiceLineId: 'il-1', quantity: '7' }],
+    const result = deriveCorrectionLines([line({ alreadyCredited: '4' })], {
+      lines: [{ sourceLineId: 'il-1', quantity: '7' }],
     });
 
     expect(errorsOf(result)).toContainEqual({
       code: 'EXCEEDS_REMAINING',
-      invoiceLineId: 'il-1',
+      sourceLineId: 'il-1',
       requested: '7',
       remaining: '6',
     });
@@ -85,12 +85,12 @@ describe('over-crediting', () => {
      * total exactly. A document-level guard sees nothing wrong, and both lines
      * are wrong.
      */
-    const result = deriveCreditLines(
+    const result = deriveCorrectionLines(
       [
-        line({ invoiceLineId: 'a', quantity: '1', alreadyCredited: '1' }),
-        line({ invoiceLineId: 'b', quantity: '1', alreadyCredited: '0' }),
+        line({ sourceLineId: 'a', quantity: '1', alreadyCredited: '1' }),
+        line({ sourceLineId: 'b', quantity: '1', alreadyCredited: '0' }),
       ],
-      { lines: [{ invoiceLineId: 'a', quantity: '1' }] },
+      { lines: [{ sourceLineId: 'a', quantity: '1' }] },
     );
 
     expect(errorsOf(result).map((v) => v.code)).toEqual(['EXCEEDS_REMAINING']);
@@ -98,8 +98,8 @@ describe('over-crediting', () => {
 
   it('accepts exactly what remains', () => {
     const derived = unwrap(
-      deriveCreditLines([line({ alreadyCredited: '4' })], {
-        lines: [{ invoiceLineId: 'il-1', quantity: '6' }],
+      deriveCorrectionLines([line({ alreadyCredited: '4' })], {
+        lines: [{ sourceLineId: 'il-1', quantity: '6' }],
       }),
     );
     expect(derived[0]!.quantity).toBe('6');
@@ -109,7 +109,7 @@ describe('over-crediting', () => {
     // `0.1 + 0.2 !== 0.3` in IEEE-754, and a quantity is a decimal string
     // everywhere in this codebase for exactly that reason.
     const derived = unwrap(
-      deriveCreditLines([line({ quantity: '0.3', alreadyCredited: '0.1' })]),
+      deriveCorrectionLines([line({ quantity: '0.3', alreadyCredited: '0.1' })]),
     );
     expect(derived[0]!.quantity).toBe('0.2');
   });
@@ -124,14 +124,14 @@ describe('naming a line means something different from crediting the rest', () =
     // "Credit whatever is left" over a line with nothing left is not a
     // mistake — it is the ordinary way to finish a partly-credited invoice.
     const derived = unwrap(
-      deriveCreditLines([
-        line({ invoiceLineId: 'a', quantity: '1', alreadyCredited: '1' }),
-        line({ invoiceLineId: 'b', quantity: '2', alreadyCredited: '0' }),
+      deriveCorrectionLines([
+        line({ sourceLineId: 'a', quantity: '1', alreadyCredited: '1' }),
+        line({ sourceLineId: 'b', quantity: '2', alreadyCredited: '0' }),
       ]),
     );
 
     expect(derived).toHaveLength(1);
-    expect(derived[0]!.sourceInvoiceLineId).toBe('b');
+    expect(derived[0]!.sourceLineId).toBe('b');
   });
 
   it('REFUSES a finished line when the caller named it', () => {
@@ -141,23 +141,23 @@ describe('naming a line means something different from crediting the rest', () =
      * which is a false statement about the rest of the invoice, and how a user
      * concludes a credit went through when it did not.
      */
-    const result = deriveCreditLines(
+    const result = deriveCorrectionLines(
       [
-        line({ invoiceLineId: 'a', quantity: '1', alreadyCredited: '1' }),
-        line({ invoiceLineId: 'b', quantity: '2', alreadyCredited: '0' }),
+        line({ sourceLineId: 'a', quantity: '1', alreadyCredited: '1' }),
+        line({ sourceLineId: 'b', quantity: '2', alreadyCredited: '0' }),
       ],
-      { lines: [{ invoiceLineId: 'a' }] },
+      { lines: [{ sourceLineId: 'a' }] },
     );
 
     expect(errorsOf(result)).toEqual([
-      { code: 'EXCEEDS_REMAINING', invoiceLineId: 'a', requested: '1', remaining: '0' },
+      { code: 'EXCEEDS_REMAINING', sourceLineId: 'a', requested: '1', remaining: '0' },
     ]);
   });
 
   it('reports NOTHING_TO_CREDIT only when the whole invoice is finished', () => {
-    const result = deriveCreditLines([
-      line({ invoiceLineId: 'a', quantity: '1', alreadyCredited: '1' }),
-      line({ invoiceLineId: 'b', quantity: '2', alreadyCredited: '2' }),
+    const result = deriveCorrectionLines([
+      line({ sourceLineId: 'a', quantity: '1', alreadyCredited: '1' }),
+      line({ sourceLineId: 'b', quantity: '2', alreadyCredited: '2' }),
     ]);
 
     expect(errorsOf(result)).toEqual([{ code: 'NOTHING_TO_CREDIT' }]);
@@ -166,24 +166,24 @@ describe('naming a line means something different from crediting the rest', () =
 
 describe('bad input', () => {
   it('refuses a line that is not on the invoice', () => {
-    const result = deriveCreditLines([line()], { lines: [{ invoiceLineId: 'nope' }] });
+    const result = deriveCorrectionLines([line()], { lines: [{ sourceLineId: 'nope' }] });
     expect(errorsOf(result)).toEqual([
-      { code: 'NO_SUCH_INVOICE_LINE', invoiceLineId: 'nope' },
+      { code: 'NO_SUCH_LINE', sourceLineId: 'nope' },
     ]);
   });
 
   it('refuses a zero or negative quantity', () => {
     for (const quantity of ['0', '-1']) {
-      const result = deriveCreditLines([line()], {
-        lines: [{ invoiceLineId: 'il-1', quantity }],
+      const result = deriveCorrectionLines([line()], {
+        lines: [{ sourceLineId: 'il-1', quantity }],
       });
       expect(errorsOf(result).map((v) => v.code), quantity).toEqual(['NON_POSITIVE_QUANTITY']);
     }
   });
 
   it('reports every bad line rather than only the first', () => {
-    const result = deriveCreditLines([line()], {
-      lines: [{ invoiceLineId: 'nope' }, { invoiceLineId: 'il-1', quantity: '99' }],
+    const result = deriveCorrectionLines([line()], {
+      lines: [{ sourceLineId: 'nope' }, { sourceLineId: 'il-1', quantity: '99' }],
     });
     expect(errorsOf(result)).toHaveLength(2);
   });
@@ -202,7 +202,7 @@ describe('PROPERTY', () => {
         const invoiced = (invoicedTenths / 10).toFixed(1);
         const credited = (creditedTenths / 10).toFixed(1);
 
-        const result = deriveCreditLines([
+        const result = deriveCorrectionLines([
           line({ quantity: invoiced, alreadyCredited: credited }),
         ]);
 

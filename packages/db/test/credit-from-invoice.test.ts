@@ -3,6 +3,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { withTenant, type Sql, type TenantContext } from '../src/client.js';
 import { issueInvoice } from '../src/invoice.js';
 import { creditFromInvoice } from '../src/credit-note.js';
+import { debitFromBill } from '../src/debit-note.js';
+import { enterBill } from '../src/bill.js';
 import { createTestDatabase, seedTenant, type Tenant } from './helpers.js';
 
 let sql: Sql;
@@ -464,5 +466,130 @@ describe('the ledger still agrees', () => {
 
     expect(invoiceRow!.amount_due).toBe('0.0000');
     expect(invoiceRow!.status).toBe('CREDITED');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The payables mirror
+// ---------------------------------------------------------------------------
+
+describe('debit notes had the identical defect', () => {
+  async function bill(billDate: string, lines: { unitPrice: string; quantity: string }[]) {
+    return run((tx) =>
+      enterBill(tx, ctx(), {
+        supplierId: tenant.supplierId,
+        billNo: `B-${randomUUID().slice(0, 8)}`,
+        billDate,
+        lines: lines.map((l, i) => ({
+          description: `Supply ${i + 1}`,
+          quantity: l.quantity,
+          unitPrice: l.unitPrice,
+          accountId: tenant.accounts['6000']!,
+          taxCodeId: tenant.taxCodes['SST-SVC']!,
+        })),
+        idempotencyKey: randomUUID(),
+      }),
+    );
+  }
+
+  it('reverses a pre-2024 bill at the rate the SUPPLIER charged', async () => {
+    /*
+     * 0023 added `debit_note.original_tax_point_date` and wired nothing to it,
+     * so this side kept the defect the credit side had fixed: a correction
+     * computed at TODAY's rate rather than the supply's. A half-applied fix is
+     * worse than an unapplied one, because the column existing implies the
+     * behaviour exists.
+     */
+    const entered = await bill('2023-06-15', [{ unitPrice: '1000.00', quantity: '1' }]);
+    expect(entered.taxTotal).toBe('60.0000');
+
+    const debit = await run((tx) =>
+      debitFromBill(tx, ctx(), {
+        billId: entered.id,
+        debitDate: '2026-08-05',
+        reason: 'RETURN',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    // 6%, matching what was billed. Not 8%.
+    expect(debit.taxTotal).toBe('60.0000');
+    expect(debit.total).toBe('1060.0000');
+  });
+
+  it('keeps the rate and the period apart, exactly as the sales side does', async () => {
+    const entered = await bill('2023-06-15', [{ unitPrice: '500.00', quantity: '1' }]);
+    const debit = await run((tx) =>
+      debitFromBill(tx, ctx(), {
+        billId: entered.id,
+        debitDate: '2026-08-05',
+        reason: 'OVERCHARGE',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    const [evidence] = await run((tx) =>
+      tx<{ tax_point_date: Date; rate_basis_points: number; tax_amount: string }[]>`
+          SELECT tax_point_date, rate_basis_points, tax_amount::text
+            FROM tax_transaction
+           WHERE tenant_id = ${tenant.tenantId}
+             AND source_document_type = 'DEBIT_NOTE'
+             AND source_document_id = ${debit.id}
+      `,
+    );
+
+    expect(evidence!.rate_basis_points).toBe(600);
+    expect(evidence!.tax_point_date.toISOString().slice(0, 10)).toBe('2026-08-05');
+    // Negative and INPUT, so an input-tax summary nets it against the charge.
+    expect(evidence!.tax_amount).toBe('-30.0000');
+  });
+
+  it('carries the supplier’s figures and refuses over-reversal per line', async () => {
+    const entered = await bill('2026-08-05', [{ unitPrice: '80.00', quantity: '10' }]);
+
+    const [line] = await run((tx) =>
+      tx<{ id: string }[]>`
+          SELECT id FROM bill_line
+           WHERE tenant_id = ${tenant.tenantId} AND bill_id = ${entered.id}
+      `,
+    );
+
+    await run((tx) =>
+      debitFromBill(tx, ctx(), {
+        billId: entered.id,
+        debitDate: '2026-08-06',
+        reason: 'RETURN',
+        lines: [{ billLineId: line!.id, quantity: '4' }],
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    await expect(
+      run((tx) =>
+        debitFromBill(tx, ctx(), {
+          billId: entered.id,
+          debitDate: '2026-08-07',
+          reason: 'RETURN',
+          lines: [{ billLineId: line!.id, quantity: '7' }],
+          idempotencyKey: randomUUID(),
+        }),
+      ),
+    ).rejects.toThrow(/only 6 remains/);
+
+    const [stored] = await run((tx) =>
+      tx<{ unit_price: string; account_id: string; source_bill_line_id: string | null }[]>`
+          SELECT unit_price::text, account_id, source_bill_line_id
+            FROM debit_note_line
+           WHERE tenant_id = ${tenant.tenantId}
+             AND source_bill_line_id = ${line!.id}
+           ORDER BY line_no LIMIT 1
+      `,
+    );
+
+    expect(stored).toMatchObject({
+      unit_price: '80.0000',
+      account_id: tenant.accounts['6000'],
+    });
+    expect(stored!.source_bill_line_id).toBe(line!.id);
   });
 });
