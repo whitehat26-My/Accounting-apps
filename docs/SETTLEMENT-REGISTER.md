@@ -15,7 +15,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
 Last reconciled against the tree: migration `0030`, 129 HTTP routes, 1,281 tests
-(602 domain · 494 db · 147 api · 21 worker · 17 contracts).
+(602 domain · 494 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
+journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
 **Context that reshaped the roadmap (2026-08-02):** the first real tenant is a computer
 shop, revenue ≈ RM 50–60k/month. That makes the SHOP track (§5) the product, not an
@@ -151,11 +152,21 @@ precisely the plausible-but-wrong failure that explicit profiles exist to preven
 
 No blocker. Not done.
 
-### 4.1 `apps/web` — the Next.js application
+### 4.1 `apps/web` — SHOP SCREENS BUILT; accounting screens outstanding
 
-There is no user interface. Everything in this repository is reachable only over HTTP with a
-bearer token. This is the largest single outstanding item by effort, and the one a customer
-would notice first.
+Next.js 15 + Tailwind 4 + TanStack Query. Built: login/register with organisation switch,
+first-run setup, the till (search → cart → serials → tender → change → receipt PDF), the
+workshop (intake, queue, quote, approve, ready, collect-with-payment, invoice PDF), stock
+levels with movement trails, the item catalogue, and Today (the Z-report as a dashboard).
+Token store spends the rotating refresh token through one serialised in-flight promise —
+two racing 401s must not double-spend a token the server treats as stolen on reuse. The
+browser talks to /api/* and Next rewrites to the API, so CORS never exists. A Playwright
+journey drives the real stack end to end: register → onboard → item → cash sale → change
+RM 50.00 → takings.
+
+Still to build, now screen-by-screen work on an existing shell: invoicing/AR beyond the
+till, bills and approvals, banking and reconciliation, reports, settings (tax codes, chart,
+users). The API for all of it exists and is conformance-documented at /openapi.json.
 
 ### 4.2 Onboarding — BUILT (`0030`, `packages/db/src/onboarding.ts`)
 

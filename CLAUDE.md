@@ -39,8 +39,9 @@ environment this is developed in, and a harness that cannot start is a harness n
 
 ```
 apps/api            NestJS on Fastify — auth, RBAC, and the accounting surface
-packages/contracts  Shared Zod primitives + the OpenAPI generator
+apps/web            Next.js 15 shop UI — login, onboarding, POS, repairs, stock, takings
 apps/worker         Outbox relay + scheduled jobs. PostgreSQL-backed, NOT BullMQ — see below
+packages/contracts  Shared Zod primitives + the OpenAPI generator
 packages/domain     Money, ledger aggregates, TaxEngine — pure, zero IO
 packages/db         Raw SQL migrations, RLS policies, repository services
 ```
@@ -48,10 +49,14 @@ packages/db         Raw SQL migrations, RLS policies, repository services
 **Planned, and deliberately not yet created** — do not assume these are present:
 
 ```
-apps/web            Next.js
-packages/ui         Shared component library
+packages/ui         Shared component library (apps/web hand-rolls five primitives; adopt one when that file outgrows itself)
 infra               Terraform
 ```
+
+`apps/web` holds NO arithmetic: amounts are strings end to end, display formatting lives in
+`src/lib/display.ts`, and the moment a screen needs parseFloat the calculation belongs on the
+server. Its Playwright journey (`pnpm --filter @emil/web test:e2e`) drives the real API and a
+real PostgreSQL through register → onboard → item → cash sale → takings.
 
 **Everything outstanding is in `docs/SETTLEMENT-REGISTER.md`, categorised BUILT /
 DEFERRED-BY-DECISION / BLOCKED-ON-EXTERNAL / NOT-STARTED, with the exact unblocker named for
