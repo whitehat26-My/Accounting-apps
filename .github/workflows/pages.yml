@@ -23,8 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # No version here: pnpm/action-setup reads `packageManager` from
+      # package.json, and naming a second version is exactly the mismatch
+      # it errors on.
       - uses: pnpm/action-setup@v4
-        with: { version: 10 }
       - uses: actions/setup-node@v4
         with: { node-version: 22, cache: pnpm }
       - run: pnpm install --frozen-lockfile
