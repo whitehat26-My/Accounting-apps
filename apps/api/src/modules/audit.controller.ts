@@ -55,7 +55,7 @@ export class AuditController {
     @Req() request: FastifyRequest,
   ) {
     const ctx = tenantContextOf(request);
-    parse(z.object({ entityId: z.string().uuid() }), { entityId });
+    parse(historySchema, { entityId });
 
     return {
       entityType,
@@ -92,3 +92,5 @@ const auditQuerySchema = z.object({
   before: z.string().regex(/^\d+$/, 'Cursor must be an audit row id').optional(),
   limit: z.coerce.number().int().min(1).max(500).optional(),
 });
+
+const historySchema = z.object({ entityId: z.string().uuid() });

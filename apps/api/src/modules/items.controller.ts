@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { positiveDecimal as decimal, uuid } from '@emil/contracts';
 import {
   createItem,
   getItem,
@@ -11,6 +12,7 @@ import {
   type Sql,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -64,6 +66,7 @@ export class ItemsController {
   }
 
   @Requires('item.write')
+  @Doc({ request: () => itemSchema })
   @Post()
   async create(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(itemSchema, body);
@@ -78,6 +81,7 @@ export class ItemsController {
    * audit trigger records the before-and-after either way.
    */
   @Requires('item.write')
+  @Doc({ request: () => itemSchema })
   @Patch(':id')
   async update(
     @Param('id') id: string,
@@ -95,6 +99,7 @@ export class ItemsController {
    * sever a historical document from what was actually sold.
    */
   @Requires('item.write')
+  @Doc({ request: () => activeSchema })
   @Post(':id/active')
   async setActive(
     @Param('id') id: string,
@@ -107,12 +112,7 @@ export class ItemsController {
   }
 }
 
-const uuid = z.string().uuid();
 const directionSchema = z.enum(['SALE', 'PURCHASE']);
-const decimal = z
-  .string()
-  .regex(/^\d+(\.\d{1,4})?$/, 'Amounts are decimal strings, never numbers');
-
 const sideSchema = z
   .object({
     unitPrice: decimal.optional(),

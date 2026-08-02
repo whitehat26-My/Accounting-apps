@@ -3,6 +3,7 @@ import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { createContact, getContact, listContacts, withTenant, type Sql } from '@emil/db';
 import { SQL } from '../tokens.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -30,11 +31,7 @@ export class ContactsController {
     @Query('includeInactive') includeInactive: string | undefined,
     @Req() request: FastifyRequest,
   ) {
-    const parsed = parse(
-      z.object({
-        role: z.enum(['CUSTOMER', 'SUPPLIER']).optional(),
-        includeInactive: z.boolean().optional(),
-      }),
+    const parsed = parse(listSchema,
       {
         ...(role !== undefined ? { role } : {}),
         ...(includeInactive !== undefined ? { includeInactive: includeInactive === 'true' } : {}),
@@ -53,6 +50,7 @@ export class ContactsController {
   }
 
   @Requires('contact.write')
+  @Doc({ request: () => contactSchema })
   @Post('contacts')
   async create(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(contactSchema, body);
@@ -85,3 +83,8 @@ const contactSchema = z.object({
   creditLimit: z.string().regex(/^\d+(\.\d{1,4})?$/).optional(),
   requiresEinvoice: z.boolean().optional(),
 });
+
+const listSchema = z.object({
+        role: z.enum(['CUSTOMER', 'SUPPLIER']).optional(),
+        includeInactive: z.boolean().optional(),
+      });

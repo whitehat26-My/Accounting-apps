@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { isoDate } from '@emil/contracts';
 import {
   amendTaxReturn,
   endWithholdingRate,
@@ -21,6 +22,7 @@ import {
 } from '@emil/db';
 import { SQL, CONFIG } from '../tokens.js';
 import type { ApiConfig } from '../config.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -82,6 +84,7 @@ export class ConfigurationController {
    * changes, and the payer carries the liability for getting it wrong.
    */
   @Requires('tax.write')
+  @Doc({ request: () => withholdingRateSchema })
   @Post('withholding-rates')
   async setRate(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(withholdingRateSchema, body);
@@ -97,14 +100,14 @@ export class ConfigurationController {
    * in force then, and rewriting the row makes that figure unexplainable.
    */
   @Requires('tax.write')
+  @Doc({ request: () => registrationSchema })
   @Post('withholding-rates/:id/end')
   async endRate(
     @Param('id') id: string,
     @Body() body: unknown,
     @Req() request: FastifyRequest,
   ) {
-    const { validTo } = parse(
-      z.object({ validTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD') }),
+    const { validTo } = parse(endRateSchema,
       body,
     );
 
@@ -129,6 +132,7 @@ export class ConfigurationController {
    * period, or a period never filed. So it carries provenance, like a rate.
    */
   @Requires('tax.write')
+  @Doc({ request: () => registrationSchema })
   @Post('sst-registrations')
   async setRegistration(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(registrationSchema, body);
@@ -170,6 +174,7 @@ export class ConfigurationController {
   }
 
   @Requires('tax.write')
+  @Doc({ request: () => prepareSchema })
   @Post('tax-returns')
   async prepare(
     @Body() body: unknown,
@@ -202,6 +207,7 @@ export class ConfigurationController {
   }
 
   @Requires('tax.write')
+  @Doc({ request: () => amendSchema })
   @Post('tax-returns/:id/submit')
   async submit(@Param('id') id: string, @Req() request: FastifyRequest) {
     const ctx = tenantContextOf(request);
@@ -216,6 +222,7 @@ export class ConfigurationController {
    * thing it amends.
    */
   @Requires('tax.write')
+  @Doc({ request: () => amendSchema })
   @Post('tax-returns/:id/amend')
   async amend(
     @Param('id') id: string,
@@ -223,7 +230,7 @@ export class ConfigurationController {
     @Headers('idempotency-key') idempotencyKey: string,
     @Req() request: FastifyRequest,
   ) {
-    const { reason } = parse(z.object({ reason: z.string().min(1).max(500) }), body);
+    const { reason } = parse(amendSchema, body);
     const ctx = tenantContextOf(request);
     return renderReturn(
       await withTenant(this.sql, ctx, (tx) =>
@@ -266,8 +273,6 @@ export class ConfigurationController {
     };
   }
 }
-
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD');
 
 const registrationSchema = z.object({
   regime: z.enum(['SST_SALES', 'SST_SERVICE']),
@@ -342,3 +347,7 @@ const withholdingRateSchema = z.object({
     .min(8, 'Cite the source — e.g. "LHDN Public Ruling 11/2018 s4.2" or "MY-SG DTA Art 12(2)"')
     .max(300),
 });
+
+const endRateSchema = z.object({ validTo: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD') });
+
+const amendSchema = z.object({ reason: z.string().min(1).max(500) });

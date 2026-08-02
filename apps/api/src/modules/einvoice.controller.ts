@@ -20,6 +20,7 @@ import {
   type Sql,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -68,6 +69,7 @@ export class EInvoiceController {
   }
 
   @Requires('tax.write')
+  @Doc({ request: () => configSchema })
   @Post('einvoice/config')
   async setConfig(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(configSchema, body);
@@ -250,6 +252,7 @@ export class EInvoiceController {
    * ---------------------------------------------------------------------------
    */
   @Requires('einvoice.submit')
+  @Doc({ request: () => eventSchema })
   @Post('einvoice/submissions/:id/events')
   async recordEvent(
     @Param('id') submissionId: string,
@@ -275,13 +278,14 @@ export class EInvoiceController {
    * accepting one that was not.
    */
   @Requires('einvoice.submit')
+  @Doc({ request: () => cancelSchema })
   @Post('einvoice/submissions/:id/cancel')
   async cancel(
     @Param('id') submissionId: string,
     @Body() body: unknown,
     @Req() request: FastifyRequest,
   ) {
-    const { reason } = parse(z.object({ reason: z.string().min(1).max(500) }), body);
+    const { reason } = parse(cancelSchema, body);
     const ctx = tenantContextOf(request);
 
     const status = await withTenant(this.sql, ctx, (tx) =>
@@ -426,3 +430,5 @@ const eventSchema = z.object({
 });
 
 export { ValidationError };
+
+const cancelSchema = z.object({ reason: z.string().min(1).max(500) });

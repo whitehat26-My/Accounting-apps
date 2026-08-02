@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Headers, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { isoDate } from '@emil/contracts';
 import { Money, isErr, validateJournalEntry, type JournalLineDraft } from '@emil/domain';
 import {
   changeAccountType,
@@ -19,6 +20,7 @@ import {
   type Sql,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -53,11 +55,7 @@ export class LedgerController {
     @Query('includeInactive') includeInactive: string | undefined,
     @Req() request: FastifyRequest,
   ) {
-    const filter = parse(
-      z.object({
-        type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']).optional(),
-        includeInactive: z.boolean().optional(),
-      }),
+    const filter = parse(listAccountsSchema,
       {
         ...(type !== undefined ? { type } : {}),
         ...(includeInactive !== undefined ? { includeInactive: includeInactive === 'true' } : {}),
@@ -76,6 +74,7 @@ export class LedgerController {
   }
 
   @Requires('org.manage')
+  @Doc({ request: () => accountSchema })
   @Post('accounts')
   async createAccount(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(accountSchema, body);
@@ -91,19 +90,14 @@ export class LedgerController {
    * deserves to be visible.
    */
   @Requires('org.manage')
+  @Doc({ request: () => updateAccountSchema })
   @Patch('accounts/:id')
   async updateAccount(
     @Param('id') id: string,
     @Body() body: unknown,
     @Req() request: FastifyRequest,
   ) {
-    const input = parse(
-      z.object({
-        name: z.string().min(1).optional(),
-        code: z.string().min(1).max(20).optional(),
-        subtype: z.string().optional(),
-        isActive: z.boolean().optional(),
-      }),
+    const input = parse(updateAccountSchema,
       body,
     );
 
@@ -112,14 +106,14 @@ export class LedgerController {
   }
 
   @Requires('org.manage')
+  @Doc({ request: () => changeTypeSchema })
   @Patch('accounts/:id/type')
   async changeType(
     @Param('id') id: string,
     @Body() body: unknown,
     @Req() request: FastifyRequest,
   ) {
-    const { type } = parse(
-      z.object({ type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']) }),
+    const { type } = parse(changeTypeSchema,
       body,
     );
 
@@ -152,17 +146,14 @@ export class LedgerController {
    * event.
    */
   @Requires('period.lock')
+  @Doc({ request: () => journalSchema })
   @Post('periods/:id/status')
   async changePeriodStatus(
     @Param('id') periodId: string,
     @Body() body: unknown,
     @Req() request: FastifyRequest,
   ) {
-    const input = parse(
-      z.object({
-        status: z.enum(['OPEN', 'CLOSED', 'LOCKED']),
-        reason: z.string().min(1).max(500).optional(),
-      }),
+    const input = parse(changePeriodStatusSchema,
       body,
     );
 
@@ -183,6 +174,7 @@ export class LedgerController {
    * in.
    */
   @Requires('journal.post')
+  @Doc({ request: () => journalSchema })
   @Post('journals')
   async postJournal(
     @Body() body: unknown,
@@ -275,6 +267,7 @@ export class LedgerController {
    * ---------------------------------------------------------------------------
    */
   @Requires('journal.post')
+  @Doc({ request: () => revaluationSchema })
   @Post('revaluations')
   async revalue(
     @Body() body: unknown,
@@ -358,8 +351,6 @@ const accountSchema = z.object({
   tags: z.array(z.string().min(1)).optional(),
 });
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD');
-
 const revaluationSchema = z.object({
   fiscalPeriodId: z.string().uuid(),
   asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
@@ -392,3 +383,22 @@ const journalSchema = z.object({
     // catching it here gives a better message than the trigger would.
     .min(2),
 });
+
+const listAccountsSchema = z.object({
+        type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']).optional(),
+        includeInactive: z.boolean().optional(),
+      });
+
+const updateAccountSchema = z.object({
+        name: z.string().min(1).optional(),
+        code: z.string().min(1).max(20).optional(),
+        subtype: z.string().optional(),
+        isActive: z.boolean().optional(),
+      });
+
+const changeTypeSchema = z.object({ type: z.enum(['ASSET', 'LIABILITY', 'EQUITY', 'INCOME', 'EXPENSE']) });
+
+const changePeriodStatusSchema = z.object({
+        status: z.enum(['OPEN', 'CLOSED', 'LOCKED']),
+        reason: z.string().min(1).max(500).optional(),
+      });

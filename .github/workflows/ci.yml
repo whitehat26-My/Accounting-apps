@@ -45,6 +45,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The contracts package is pure schema and schema-to-OpenAPI. No
+      # infrastructure, and it runs first because a break here means every
+      # request shape in the system is in question.
+      - name: Contract tests
+        run: pnpm test:contracts
+
       # The domain layer is pure, so these run without any infrastructure.
       # Property-based tests over the ledger invariants live here.
       - name: Domain tests (unit + property-based)

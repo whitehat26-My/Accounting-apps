@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Headers, Inject, Param, Post, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { decimal } from '@emil/contracts';
 import {
   createPaymentLink,
   recordSettlement,
@@ -9,6 +10,7 @@ import {
   type Sql,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -36,6 +38,7 @@ export class CollectionsController {
    * browser. Re-issuing means creating a new link.
    */
   @Requires('receipt.create')
+  @Doc({ request: () => createLinkSchema })
   @Post('invoices/:id/payment-link')
   async createLink(
     @Param('id') invoiceId: string,
@@ -43,8 +46,7 @@ export class CollectionsController {
     @Headers('idempotency-key') idempotencyKey: string,
     @Req() request: FastifyRequest,
   ) {
-    const input = parse(
-      z.object({ expiresInDays: z.number().int().min(1).max(90).optional() }),
+    const input = parse(createLinkSchema,
       body ?? {},
     );
 
@@ -89,6 +91,7 @@ export class CollectionsController {
    * is reconciliation work rather than sales work.
    */
   @Requires('bank.reconcile')
+  @Doc({ request: () => settlementSchema })
   @Post('gateways/:provider/settlements')
   async settle(
     @Param('provider') provider: string,
@@ -105,10 +108,6 @@ export class CollectionsController {
   }
 }
 
-const decimal = z
-  .string()
-  .regex(/^-?\d+(\.\d{1,4})?$/, 'Money must be a decimal string with at most 4 decimal places');
-
 const settlementSchema = z.object({
   providerBatchId: z.string().min(1),
   settlementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD'),
@@ -124,3 +123,5 @@ const settlementSchema = z.object({
     )
     .min(1),
 });
+
+const createLinkSchema = z.object({ expiresInDays: z.number().int().min(1).max(90).optional() });

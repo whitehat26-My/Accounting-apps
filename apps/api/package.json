@@ -20,7 +20,8 @@
     "postgres": "^3.4.9",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
-    "zod": "^4.1.5"
+    "zod": "^4.1.5",
+    "@emil/contracts": "workspace:*"
   },
   "devDependencies": {
     "tsx": "^4.19.2",

@@ -29,6 +29,20 @@ const item = (over: Partial<ItemMaster> = {}): ItemMaster => ({
 
 const line = (over: Partial<LineOverride> = {}): LineOverride => ({ quantity: '2', ...over });
 
+/**
+ * An item with a field genuinely ABSENT rather than set to `undefined`.
+ *
+ * `exactOptionalPropertyTypes` is on, so `{ classificationCode: undefined }` is
+ * a type error — and rightly: "present and undefined" and "absent" are
+ * different states, and the whole point of these tests is what happens when the
+ * field is not there at all.
+ */
+const itemWithout = (field: keyof ItemMaster): ItemMaster => {
+  const base = { ...item() };
+  delete (base as Record<string, unknown>)[field];
+  return base;
+};
+
 // ---------------------------------------------------------------------------
 // The gap the catalogue closes
 // ---------------------------------------------------------------------------
@@ -195,7 +209,7 @@ describe('checkItem', () => {
      * rather than as a form error. Saying so when the item is created is the
      * entire value of having the field here.
      */
-    const check = checkItem(item({ classificationCode: undefined }));
+    const check = checkItem(itemWithout('classificationCode'));
 
     expect(check.valid).toBe(true);
     expect(check.einvoiceWarnings.join(' ')).toMatch(/classification code/);

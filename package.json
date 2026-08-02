@@ -9,6 +9,7 @@
   "scripts": {
     "typecheck": "pnpm -r --parallel typecheck",
     "test": "pnpm -r test",
+    "test:contracts": "pnpm --filter @emil/contracts test",
     "test:domain": "pnpm --filter @emil/domain test",
     "test:db": "pnpm --filter @emil/db test",
     "test:api": "pnpm --filter @emil/api test",

@@ -23,7 +23,33 @@ import { PublicPayController } from './modules/public-pay.controller.js';
 import { GatewayRegistry } from './gateways/registry.js';
 import { FakeGateway } from '@emil/db';
 import { GATEWAYS } from './tokens.js';
+import { OpenApiController } from './modules/openapi.controller.js';
 import { DatabaseLifecycle } from './database.lifecycle.js';
+
+/**
+ * Every controller the application serves.
+ *
+ * Exported so `openapi/document.ts` can enumerate exactly what is mounted. A
+ * separate list for documentation would be a second source of truth and would
+ * drift the first time somebody adds a controller — which is the whole failure
+ * the generated spec exists to avoid.
+ */
+export const API_CONTROLLERS = [
+  AuthController,
+  AccountingController,
+  ContactsController,
+  CollectionsController,
+  AuditController,
+  LedgerController,
+  BankingController,
+  ConfigurationController,
+  EInvoiceController,
+  ReportsController,
+  SystemController,
+  ItemsController,
+  PublicPayController,
+  OpenApiController,
+] as const;
 
 /**
  * The middleware chain from docs/architecture/01-system-architecture.md §1.3.
@@ -49,21 +75,7 @@ import { DatabaseLifecycle } from './database.lifecycle.js';
  * ---------------------------------------------------------------------------
  */
 @Module({
-  controllers: [
-    AuthController,
-    AccountingController,
-    ContactsController,
-    CollectionsController,
-    AuditController,
-    LedgerController,
-    BankingController,
-    ConfigurationController,
-    EInvoiceController,
-    ReportsController,
-    SystemController,
-    ItemsController,
-    PublicPayController,
-  ],
+  controllers: [...API_CONTROLLERS],
   providers: [
     {
       provide: CONFIG,

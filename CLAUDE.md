@@ -38,6 +38,7 @@ environment this is developed in, and a harness that cannot start is a harness n
 
 ```
 apps/api            NestJS on Fastify — auth, RBAC, and the accounting surface
+packages/contracts  Shared Zod primitives + the OpenAPI generator
 apps/worker         Outbox relay + scheduled jobs. PostgreSQL-backed, NOT BullMQ — see below
 packages/domain     Money, ledger aggregates, TaxEngine — pure, zero IO
 packages/db         Raw SQL migrations, RLS policies, repository services
@@ -47,13 +48,23 @@ packages/db         Raw SQL migrations, RLS policies, repository services
 
 ```
 apps/web            Next.js
-packages/contracts  Zod schemas + generated OpenAPI types
 packages/ui         Shared component library
 infra               Terraform
 ```
 
-Zod schemas currently live inline in `apps/api`; there is no generated OpenAPI spec yet, so
-the "OpenAPI spec updated" line below is aspirational rather than enforced.
+**The OpenAPI spec is GENERATED, and the "OpenAPI spec updated" line below is now enforced
+rather than aspirational.** It is not a second source of truth: `apps/api/src/openapi/scan.ts`
+reflects over the same Nest metadata the router dispatches on and the same `@Requires`
+metadata `AuthGuard` reads, so a path or a permission in the document cannot disagree with
+the application. `@Doc({ request: () => schema })` attaches the schema the handler ACTUALLY
+validates with — pass the object, never a copy of it. A conformance test compares the
+document against Fastify's own router and fails on any route that is served-but-undocumented
+or documented-but-unserved, and on any route taking a body with no schema. Served at
+`GET /openapi.json`, unauthenticated.
+
+Request shapes that a client needs still live beside their controllers; `packages/contracts`
+holds the shared primitives (`decimal`, `isoDate`, `uuid`, …) so one constraint cannot mean
+two things on two routes.
 
 **The worker drains the outbox with PostgreSQL, not Redis.** The stack line above names
 BullMQ, and it is deferred rather than adopted. The outbox exists to eliminate a dual

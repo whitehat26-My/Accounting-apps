@@ -29,6 +29,7 @@ import type { ApiConfig } from '../config.js';
 import { GATEWAYS } from '../tokens.js';
 import type { GatewayRegistry } from '../gateways/registry.js';
 import { NoIdempotencyKey, Public } from '../guards/decorators.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { NotFoundError, ValidationError } from '../errors.js';
 import { actorContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -109,6 +110,7 @@ export class PublicPayController {
    * ---------------------------------------------------------------------------
    */
   @Public()
+  @Doc({ request: () => initiateSchema })
   @Post('public/pay/:token/initiate')
   async initiate(
     @Param('token') token: string,
@@ -117,11 +119,7 @@ export class PublicPayController {
     @Req() request: FastifyRequest,
   ) {
     const link = await this.requireLink(token);
-    const input = parse(
-      z.object({
-        provider: z.string().min(1),
-        returnUrl: z.string().url(),
-      }),
+    const input = parse(initiateSchema,
       body,
     );
 
@@ -180,6 +178,12 @@ export class PublicPayController {
    */
   @Public()
   @NoIdempotencyKey()
+  @Doc({
+    externalBody:
+      'The payment provider\'s own event payload, verified by signature before it is ' +
+      'parsed. This API does not define the shape — it belongs to the provider and ' +
+      'changes when they change it. Consult the provider\'s documentation.',
+  })
   @Post('public/gateways/:provider/webhook')
   async webhook(
     @Param('provider') provider: string,
@@ -310,3 +314,8 @@ function headersOf(request: FastifyRequest): Record<string, string> {
   }
   return out;
 }
+
+const initiateSchema = z.object({
+        provider: z.string().min(1),
+        returnUrl: z.string().url(),
+      });

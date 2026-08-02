@@ -20,6 +20,7 @@ import {
 import { CONFIG, SQL } from '../tokens.js';
 import type { ApiConfig } from '../config.js';
 import { Public, Requires } from '../guards/decorators.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { principalOf } from '../context/request-context.js';
 import { NotFoundError, UnauthenticatedError, ValidationError } from '../errors.js';
 import { parse } from '../validation.js';
@@ -45,6 +46,7 @@ export class AuthController {
    * membership does, which is what makes one login work across N clients.
    */
   @Public()
+  @Doc({ request: () => registration })
   @Post('register')
   async register(@Body() body: unknown) {
     const input = parse(registration, body);
@@ -64,6 +66,7 @@ export class AuthController {
    * credential the user never asked for.
    */
   @Public()
+  @Doc({ request: () => credentials })
   @Post('login')
   async login(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(credentials, body);
@@ -95,6 +98,7 @@ export class AuthController {
    * COMMITS its family revocation. Turning it into a 401 is this layer's job.
    */
   @Public()
+  @Doc({ request: () => refreshBody })
   @Post('refresh')
   async refresh(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(refreshBody, body);
@@ -119,9 +123,10 @@ export class AuthController {
    * the guard can assert it against the header.
    */
   @Public()
+  @Doc({ request: () => switchOrganisationSchema })
   @Post('switch')
   async switchOrganisation(@Body() body: unknown) {
-    const input = parse(switchBody.extend({ refreshToken: z.string().min(1) }), body);
+    const input = parse(switchOrganisationSchema, body);
 
     const session = await withUser(this.sql, null, (tx) =>
       refreshSession(tx, input.refreshToken),
@@ -160,9 +165,10 @@ export class AuthController {
   }
 
   @Public()
+  @Doc({ request: () => logoutSchema })
   @Post('logout')
   async logout(@Body() body: unknown) {
-    const input = parse(z.object({ sessionId: z.string().uuid() }), body);
+    const input = parse(logoutSchema, body);
     await withUser(this.sql, null, (tx) => revokeSession(tx, input.sessionId));
     return { revoked: true };
   }
@@ -183,24 +189,11 @@ export class AuthController {
   }
 
   @Requires('user.manage')
+  @Doc({ request: () => addMemberSchema })
   @Post('members')
   async addMember(@Body() body: unknown, @Req() request: FastifyRequest) {
     const principal = principalOf(request);
-    const input = parse(
-      z.object({
-        userId: z.string().uuid(),
-        role: z.enum([
-          'OWNER',
-          'ADMIN',
-          'ACCOUNTANT',
-          'APPROVER',
-          'BOOKKEEPER',
-          'SALES',
-          'READ_ONLY',
-          'EXTERNAL_AUDITOR',
-        ]),
-        expiresAt: z.string().datetime().optional(),
-      }),
+    const input = parse(addMemberSchema,
       body,
     );
 
@@ -224,15 +217,11 @@ export class AuthController {
   }
 
   @Requires('apikey.manage')
+  @Doc({ request: () => createApiKeySchema })
   @Post('api-keys')
   async createApiKey(@Body() body: unknown, @Req() request: FastifyRequest) {
     const principal = principalOf(request);
-    const input = parse(
-      z.object({
-        name: z.string().min(1),
-        scopes: z.array(z.string()).min(1),
-        expiresAt: z.string().datetime().optional(),
-      }),
+    const input = parse(createApiKeySchema,
       body,
     );
 
@@ -268,3 +257,28 @@ function sessionContext(request: FastifyRequest): { ip?: string; userAgent?: str
     ...(userAgent !== undefined ? { userAgent } : {}),
   };
 }
+
+const switchOrganisationSchema = switchBody.extend({ refreshToken: z.string().min(1) });
+
+const logoutSchema = z.object({ sessionId: z.string().uuid() });
+
+const addMemberSchema = z.object({
+        userId: z.string().uuid(),
+        role: z.enum([
+          'OWNER',
+          'ADMIN',
+          'ACCOUNTANT',
+          'APPROVER',
+          'BOOKKEEPER',
+          'SALES',
+          'READ_ONLY',
+          'EXTERNAL_AUDITOR',
+        ]),
+        expiresAt: z.string().datetime().optional(),
+      });
+
+const createApiKeySchema = z.object({
+        name: z.string().min(1),
+        scopes: z.array(z.string()).min(1),
+        expiresAt: z.string().datetime().optional(),
+      });

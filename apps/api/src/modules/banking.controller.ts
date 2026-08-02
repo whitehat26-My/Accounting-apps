@@ -1,6 +1,7 @@
 import { Body, Controller, Delete, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { decimal, isoDate } from '@emil/contracts';
 import {
   bankTransactions,
   bookBalance,
@@ -15,6 +16,7 @@ import {
   type Sql,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -77,6 +79,7 @@ export class BankingController {
    * auditor asks about by name.
    */
   @Requires('bank.import')
+  @Doc({ request: () => bankAccountSchema })
   @Post('bank-accounts')
   async create(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(bankAccountSchema, body);
@@ -92,11 +95,7 @@ export class BankingController {
     @Query('asOf') asOf: string | undefined,
     @Req() request: FastifyRequest,
   ) {
-    const filter = parse(
-      z.object({
-        status: z.enum(['UNRECONCILED', 'MATCHED', 'RECONCILED', 'IGNORED']).optional(),
-        asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-      }),
+    const filter = parse(transactionsSchema,
       {
         ...(status !== undefined ? { status } : {}),
         ...(asOf !== undefined ? { asOfDate: asOf } : {}),
@@ -125,6 +124,7 @@ export class BankingController {
    * rather than as plausible-looking wrong numbers found at year end.
    */
   @Requires('bank.import')
+  @Doc({ request: () => previewSchema })
   @Post('bank-accounts/:id/statements/preview')
   async preview(
     @Param('id') bankAccountId: string,
@@ -141,6 +141,7 @@ export class BankingController {
   // ---- Reconciliation ------------------------------------------------------
 
   @Requires('bank.reconcile')
+  @Doc({ request: () => matchSchema })
   @Post('bank-transactions/:id/match')
   async match(
     @Param('id') bankTransactionId: string,
@@ -163,6 +164,7 @@ export class BankingController {
    * later.
    */
   @Requires('bank.reconcile')
+  @Doc({ request: () => removeMatchSchema })
   @Delete('reconciliation-matches/:id')
   async removeMatch(
     @Param('id') matchId: string,
@@ -172,7 +174,7 @@ export class BankingController {
     // Keyed on the MATCH, not the bank line. A line can carry several matches
     // when one payment settles against a split, and "undo the match" has to say
     // which one.
-    const { reason } = parse(z.object({ reason: z.string().min(1).max(500) }), body ?? {});
+    const { reason } = parse(removeMatchSchema, body ?? {});
     const ctx = tenantContextOf(request);
     return withTenant(this.sql, ctx, (tx) => unmatch(tx, ctx, matchId, reason));
   }
@@ -185,6 +187,7 @@ export class BankingController {
    * the statement, which is evidence.
    */
   @Requires('journal.post')
+  @Doc({ request: () => journalFromLineSchema })
   @Post('bank-transactions/:id/journal')
   async journalFromLine(
     @Param('id') bankTransactionId: string,
@@ -192,14 +195,7 @@ export class BankingController {
     @Headers('idempotency-key') idempotencyKey: string,
     @Req() request: FastifyRequest,
   ) {
-    const input = parse(
-      z.object({
-        // The expense or income account the other side of the bank line
-        // belongs in. Bank charges, interest received, a direct debit.
-        accountId: z.string().uuid(),
-        description: z.string().optional(),
-        contactId: z.string().uuid().optional(),
-      }),
+    const input = parse(journalFromLineSchema,
       body,
     );
 
@@ -218,17 +214,14 @@ export class BankingController {
    * `RECONCILIATION_COMPLETED` financial event in the same transaction.
    */
   @Requires('bank.reconcile')
+  @Doc({ request: () => debitNoteSchema })
   @Post('bank-accounts/:id/reconciliation')
   async complete(
     @Param('id') bankAccountId: string,
     @Body() body: unknown,
     @Req() request: FastifyRequest,
   ) {
-    const input = parse(
-      z.object({
-        periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-      }),
+    const input = parse(completeSchema,
       body,
     );
 
@@ -241,6 +234,7 @@ export class BankingController {
   // ---- Debit notes ---------------------------------------------------------
 
   @Requires('debitnote.create')
+  @Doc({ request: () => debitNoteSchema })
   @Post('debit-notes')
   async issueDebitNote(
     @Body() body: unknown,
@@ -254,12 +248,6 @@ export class BankingController {
     );
   }
 }
-
-const decimal = z
-  .string()
-  .regex(/^-?\d+(\.\d{1,4})?$/, 'Money must be a decimal string with at most 4 decimal places');
-
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD');
 
 const bankAccountSchema = z.object({
   name: z.string().min(1),
@@ -332,3 +320,23 @@ const debitNoteSchema = z.object({
     .min(1),
   allocations: z.array(z.object({ billId: z.string().uuid(), amount: decimal })).optional(),
 });
+
+const transactionsSchema = z.object({
+        status: z.enum(['UNRECONCILED', 'MATCHED', 'RECONCILED', 'IGNORED']).optional(),
+        asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+      });
+
+const removeMatchSchema = z.object({ reason: z.string().min(1).max(500) });
+
+const journalFromLineSchema = z.object({
+        // The expense or income account the other side of the bank line
+        // belongs in. Bank charges, interest received, a direct debit.
+        accountId: z.string().uuid(),
+        description: z.string().optional(),
+        contactId: z.string().uuid().optional(),
+      });
+
+const completeSchema = z.object({
+        periodStart: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        periodEnd: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+      });

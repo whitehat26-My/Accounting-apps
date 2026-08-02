@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { decimal, isoDate, quantity } from '@emil/contracts';
 import type { AgeingReport } from '@emil/domain';
 import {
   approvalFor,
@@ -24,6 +25,7 @@ import {
   type Sql,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { principalOf, tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -60,6 +62,7 @@ export class AccountingController {
   // ---- Sales --------------------------------------------------------------
 
   @Requires('invoice.create')
+  @Doc({ request: () => invoiceSchema })
   @Post('invoices')
   async issueInvoice(
     @Body() body: unknown,
@@ -90,6 +93,7 @@ export class AccountingController {
   }
 
   @Requires('receipt.create')
+  @Doc({ request: () => receiptSchema })
   @Post('receipts')
   async recordReceipt(
     @Body() body: unknown,
@@ -102,6 +106,7 @@ export class AccountingController {
   }
 
   @Requires('creditnote.create')
+  @Doc({ request: () => creditNoteSchema })
   @Post('credit-notes')
   async issueCreditNote(
     @Body() body: unknown,
@@ -118,6 +123,7 @@ export class AccountingController {
   // ---- Purchases ----------------------------------------------------------
 
   @Requires('bill.create')
+  @Doc({ request: () => billSchema })
   @Post('bills')
   async enterBill(
     @Body() body: unknown,
@@ -146,6 +152,7 @@ export class AccountingController {
   }
 
   @Requires('payment.create')
+  @Doc({ request: () => supplierPaymentSchema })
   @Post('supplier-payments')
   async paySupplier(
     @Body() body: unknown,
@@ -190,6 +197,7 @@ export class AccountingController {
   }
 
   @Requires('bill.approve')
+  @Doc({ request: () => decideApprovalSchema })
   @Post('bills/:id/approval')
   async decideApproval(
     @Param('id') billId: string,
@@ -197,12 +205,7 @@ export class AccountingController {
     @Req() request: FastifyRequest,
   ) {
     const principal = principalOf(request);
-    const input = parse(
-      z.object({
-        sequence: z.number().int().min(1),
-        decision: z.enum(['APPROVE', 'REJECT']),
-        comment: z.string().optional(),
-      }),
+    const input = parse(decideApprovalSchema,
       body,
     );
 
@@ -222,19 +225,10 @@ export class AccountingController {
   }
 
   @Requires('org.manage')
+  @Doc({ request: () => statementSchema })
   @Post('approval-rules')
   async createApprovalRule(@Body() body: unknown, @Req() request: FastifyRequest) {
-    const input = parse(
-      z.object({
-        name: z.string().min(1),
-        minAmount: decimal,
-        maxAmount: decimal.optional(),
-        requiredRole: z.enum([
-          'OWNER', 'ADMIN', 'ACCOUNTANT', 'APPROVER',
-          'BOOKKEEPER', 'SALES', 'READ_ONLY', 'EXTERNAL_AUDITOR',
-        ]),
-        sequence: z.number().int().min(1),
-      }),
+    const input = parse(createApprovalRuleSchema,
       body,
     );
 
@@ -245,6 +239,7 @@ export class AccountingController {
   // ---- Banking ------------------------------------------------------------
 
   @Requires('bank.import')
+  @Doc({ request: () => statementSchema })
   @Post('bank-accounts/:id/statements')
   async importStatement(
     @Param('id') bankAccountId: string,
@@ -350,14 +345,6 @@ export class AccountingController {
 // an IEEE-754 double, and 0.1 + 0.2 is not 0.3 — accepting one would put a
 // float in the one place this system has been careful to keep them out of.
 // ---------------------------------------------------------------------------
-
-const decimal = z
-  .string()
-  .regex(/^-?\d+(\.\d{1,4})?$/, 'Money must be a decimal string with at most 4 decimal places');
-
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD');
-
-const quantity = z.string().regex(/^\d+(\.\d{1,4})?$/, 'Quantity must be a decimal string');
 
 /**
  * One document line.
@@ -529,3 +516,19 @@ function renderAgeing(report: AgeingReport) {
   };
 }
 
+const decideApprovalSchema = z.object({
+        sequence: z.number().int().min(1),
+        decision: z.enum(['APPROVE', 'REJECT']),
+        comment: z.string().optional(),
+      });
+
+const createApprovalRuleSchema = z.object({
+        name: z.string().min(1),
+        minAmount: decimal,
+        maxAmount: decimal.optional(),
+        requiredRole: z.enum([
+          'OWNER', 'ADMIN', 'ACCOUNTANT', 'APPROVER',
+          'BOOKKEEPER', 'SALES', 'READ_ONLY', 'EXTERNAL_AUDITOR',
+        ]),
+        sequence: z.number().int().min(1),
+      });

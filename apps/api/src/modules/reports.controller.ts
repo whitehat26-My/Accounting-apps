@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
+import { isoDate, uuid } from '@emil/contracts';
 import {
   toCsv,
   type CashFlowStatement,
@@ -23,6 +24,7 @@ import {
   type Sql,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
@@ -156,6 +158,7 @@ export class ReportsController {
    * including ones already sent to a bank.
    */
   @Requires('org.manage')
+  @Doc({ request: () => classificationSchema })
   @Post('reports/cash-flow/classifications')
   async classify(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(classificationSchema, body);
@@ -273,8 +276,6 @@ export class ReportsController {
 // Schemas
 // ---------------------------------------------------------------------------
 
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD');
-const uuid = z.string().uuid();
 const positiveInt = z.coerce.number().int().positive().max(100_000);
 const module_ = z.enum(['SALES', 'PURCHASES', 'BANKING', 'MANUAL', 'SYSTEM']);
 
