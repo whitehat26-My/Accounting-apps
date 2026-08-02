@@ -14,7 +14,7 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0031`, 134 HTTP routes, 1,301 tests
+Last reconciled against the tree: migration `0031`, 135 HTTP routes, 1,308 tests
 (610 domain · 506 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
@@ -211,8 +211,14 @@ composed, worked manually over WhatsApp today; a transport handler flips the sam
   and the pass cancels queued reminders for since-paid invoices FIRST — the system must
   never chase settled money. An old invoice discovered late gets ONE owner alert, not a
   barrage.
-- **Cash position + 30/60/90-day forecast** — NOT STARTED, buildable now from AR/AP due
-  dates and recurring patterns. Pure domain + one screen.
+- **Cash position + 30/60/90-day forecast — BUILT** (`packages/domain/src/cash-forecast.ts`,
+  `packages/db/src/cash-forecast-data.ts`, `GET /v1/reports/cash-forecast`, Today-page card).
+  Opening cash from the `cash_and_bank` account-tag rollup; invoices due IN, bills due OUT,
+  cumulative 30/60/90 windows. One deliberate asymmetry: overdue payables count as immediate
+  outflows in EVERY window (the debt exists now), overdue receivables count in NO window (a
+  late payer has demonstrated their timing is unknown) — they are reported separately as
+  upside to chase. No probability modelling, no seasonality: only dated commitments, because
+  a plausible wrong forecast is worse than an explicit gap.
 - **Weekly digest ("anything off?")** — NOT STARTED, buildable now: worker job compiling
   the week's takings/expenses/unpaid + anomaly flags, stored as a report; emailed when
   §4.4 unblocks.

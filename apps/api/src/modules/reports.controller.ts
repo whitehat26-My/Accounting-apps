@@ -9,6 +9,7 @@ import {
   type RenderedReport,
 } from '@emil/domain';
 import {
+  cashForecast,
   cashFlowStatement,
   equityStatement,
   generalLedger,
@@ -102,6 +103,41 @@ export class ReportsController {
    * see it. Returning the numbers and hiding the doubt is the failure mode this
    * whole slice is built to avoid.
    */
+  /**
+   * 30/60/90-day cash forecast from dated commitments only — overdue
+   * receivables reported as unknown-timing upside, never spent in advance.
+   */
+  @Requires('report.read')
+  @Get('reports/cash-forecast')
+  async cashForecastReport(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    const today = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    const forecast = await withTenant(this.sql, ctx, (tx) => cashForecast(tx, ctx, today));
+
+    return {
+      asOf: forecast.asOf,
+      openingCash: forecast.openingCash.toDecimalString(),
+      horizons: forecast.horizons.map((h) => ({
+        days: h.days,
+        until: h.until,
+        inflows: h.inflows.toDecimalString(),
+        outflows: h.outflows.toDecimalString(),
+        net: h.net.toDecimalString(),
+        closing: h.closing.toDecimalString(),
+      })),
+      overdueReceivables: {
+        total: forecast.overdueReceivables.total.toDecimalString(),
+        count: forecast.overdueReceivables.count,
+      },
+      overduePayables: {
+        total: forecast.overduePayables.total.toDecimalString(),
+        count: forecast.overduePayables.count,
+      },
+    };
+  }
+
   @Requires('report.read')
   @Get('reports/cash-flow')
   async cashFlow(

@@ -12,6 +12,7 @@ export * from './inventory.js';
 export * from './serials.js';
 export * from './repair.js';
 export * from './dunning.js';
+export * from './cash-forecast.js';
 export * from './account.js';
 export * from './journal-entry.js';
 export * from './tax.js';

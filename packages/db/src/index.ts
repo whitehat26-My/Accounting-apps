@@ -33,4 +33,5 @@ export * from './repair.js';
 export * from './onboarding.js';
 export * from './document-data.js';
 export * from './dunning.js';
+export * from './cash-forecast-data.js';
 export { migrate } from './migrate.js';

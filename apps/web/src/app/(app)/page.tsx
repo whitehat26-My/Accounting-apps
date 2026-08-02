@@ -13,6 +13,12 @@ import { Card } from '@/components/ui';
  * what the day actually made.
  */
 
+interface Forecast {
+  openingCash: string;
+  horizons: { days: number; until: string; inflows: string; outflows: string; closing: string }[];
+  overdueReceivables: { total: string; count: number };
+}
+
 interface Takings {
   date: string;
   byMethod: { method: string; depositAccount: string; total: string; count: number }[];
@@ -31,7 +37,14 @@ export default function TodayPage() {
     refetchInterval: 60_000,
   });
 
+  const forecast = useQuery({
+    queryKey: ['cash-forecast'],
+    queryFn: () => api<Forecast>('/v1/reports/cash-forecast'),
+    refetchInterval: 300_000,
+  });
+
   const t = takings.data;
+  const f = forecast.data;
 
   return (
     <div className="space-y-4">
@@ -43,6 +56,52 @@ export default function TodayPage() {
         <Stat label="Cost of goods" value={t ? rm(t.costOfGoodsSold) : '—'} />
         <Stat label="Gross profit" value={t ? rm(t.grossProfit) : '—'} highlight />
       </div>
+
+      <Card title="Cash — today and ahead">
+        {f ? (
+          <div className="space-y-3">
+            <div className="flex items-baseline justify-between">
+              <span className="text-sm text-neutral-500">In the bank now</span>
+              <span className="text-lg font-bold">{rm(f.openingCash)}</span>
+            </div>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-neutral-500">
+                  <th className="pb-1">Horizon</th>
+                  <th className="pb-1 text-right">Coming in</th>
+                  <th className="pb-1 text-right">Going out</th>
+                  <th className="pb-1 text-right">Cash then</th>
+                </tr>
+              </thead>
+              <tbody>
+                {f.horizons.map((h) => (
+                  <tr key={h.days} className="border-t border-neutral-100">
+                    <td className="py-1.5">{h.days} days</td>
+                    <td className="py-1.5 text-right text-emerald-700">{rm(h.inflows)}</td>
+                    <td className="py-1.5 text-right text-red-600">{rm(h.outflows)}</td>
+                    <td
+                      className={`py-1.5 text-right font-semibold ${
+                        h.closing.startsWith('-') ? 'text-red-700' : ''
+                      }`}
+                    >
+                      {rm(h.closing)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {f.overdueReceivables.count > 0 ? (
+              <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                {rm(f.overdueReceivables.total)} across {f.overdueReceivables.count} overdue
+                invoice{f.overdueReceivables.count > 1 ? 's' : ''} is NOT counted above —
+                late payers have unknown timing. Chase them in Collections.
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="text-sm text-neutral-500">Loading…</p>
+        )}
+      </Card>
 
       <Card title="Drawer — by payment method">
         {t && t.byMethod.length > 0 ? (

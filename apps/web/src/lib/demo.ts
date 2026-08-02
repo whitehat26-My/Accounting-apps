@@ -296,6 +296,22 @@ export function demoApi(
     };
   }
 
+  if (p === '/v1/reports/cash-forecast') {
+    // Sample figures, like everything else here. The real route computes from
+    // the ledger and the open documents' due dates.
+    return {
+      asOf: today(),
+      openingCash: '18540.0000',
+      horizons: [
+        { days: 30, until: today(), inflows: '25300.0000', outflows: '9800.0000', net: '15500.0000', closing: '34040.0000' },
+        { days: 60, until: today(), inflows: '31200.0000', outflows: '21500.0000', net: '9700.0000', closing: '28240.0000' },
+        { days: 90, until: today(), inflows: '44800.0000', outflows: '24100.0000', net: '20700.0000', closing: '39240.0000' },
+      ],
+      overdueReceivables: { total: '7000.0000', count: 2 },
+      overduePayables: { total: '0.0000', count: 0 },
+    };
+  }
+
   // ---- stock ---------------------------------------------------------------
   if (p === '/v1/stock') {
     return {
