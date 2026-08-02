@@ -130,6 +130,7 @@ not), OAuth2 clients, invitation email delivery, and Redis-backed rate limiting.
 
 **Key features**
 - **Quotes** → **Sales Orders** (optional) → **Invoices** → **Credit Notes**; each conversion carries lines forward
+- **Crediting an invoice reads every figure off the invoice** — price, revenue account, tax code, classification code — rather than asking a user to retype them. Two dates, deliberately, because there are two questions: the TAX RATE follows the ORIGINAL SUPPLY's tax point, and the RETURN PERIOD follows the credit note's own date. Collapsing them made every invoice issued before Malaysia's 2024 6%→8% service-tax change **impossible to credit at all** — the credit computed at today's rate exceeded the invoice total and the over-credit guard refused the document, blaming the amount rather than the rate. Over-crediting is checked per LINE: crediting one line twice and another not at all nets to the right document total and is two wrong lines.
 - **Recurring invoices**: schedule (daily/weekly/monthly/quarterly/annual), end condition, auto-issue or draft-for-review, placeholder substitution (period, month name), auto-send on issue
 - **Payment reminders**: configurable cadence (e.g. 3 days before due, on due date, +7, +14, +30), per-customer opt-out, escalating templates, batch statement-of-account send
 - **Online payment links** on invoice PDFs and emails — FPX, DuitNow QR, DuitNow Transfer, cards; public tokenised pay page with no login

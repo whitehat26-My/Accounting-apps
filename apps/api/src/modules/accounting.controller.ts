@@ -13,6 +13,7 @@ import {
   checkBankInvariant,
   enterBill,
   importStatement,
+  creditFromInvoice,
   issueCreditNote,
   issueInvoice,
   outstandingPayables,
@@ -103,6 +104,35 @@ export class AccountingController {
     const input = parse(receiptSchema, body);
     const ctx = this.ctx(request);
     return withTenant(this.sql, ctx, (tx) => recordReceipt(tx, ctx, { ...input, idempotencyKey }));
+  }
+
+  /**
+   * Credit an invoice from the invoice itself.
+   *
+   * The route a user should always take when there IS an invoice: every figure
+   * is read off the original, over-crediting is refused per line, and the tax
+   * rate is the one that was charged rather than today's. `POST /v1/credit-notes`
+   * remains for a standalone customer credit, which corrects no particular
+   * supply and therefore has no original to read.
+   */
+  @Requires('creditnote.create')
+  @Doc({ request: () => creditFromInvoiceSchema })
+  @Post('invoices/:id/credit-note')
+  async creditInvoice(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = parse(creditFromInvoiceSchema, body);
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      creditFromInvoice(tx, ctx, {
+        ...input,
+        invoiceId: parse(uuidParam, id),
+        idempotencyKey,
+      }),
+    );
   }
 
   @Requires('creditnote.create')
@@ -531,4 +561,23 @@ const createApprovalRuleSchema = z.object({
     'BOOKKEEPER', 'SALES', 'READ_ONLY', 'EXTERNAL_AUDITOR',
   ]),
   sequence: z.number().int().min(1),
+});
+
+const uuidParam = z.string().uuid();
+
+const creditFromInvoiceSchema = z.object({
+  creditDate: isoDate,
+  reason: z.enum(['RETURN', 'OVERCHARGE', 'DISCOUNT', 'CANCELLATION', 'BAD_DEBT', 'OTHER']),
+  reasonDetail: z.string().max(500).optional(),
+  /*
+   * Omit to credit everything not already credited. Per-line quantities are
+   * how a partial return is expressed — and the quantity is the ONLY thing a
+   * caller may choose. Price, account, tax code and classification all come
+   * from the original, because a credit that differs from the sale in any of
+   * them is not a reversal of that sale.
+   */
+  lines: z
+    .array(z.object({ invoiceLineId: uuidParam, quantity: quantity.optional() }))
+    .min(1)
+    .optional(),
 });

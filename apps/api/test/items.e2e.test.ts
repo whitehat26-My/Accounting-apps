@@ -225,3 +225,86 @@ describe('invoicing from the catalogue', () => {
     expect(response.body['total']).toBe('100.0000');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Crediting an invoice from the invoice
+// ---------------------------------------------------------------------------
+
+describe('POST /v1/invoices/:id/credit-note', () => {
+  it('credits the whole invoice with only a date and a reason', async () => {
+    const item = await createItem();
+
+    const invoice = await call(api, {
+      method: 'POST',
+      ...as('/v1/invoices'),
+      idempotencyKey: randomUUID(),
+      body: {
+        contactId: tenant.customerId,
+        issueDate: '2026-08-05',
+        lines: [{ itemId: item['id'], quantity: '2' }],
+      },
+    });
+
+    const credit = await call(api, {
+      method: 'POST',
+      ...as(`/v1/invoices/${invoice.body['id'] as string}/credit-note`),
+      idempotencyKey: randomUUID(),
+      body: { creditDate: '2026-08-06', reason: 'RETURN' },
+    });
+
+    expect(credit.status, JSON.stringify(credit.body)).toBe(201);
+    // Nothing was retyped, and the totals match the original exactly.
+    expect(credit.body['total']).toBe(invoice.body['total']);
+  });
+
+  it('refuses to credit more of a line than remains', async () => {
+    const item = await createItem();
+
+    const invoice = await call(api, {
+      method: 'POST',
+      ...as('/v1/invoices'),
+      idempotencyKey: randomUUID(),
+      body: {
+        contactId: tenant.customerId,
+        issueDate: '2026-08-05',
+        lines: [{ itemId: item['id'], quantity: '2' }],
+      },
+    });
+
+    const [line] = await api.admin<{ id: string }[]>`
+        SELECT id FROM invoice_line
+         WHERE tenant_id = ${tenant.tenantId}
+           AND invoice_id = ${invoice.body['id'] as string}
+    `;
+
+    const response = await call(api, {
+      method: 'POST',
+      ...as(`/v1/invoices/${invoice.body['id'] as string}/credit-note`),
+      idempotencyKey: randomUUID(),
+      body: {
+        creditDate: '2026-08-06',
+        reason: 'RETURN',
+        lines: [{ invoiceLineId: line!.id, quantity: '5' }],
+      },
+    });
+
+    expect(response.status).toBe(422);
+    expect(String(response.body['message'])).toMatch(/only 2 remains uncredited/);
+  });
+
+  it('answers 404 for another tenant’s invoice, not 403', async () => {
+    const other = await seedTenant(api.admin, 'Credit Other Sdn Bhd');
+    const [theirs] = await api.admin<{ id: string }[]>`
+        SELECT id FROM invoice WHERE tenant_id = ${other.tenantId} LIMIT 1
+    `;
+
+    const response = await call(api, {
+      method: 'POST',
+      ...as(`/v1/invoices/${theirs?.id ?? randomUUID()}/credit-note`),
+      idempotencyKey: randomUUID(),
+      body: { creditDate: '2026-08-06', reason: 'RETURN' },
+    });
+
+    expect(response.status).toBe(404);
+  });
+});

@@ -277,3 +277,221 @@ export function negateTaxAmounts(
 }
 
 export type { Currency };
+
+// ---------------------------------------------------------------------------
+// Crediting from the original document
+// ---------------------------------------------------------------------------
+
+/**
+ * One line of the invoice being credited, as the deriver sees it.
+ *
+ * `quantity` is a decimal STRING, matching how it travels everywhere else in
+ * this codebase — see `document.ts` on why quantities are scaled integers
+ * internally and strings at every boundary.
+ */
+export interface CreditableLine {
+  readonly invoiceLineId: string;
+  readonly lineNo: number;
+  readonly description: string;
+  readonly quantity: string;
+  readonly unitPrice: Money;
+  readonly accountId: string;
+  readonly taxCodeId: string;
+  readonly discountBasisPoints?: number;
+  readonly classificationCode?: string;
+  readonly itemId?: string;
+  /** Quantity already reversed by earlier credit notes against this line. */
+  readonly alreadyCredited: string;
+}
+
+/** What the caller wants to credit. Omit `lines` to credit the whole invoice. */
+export interface CreditSelection {
+  readonly lines?: readonly { invoiceLineId: string; quantity?: string }[];
+}
+
+export interface DerivedCreditLine {
+  readonly sourceInvoiceLineId: string;
+  readonly description: string;
+  readonly quantity: string;
+  readonly unitPrice: Money;
+  readonly accountId: string;
+  readonly taxCodeId: string;
+  readonly discountBasisPoints?: number;
+  readonly classificationCode?: string;
+  readonly itemId?: string;
+}
+
+export type CreditDerivationViolation =
+  | { readonly code: 'NO_SUCH_INVOICE_LINE'; readonly invoiceLineId: string }
+  | { readonly code: 'NOTHING_TO_CREDIT' }
+  | {
+      readonly code: 'EXCEEDS_REMAINING';
+      readonly invoiceLineId: string;
+      readonly requested: string;
+      readonly remaining: string;
+    }
+  | { readonly code: 'NON_POSITIVE_QUANTITY'; readonly invoiceLineId: string; readonly quantity: string };
+
+/** Quantities are decimal strings; compare them as scaled integers, not floats. */
+const QUANTITY_SCALE = 4;
+
+function toScaled(value: string): bigint | null {
+  const trimmed = value.trim();
+  if (!/^\d+(\.\d+)?$/.test(trimmed)) return null;
+
+  const [whole, fraction = ''] = trimmed.split('.');
+  if (fraction.length > QUANTITY_SCALE) return null;
+
+  return BigInt(`${whole}${fraction.padEnd(QUANTITY_SCALE, '0')}`);
+}
+
+function fromScaled(units: bigint): string {
+  const negative = units < 0n;
+  const digits = (negative ? -units : units).toString().padStart(QUANTITY_SCALE + 1, '0');
+  const whole = digits.slice(0, -QUANTITY_SCALE);
+  const fraction = digits.slice(-QUANTITY_SCALE).replace(/0+$/, '');
+  return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
+}
+
+/**
+ * Build a credit note's lines from the invoice it corrects.
+ *
+ * ---------------------------------------------------------------------------
+ * EVERY FIGURE COMES FROM THE ORIGINAL. THAT IS THE ENTIRE POINT.
+ *
+ * A credit note reverses a supply that already happened, so its price, account,
+ * tax code and classification are the ones that supply carried — not today's.
+ * Retyping them by hand, which is what this system required until now, means:
+ *
+ *   * a price typed at today's list rather than what the customer was charged,
+ *     with the difference landing in revenue and nothing flagging it;
+ *   * a different tax code, so the SST reversed is not the SST charged;
+ *   * a different revenue account, so the credit lands somewhere the sale did
+ *     not and both accounts are wrong by the same amount.
+ *
+ * The RATE is a separate matter and is not decided here: it follows from the
+ * original supply's tax point, which the caller passes to the tax engine. See
+ * migration 0023 — computing a 2023 supply's reversal at 2026's rate is what
+ * made pre-2024 invoices impossible to credit at all.
+ * ---------------------------------------------------------------------------
+ *
+ * Over-crediting is refused PER LINE rather than only on the document total.
+ * A document-level check passes happily when one line is credited twice and
+ * another not at all, which nets to the right total and is two wrong lines.
+ */
+export function deriveCreditLines(
+  invoiceLines: readonly CreditableLine[],
+  selection: CreditSelection = {},
+): Result<DerivedCreditLine[], CreditDerivationViolation[]> {
+  const violations: CreditDerivationViolation[] = [];
+  const byId = new Map(invoiceLines.map((l) => [l.invoiceLineId, l]));
+
+  /*
+   * No selection means the whole invoice — specifically, everything not yet
+   * credited, so crediting the rest of a partly-credited invoice is an
+   * ordinary thing to do rather than an error.
+   *
+   * Whether the caller NAMED the lines changes what a fully-credited line
+   * means, which is why the distinction is kept rather than normalised away:
+   *
+   *   * implicit — skip it. "Credit whatever is left" over a line with nothing
+   *     left is not a mistake.
+   *   * explicit — refuse. Naming a line and getting silence back is how a user
+   *     concludes the credit went through when it did not, and reporting
+   *     "every line has already been credited" when only THIS one has is a
+   *     false statement about the rest of the invoice.
+   */
+  const explicit = selection.lines !== undefined;
+  const requested =
+    selection.lines ??
+    invoiceLines.map((l) => ({ invoiceLineId: l.invoiceLineId, quantity: undefined }));
+
+  const derived: DerivedCreditLine[] = [];
+
+  for (const request of requested) {
+    const line = byId.get(request.invoiceLineId);
+    if (!line) {
+      violations.push({ code: 'NO_SUCH_INVOICE_LINE', invoiceLineId: request.invoiceLineId });
+      continue;
+    }
+
+    const invoiced = toScaled(line.quantity);
+    const credited = toScaled(line.alreadyCredited);
+    if (invoiced === null || credited === null) {
+      violations.push({
+        code: 'NON_POSITIVE_QUANTITY',
+        invoiceLineId: line.invoiceLineId,
+        quantity: line.quantity,
+      });
+      continue;
+    }
+
+    const remaining = invoiced - credited;
+
+    let wanted: bigint;
+    if (request.quantity === undefined) {
+      if (remaining <= 0n) {
+        // Named explicitly, and there is nothing left of it — see above.
+        if (explicit) {
+          violations.push({
+            code: 'EXCEEDS_REMAINING',
+            invoiceLineId: line.invoiceLineId,
+            requested: fromScaled(invoiced),
+            remaining: '0',
+          });
+        }
+        continue;
+      }
+      wanted = remaining;
+    } else {
+      const parsed = toScaled(request.quantity);
+      if (parsed === null || parsed <= 0n) {
+        violations.push({
+          code: 'NON_POSITIVE_QUANTITY',
+          invoiceLineId: line.invoiceLineId,
+          quantity: request.quantity,
+        });
+        continue;
+      }
+      wanted = parsed;
+    }
+
+    if (wanted > remaining) {
+      violations.push({
+        code: 'EXCEEDS_REMAINING',
+        invoiceLineId: line.invoiceLineId,
+        requested: fromScaled(wanted),
+        remaining: fromScaled(remaining > 0n ? remaining : 0n),
+      });
+      continue;
+    }
+
+    derived.push({
+      sourceInvoiceLineId: line.invoiceLineId,
+      description: line.description,
+      quantity: fromScaled(wanted),
+      unitPrice: line.unitPrice,
+      accountId: line.accountId,
+      taxCodeId: line.taxCodeId,
+      ...(line.discountBasisPoints !== undefined
+        ? { discountBasisPoints: line.discountBasisPoints }
+        : {}),
+      ...(line.classificationCode !== undefined
+        ? { classificationCode: line.classificationCode }
+        : {}),
+      ...(line.itemId !== undefined ? { itemId: line.itemId } : {}),
+    });
+  }
+
+  if (violations.length > 0) return err(violations);
+
+  if (derived.length === 0) {
+    // Distinguished from an empty request: every line was already fully
+    // credited. Silently issuing a zero-value credit note would be worse — it
+    // allocates nothing, reverses nothing, and consumes a document number that
+    // an auditor will later ask about.
+    return err([{ code: 'NOTHING_TO_CREDIT' }]);
+  }
+
+  return ok(derived);
+}
