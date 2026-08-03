@@ -17,3 +17,62 @@ tbody tr {
 tbody tr:hover {
   background-color: rgb(248 250 252 / 0.9);
 }
+
+/* ---------------------------------------------------------------------------
+ * Sign-in motion.
+ *
+ * A slow drift across the photo of the shop, and content that arrives rather
+ * than appearing. Both are decoration: nothing here moves a figure, gates a
+ * control, or delays a form the user could otherwise be typing into — the
+ * card is interactive from the first frame and the animation only affects
+ * how it looks getting there.
+ *
+ * Every rule is switched off wholesale under prefers-reduced-motion below.
+ * Vestibular disorders make a 24-second pan genuinely unpleasant, and a
+ * sign-in page is not a thing anyone chose to watch.
+ * ------------------------------------------------------------------------ */
+
+@keyframes emil-drift {
+  /* Starts already inside the frame so no edge is ever exposed mid-pan. */
+  0% {
+    transform: scale(1.08) translate3d(0, 0, 0);
+  }
+  50% {
+    transform: scale(1.14) translate3d(-1.5%, -1%, 0);
+  }
+  100% {
+    transform: scale(1.08) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes emil-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.emil-drift {
+  animation: emil-drift 38s ease-in-out infinite;
+  will-change: transform;
+}
+
+.emil-rise {
+  animation: emil-rise 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .emil-drift,
+  .emil-rise {
+    animation: none;
+  }
+  /* Without the animation the rise class would leave content at opacity 0. */
+  .emil-rise {
+    opacity: 1;
+    transform: none;
+  }
+}

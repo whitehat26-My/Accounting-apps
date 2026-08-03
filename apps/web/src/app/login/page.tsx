@@ -7,6 +7,7 @@ import { Button, ErrorNote, Field, Input } from '@/components/ui';
 import { Icon } from '@/components/icons';
 import mark from '@/brand/mark.png';
 import wordmark from '@/brand/wordmark.png';
+import shop from '@/brand/shop.jpg';
 
 /**
  * Sign in / register, then land somewhere useful.
@@ -17,17 +18,22 @@ import wordmark from '@/brand/wordmark.png';
  * is brand new, so they go to /setup carrying the refresh token. Several: pick.
  *
  * ---------------------------------------------------------------------------
- * THE DOOR SHOULD LOOK LIKE THE BUILDING.
+ * THE DOOR SHOWS THE SHOP.
  *
- * A lone form card on an empty page tells a first-time user nothing — not what
- * this is, not that they are in the right place. So the sign-in screen wears
- * the app's own furniture: the dark rail from `(app)/layout.tsx`, the shop's
- * mark, and three plain sentences about what the system does. The form sits on
- * the light side, exactly where the work will be once they are in.
+ * The background is a photograph of Shah G Tech itself — the signboard, the
+ * counter, the floor. Nobody signing in has to wonder whether they are in the
+ * right system, and the five people who use this see their own workplace
+ * rather than a stock gradient.
  *
- * The brand panel is `lg:` and up. Below that — iPad portrait, phones — it
- * collapses to a centred card, because splitting 768px in half leaves two
- * cramped columns rather than one comfortable one.
+ * A photograph behind a form is only ever as good as its scrim. Two layers
+ * sit over it: a heavy left-to-right gradient so the headline has near-black
+ * behind it, and a flat wash so the busiest part of the shop floor cannot
+ * fight the form card. The card itself stays opaque white — a frosted panel
+ * over a photo this detailed makes small print work to read, and this is
+ * where somebody types a password.
+ *
+ * Below lg — iPad portrait, phones — the layout collapses to one column,
+ * because splitting 768px in half leaves two cramped ones. The photo stays.
  * ---------------------------------------------------------------------------
  */
 
@@ -117,7 +123,7 @@ export default function LoginPage() {
             <button
               key={org.tenantId}
               onClick={() => void enter(org.tenantId, org.name, refreshToken)}
-              className="flex w-full items-center justify-between gap-3 rounded-xl bg-white px-4 py-3.5 text-left shadow-sm ring-1 ring-slate-900/5 transition-colors hover:bg-emerald-50 hover:ring-emerald-200"
+              className="flex w-full items-center justify-between gap-3 rounded-xl bg-white px-4 py-3.5 text-left shadow-lg shadow-black/10 ring-1 ring-slate-900/5 transition-colors hover:bg-emerald-50 hover:ring-emerald-200"
             >
               <span className="font-medium text-slate-900">{org.name}</span>
               <span className="text-xs text-slate-500">{org.role}</span>
@@ -139,7 +145,7 @@ export default function LoginPage() {
         }
       />
 
-      <div className="rounded-2xl bg-white p-6 shadow-sm ring-1 ring-slate-900/5">
+      <div className="rounded-2xl bg-white p-6 shadow-2xl shadow-black/25 ring-1 ring-slate-900/5">
         <form
           className="space-y-4"
           onSubmit={(e) => {
@@ -208,10 +214,10 @@ export default function LoginPage() {
         </form>
       </div>
 
-      <p className="text-center text-sm text-slate-500">
+      <p className="text-center text-sm text-slate-300">
         {mode === 'login' ? 'New here?' : 'Already registered?'}{' '}
         <button
-          className="font-medium text-emerald-700 underline-offset-2 hover:underline"
+          className="font-medium text-emerald-300 underline-offset-2 hover:underline"
           onClick={() => {
             setMode(mode === 'login' ? 'register' : 'login');
             setError(null);
@@ -229,93 +235,139 @@ export default function LoginPage() {
 function Heading({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="space-y-1">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{title}</h1>
-      <p className="text-sm text-slate-500">{subtitle}</p>
+      <h1 className="text-2xl font-semibold tracking-tight text-white drop-shadow-sm">{title}</h1>
+      <p className="text-sm text-slate-300">{subtitle}</p>
     </div>
   );
 }
 
 /**
- * The brand half and the working half, side by side.
+ * The shop behind the glass, and the work in front of it.
  *
- * The glow is two soft radial gradients — emerald from the app's accent, blue
- * from the logo's own hexagon — so the panel carries both of the shop's
- * colours without a background image to load.
+ * The photograph is a `<img>` rather than a CSS background so the drift can
+ * transform it without repainting a background-position every frame, and so
+ * the browser can pick it up as a normal image request.
  */
 function AuthShell({ children }: { children: ReactNode }) {
   return (
-    <div className="flex min-h-screen">
-      <aside className="relative hidden w-[46%] max-w-2xl flex-col justify-between overflow-hidden bg-slate-950 p-12 lg:flex">
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0"
-          style={{
-            background:
-              'radial-gradient(42rem 32rem at 5% 100%, rgba(5,150,105,0.30), transparent 62%), ' +
-              'radial-gradient(38rem 28rem at 95% 0%, rgba(24,117,190,0.38), transparent 60%)',
-          }}
-        />
+    <div className="relative min-h-screen overflow-hidden">
+      {/* The shop itself, drifting slowly. `inset-0` with object-cover means
+          the crop follows the viewport rather than the photo's own ratio. */}
+      <img
+        src={shop.src}
+        alt=""
+        aria-hidden
+        className="emil-drift absolute inset-0 h-full w-full object-cover"
+      />
 
-        <div className="relative flex items-center gap-3.5">
-          <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white p-1.5 shadow-lg shadow-black/40">
-            <img src={mark.src} alt="" className="h-full w-full object-contain" />
-          </div>
-          <div>
-            <div className="text-base font-semibold leading-tight text-white">Shah G Tech</div>
-            <div className="text-xs text-slate-400">shop &amp; books</div>
-          </div>
-        </div>
-
-        <div className="relative space-y-8">
-          <h2 className="max-w-md text-3xl font-semibold leading-snug tracking-tight text-white">
-            The counter, the workshop and the accounts — one system, one set of numbers.
-          </h2>
-          <ul className="space-y-4">
-            {PROMISES.map((promise) => (
-              <li key={promise.icon} className="flex items-start gap-3 text-sm text-slate-300">
-                <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-500/10 text-emerald-400">
-                  <Icon name={promise.icon} />
-                </span>
-                <span className="max-w-sm leading-relaxed">{promise.text}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-
-        <p className="relative max-w-sm text-xs leading-relaxed text-slate-500">
-          Ringgit Malaysia, Kuala Lumpur time. The ledger is append-only — a mistake is
-          corrected by a reversing entry, never quietly edited away.
-        </p>
-      </aside>
-
-      <main
-        className="flex flex-1 items-center justify-center px-5 py-12"
+      {/* Scrim one, in two directions.
+          Wide: dark from the left, where the headline lives, easing off over
+          the shop so the photo is actually seen.
+          Narrow: near-uniform, because a sideways gradient on a portrait iPad
+          just makes one edge bright and the layout look lopsided. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 lg:hidden"
         style={{
           background:
-            'radial-gradient(38rem 26rem at 50% 0%, #ffffff, transparent 70%), ' +
-            'radial-gradient(30rem 22rem at 50% 100%, rgba(5,150,105,0.07), transparent 65%), #f1f5f9',
+            'linear-gradient(180deg, rgba(2,6,23,0.80) 0%, rgba(2,6,23,0.88) 40%, rgba(2,6,23,0.86) 100%)',
         }}
-      >
-        <div className="w-full max-w-sm space-y-5">
-          {/* The brand panel is hidden below lg, so the mark comes along here. */}
-          <img src={wordmark.src} alt="Shah G Tech" className="mx-auto mb-2 h-12 w-auto lg:hidden" />
-          {children}
+      />
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 hidden lg:block"
+        style={{
+          background:
+            'linear-gradient(100deg, rgba(2,6,23,0.94) 0%, rgba(2,6,23,0.88) 38%, rgba(2,6,23,0.70) 68%, rgba(2,6,23,0.80) 100%)',
+        }}
+      />
+      {/* Scrim two: the brand's own colours, so the photo sits inside the
+          product rather than behind it. */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background:
+            'radial-gradient(40rem 30rem at 3% 100%, rgba(5,150,105,0.26), transparent 62%), ' +
+            'radial-gradient(36rem 26rem at 97% 0%, rgba(24,117,190,0.30), transparent 60%)',
+        }}
+      />
 
-          {/* And so do the promises — on an iPad in portrait this is the whole
-              of the sign-in screen, and a page that says nothing about itself
-              is the thing this redesign set out to fix. */}
-          <ul className="space-y-2.5 border-t border-slate-200 pt-5 lg:hidden">
-            {PROMISES.map((promise) => (
-              <li key={promise.icon} className="flex items-start gap-2.5 text-xs text-slate-500">
-                <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-emerald-100 text-emerald-700">
-                  <Icon name={promise.icon} className="!h-3 !w-3" />
-                </span>
-                <span className="leading-relaxed">{promise.text}</span>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </main>
+      <div className="relative flex min-h-screen flex-col lg:flex-row">
+        <aside className="hidden w-[46%] max-w-2xl flex-col justify-between p-12 lg:flex">
+          <div className="emil-rise flex items-center gap-3.5">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white p-1.5 shadow-lg shadow-black/40">
+              <img src={mark.src} alt="" className="h-full w-full object-contain" />
+            </div>
+            <div>
+              <div className="text-base font-semibold leading-tight text-white">Shah G Tech</div>
+              <div className="text-xs text-slate-300">shop &amp; books</div>
+            </div>
+          </div>
+
+          <div className="space-y-8">
+            <h2
+              className="emil-rise max-w-md text-3xl font-semibold leading-snug tracking-tight text-white"
+              style={{ animationDelay: '80ms' }}
+            >
+              The counter, the workshop and the accounts — one system, one set of numbers.
+            </h2>
+            <ul className="space-y-4">
+              {PROMISES.map((promise, i) => (
+                <li
+                  key={promise.icon}
+                  className="emil-rise flex items-start gap-3 text-sm text-slate-200"
+                  style={{ animationDelay: `${160 + i * 90}ms` }}
+                >
+                  <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-400/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/20">
+                    <Icon name={promise.icon} />
+                  </span>
+                  <span className="max-w-sm leading-relaxed">{promise.text}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+
+          <p
+            className="emil-rise max-w-sm text-xs leading-relaxed text-slate-400"
+            style={{ animationDelay: '440ms' }}
+          >
+            Ringgit Malaysia, Kuala Lumpur time. The ledger is append-only — a mistake is
+            corrected by a reversing entry, never quietly edited away.
+          </p>
+        </aside>
+
+        <main className="flex flex-1 items-center justify-center px-5 py-12">
+          <div
+            className="emil-rise w-full max-w-sm space-y-5"
+            style={{ animationDelay: '120ms' }}
+          >
+            {/* The brand panel is hidden below lg, so the mark comes along here. */}
+            <div className="mb-2 flex items-center justify-center gap-3 lg:hidden">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white p-1.5 shadow-lg shadow-black/40">
+                <img src={mark.src} alt="" className="h-full w-full object-contain" />
+              </div>
+              <img src={wordmark.src} alt="Shah G Tech" className="h-9 w-auto brightness-0 invert" />
+            </div>
+
+            {children}
+
+            {/* And so do the promises — on an iPad in portrait this is the whole
+                of the sign-in screen, and a page that says nothing about itself
+                is the thing this redesign set out to fix. */}
+            <ul className="space-y-2.5 border-t border-white/15 pt-5 lg:hidden">
+              {PROMISES.map((promise) => (
+                <li key={promise.icon} className="flex items-start gap-2.5 text-xs text-slate-300">
+                  <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-emerald-400/15 text-emerald-300">
+                    <Icon name={promise.icon} className="!h-3 !w-3" />
+                  </span>
+                  <span className="leading-relaxed">{promise.text}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </main>
+      </div>
     </div>
   );
 }
