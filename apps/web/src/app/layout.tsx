@@ -5,8 +5,8 @@ import './globals.css';
 import { Providers } from './providers';
 
 export const metadata: Metadata = {
-  title: 'Emil — shop & books',
-  description: 'Point of sale, workshop and accounts for Malaysian SMEs',
+  title: 'Shah G Tech — shop & books',
+  description: 'Point of sale, workshop and accounts for Shah G Tech',
 };
 
 /**

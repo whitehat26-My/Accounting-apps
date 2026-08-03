@@ -117,18 +117,28 @@ function build(draw: (pdf: PDFKit.PDFDocument) => void): Promise<Buffer> {
   });
 }
 
+/** The shop's accent — the same emerald the app wears. */
+const BRAND = '#059669';
+
 function header(
   pdf: PDFKit.PDFDocument,
   seller: InvoiceDocument['seller'],
   title: string,
 ): void {
+  // A brand band across the top: the one place a customer's copy carries the
+  // shop's colour. Presentation only; every figure below is stored data.
+  pdf.rect(0, 0, 595, 6).fill(BRAND);
+  pdf.fillColor('#000000');
+
   pdf.font('Helvetica-Bold').fontSize(16).text(seller.name, MARGIN, MARGIN);
-  pdf.font('Helvetica').fontSize(8);
+  pdf.font('Helvetica').fontSize(8).fillColor('#555555');
   if (seller.ssmRegistrationNo) pdf.text(`SSM: ${seller.ssmRegistrationNo}`);
   if (seller.tin) pdf.text(`TIN: ${seller.tin}`);
   if (seller.sstRegistered && seller.sstNo) pdf.text(`SST No: ${seller.sstNo}`);
+  pdf.fillColor('#000000');
 
-  pdf.font('Helvetica-Bold').fontSize(13).text(title, MARGIN, pdf.y + 10);
+  pdf.font('Helvetica-Bold').fontSize(13).fillColor(BRAND).text(title, MARGIN, pdf.y + 10);
+  pdf.fillColor('#000000');
   pdf.font('Helvetica').fontSize(9);
   pdf.moveDown(0.5);
 }
@@ -139,7 +149,9 @@ function pair(pdf: PDFKit.PDFDocument, label: string, value: string): void {
 }
 
 function rule(pdf: PDFKit.PDFDocument): void {
+  pdf.strokeColor('#d4d4d8');
   pdf.moveTo(MARGIN, pdf.y + 2).lineTo(545, pdf.y + 2).stroke();
+  pdf.strokeColor('#000000');
   pdf.y += 8;
 }
 

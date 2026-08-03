@@ -230,7 +230,7 @@ function WeekStat({ label, value }: { label: string; value: string }) {
 
 function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
+    <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div
         className={`mt-1.5 text-2xl font-semibold tracking-tight ${

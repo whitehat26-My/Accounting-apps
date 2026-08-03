@@ -461,7 +461,7 @@ export function demoApi(
   }
   if (p === '/v1/organisations') {
     const org = (b as { organisation?: { name?: string } }).organisation;
-    store.orgName = org?.name ?? 'Demo Computer Shop';
+    store.orgName = org?.name ?? 'Shah G Tech';
     save(store);
     return {
       organisation: { tenantId: 'demo-tenant', name: store.orgName },
@@ -784,7 +784,7 @@ export function demoApi(
         tier, tone, status: 'QUEUED', amountDueCents: inv.amountDueCents, daysOverdue,
         message: tone === 'OWNER_ALERT'
           ? `⚠ ${inv.contactName} — invoice ${inv.invoiceNo} for RM ${dec(inv.amountDueCents)} is now ${daysOverdue} days overdue. Decide: call them, agree a payment plan, or hold further credit.`
-          : `Hi ${inv.contactName}, this is Demo Computer Shop following up on invoice ${inv.invoiceNo} for RM ${dec(inv.amountDueCents)}, now ${daysOverdue} days past due. Please arrange payment this week. Terima kasih!`,
+          : `Hi ${inv.contactName}, this is Shah G Tech following up on invoice ${inv.invoiceNo} for RM ${dec(inv.amountDueCents)}, now ${daysOverdue} days past due. Please arrange payment this week. Terima kasih!`,
       });
       inv.highestTierRaised = tier;
       queued++;
@@ -906,7 +906,7 @@ export function demoApi(
 
   if (p === '/v1/organisation') {
     return {
-      id: 'demo-tenant', name: store.orgName ?? 'Demo Computer Shop',
+      id: 'demo-tenant', name: store.orgName ?? 'Shah G Tech',
       baseCurrency: 'MYR', reportingFramework: 'MPERS',
     };
   }

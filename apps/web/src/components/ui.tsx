@@ -73,7 +73,7 @@ export function Card({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-xl bg-white shadow-sm ring-1 ring-slate-900/5">
+    <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
       {title ? (
         <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
           <h2 className="text-sm font-semibold text-slate-900">{title}</h2>

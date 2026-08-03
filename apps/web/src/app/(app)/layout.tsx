@@ -88,11 +88,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen">
       <aside className="flex w-16 flex-col bg-slate-950 text-slate-300 md:w-60">
         <div className="flex items-center justify-center gap-3 px-2 pb-5 pt-6 md:justify-start md:px-5">
-          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500 text-base font-black text-slate-950">
-            E
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-[13px] font-black tracking-tight text-slate-950 shadow-lg shadow-emerald-500/20">
+            SG
           </div>
           <div className="hidden min-w-0 md:block">
-            <div className="text-sm font-semibold text-white">Emil</div>
+            <div className="text-sm font-semibold text-white">Shah G Tech</div>
             <div className="truncate text-xs text-slate-400">{session.organisationName}</div>
           </div>
         </div>
@@ -113,12 +113,15 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                       key={item.href}
                       href={item.href}
                       title={item.label}
-                      className={`flex items-center justify-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13px] transition-colors md:justify-start ${
+                      className={`relative flex items-center justify-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13px] transition-colors md:justify-start ${
                         active
                           ? 'bg-emerald-500/10 font-medium text-emerald-300'
                           : 'text-slate-300 hover:bg-white/5 hover:text-white'
                       }`}
                     >
+                      {active ? (
+                        <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-emerald-400" />
+                      ) : null}
                       <Icon name={item.icon} className={active ? 'text-emerald-400' : 'text-slate-500'} />
                       <span className="hidden md:inline">{item.label}</span>
                     </Link>
