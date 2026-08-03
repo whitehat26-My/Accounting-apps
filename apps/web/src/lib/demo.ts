@@ -470,10 +470,9 @@ export function demoApi(
     };
   }
 
-  // ---- reference data ------------------------------------------------------
-  if (p === '/v1/accounts') return { accounts: ACCOUNTS };
-  if (p === '/v1/tax-codes') return { taxCodes: [{ id: 'tax-none', code: 'NONE', name: 'Out of scope' }] };
-  if (p === '/v1/contacts' && method === 'POST') return { id: uid() };
+  // Reference data (accounts, tax codes, contacts) is served by the fuller
+  // handlers further down — an early stub here once shadowed them, and the
+  // Settings screen crashed on the rate-less tax codes it returned.
 
   // ---- items ---------------------------------------------------------------
   if (p === '/v1/items' && method === 'GET') {
