@@ -522,6 +522,9 @@ export interface CreateFromLineInput {
   readonly description?: string;
   readonly contactId?: string;
   readonly idempotencyKey: string;
+  /** Who decided: a person (default) or a bank rule. Recorded on the match. */
+  readonly method?: 'RULE' | 'MANUAL';
+  readonly reason?: string;
 }
 
 /**
@@ -621,8 +624,8 @@ export async function createEntryFromBankLine(
     matchedType: 'JOURNAL',
     matchedId: posted.id,
     amount: signed.toDecimalString(),
-    method: 'MANUAL',
-    reason: 'Entry created directly from the bank line',
+    method: input.method ?? 'MANUAL',
+    reason: input.reason ?? 'Entry created directly from the bank line',
   });
 
   return { journalEntryId: posted.id, matchId: match.id };

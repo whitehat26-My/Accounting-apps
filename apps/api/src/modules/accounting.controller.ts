@@ -12,6 +12,7 @@ import {
   agedReceivables,
   checkBankInvariant,
   enterBill,
+  applyBankRules,
   importStatement,
   creditFromInvoice,
   issueCreditNote,
@@ -268,6 +269,19 @@ export class AccountingController {
 
   // ---- Banking ------------------------------------------------------------
 
+  /**
+   * Import, then run the bank rules over the account — one transaction.
+   *
+   * The importer holds `bank.import`, not `journal.post`, and the auto-apply
+   * postings happen anyway. That is deliberate, not an escalation: the
+   * standing authorisation was granted when someone with `bank.reconcile`
+   * flipped `autoApply` on the rule. The importer merely delivers the
+   * statement the rule was waiting for — the same shape as a POS cashier
+   * whose sale posts COGS without holding `journal.post`. Every posting is
+   * an ordinary RULE-method match, named after its rule, reversible with
+   * `unmatch`, and reported in the response so the importer sees what was
+   * coded the moment it happens.
+   */
   @Requires('bank.import')
   @Doc({ request: () => statementSchema })
   @Post('bank-accounts/:id/statements')
@@ -279,9 +293,11 @@ export class AccountingController {
   ) {
     const input = parse(statementSchema, body);
     const ctx = this.ctx(request);
-    return withTenant(this.sql, ctx, (tx) =>
-      importStatement(tx, ctx, { ...input, bankAccountId, idempotencyKey }),
-    );
+    return withTenant(this.sql, ctx, async (tx) => {
+      const imported = await importStatement(tx, ctx, { ...input, bankAccountId, idempotencyKey });
+      const rules = await applyBankRules(tx, ctx, { bankAccountId });
+      return { ...imported, autoCategorised: rules.applied, ruleSuggestions: rules.suggestedOnly };
+    });
   }
 
   @Requires('bank.reconcile')

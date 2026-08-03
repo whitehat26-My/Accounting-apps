@@ -3,16 +3,21 @@ import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { decimal, isoDate, quantity } from '@emil/contracts';
 import {
+  applyBankRules,
   bankTransactions,
   bookBalance,
   completeReconciliation,
   confirmMatch,
   createBankAccount,
+  createBankRule,
   createEntryFromBankLine,
   debitFromBill,
   issueDebitNote,
+  listBankRules,
   previewStatement,
+  ruleSuggestions,
   unmatch,
+  updateBankRule,
   withTenant,
   type Sql,
 } from '@emil/db';
@@ -232,6 +237,78 @@ export class BankingController {
     );
   }
 
+  // ---- Bank rules ----------------------------------------------------------
+
+  @Requires('bank.read')
+  @Get('bank-rules')
+  async rules(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    const rules = await withTenant(this.sql, ctx, (tx) => listBankRules(tx, ctx));
+    return { rules };
+  }
+
+  /**
+   * `bank.reconcile`, because a rule is a standing reconciliation decision:
+   * whoever may match a line by hand may also record how it should always be
+   * matched. With `autoApply` the rule will POST journals with nobody
+   * watching — which is exactly why it defaults off, every firing is an
+   * ordinary match (method RULE) that `unmatch` reverses, and the reason on
+   * each match names the rule that made the call.
+   */
+  @Requires('bank.reconcile')
+  @Doc({ request: () => bankRuleSchema })
+  @Post('bank-rules')
+  async createRule(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = parse(bankRuleSchema, body);
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => createBankRule(tx, ctx, input));
+  }
+
+  @Requires('bank.reconcile')
+  @Doc({ request: () => bankRulePatchSchema })
+  @Post('bank-rules/:id')
+  async updateRule(
+    @Param('id') ruleId: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+  ) {
+    const patch = parse(bankRulePatchSchema, body);
+    const ctx = tenantContextOf(request);
+    await withTenant(this.sql, ctx, (tx) => updateBankRule(tx, ctx, ruleId, patch));
+    return { updated: true };
+  }
+
+  /** What the rules WOULD do to the unmatched lines. Writes nothing. */
+  @Requires('bank.reconcile')
+  @Get('bank-rules/suggestions')
+  async ruleHits(
+    @Query('bankAccountId') bankAccountId: string | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const options = parse(ruleRunSchema,
+      bankAccountId !== undefined ? { bankAccountId } : {},
+    );
+    const ctx = tenantContextOf(request);
+    const hits = await withTenant(this.sql, ctx, (tx) => ruleSuggestions(tx, ctx, options));
+    return { hits };
+  }
+
+  /**
+   * Run the rules now: post every auto-apply hit, count the rest.
+   *
+   * Also runs automatically after every statement import. This route exists
+   * for the other direction — the owner spots a recurring line, writes the
+   * rule, and wants the backlog coded without re-importing anything.
+   */
+  @Requires('journal.post')
+  @Doc({ request: () => ruleRunSchema })
+  @Post('bank-rules/run')
+  async runRules(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const options = parse(ruleRunSchema, body ?? {});
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => applyBankRules(tx, ctx, options));
+  }
+
   // ---- Debit notes ---------------------------------------------------------
 
   /**
@@ -359,6 +436,32 @@ const journalFromLineSchema = z.object({
   accountId: z.string().uuid(),
   description: z.string().optional(),
   contactId: z.string().uuid().optional(),
+});
+
+const bankRuleSchema = z.object({
+  name: z.string().min(1).max(120),
+  // Three characters minimum: "TNB" is a payee, "E" is half the statement.
+  contains: z.string().trim().min(3).max(120),
+  accountId: z.string().uuid(),
+  matchesDirection: z.enum(['INFLOW', 'OUTFLOW']).optional(),
+  minAmount: decimal.optional(),
+  maxAmount: decimal.optional(),
+  contactId: z.string().uuid().optional(),
+  bankAccountId: z.string().uuid().optional(),
+  priority: z.number().int().min(1).max(10_000).optional(),
+  autoApply: z.boolean().optional(),
+});
+
+const bankRulePatchSchema = z
+  .object({
+    isActive: z.boolean().optional(),
+    autoApply: z.boolean().optional(),
+    priority: z.number().int().min(1).max(10_000).optional(),
+  })
+  .refine((p) => Object.keys(p).length > 0, { message: 'Nothing to update' });
+
+const ruleRunSchema = z.object({
+  bankAccountId: z.string().uuid().optional(),
 });
 
 const completeSchema = z.object({

@@ -14,7 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0032`, 136 HTTP routes, 1,323 tests
+Last reconciled against the tree: migration `0032`, 138 HTTP routes (operations in the
+generated OpenAPI document — the measured figure, not a hand count), 1,330 tests
 (610 domain · 506 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
@@ -226,8 +227,15 @@ composed, worked manually over WhatsApp today; a transport handler flips the sam
   four weeks: REVENUE_DOWN/UP, EXPENSE_SPIKE, MARGIN_DIP, QUIET_WEEK, OVERDUE_HEAVY. All
   comparisons are exact bigint cross-multiplication; thresholds deliberately blunt so a
   flag means "genuinely unusual". Emailed when §4.4 unblocks; same rows either way.
-- **Bank auto-categorisation rules** — NOT STARTED: payee/narrative → account rules
-  applied at statement import, on top of the existing matching engine.
+- **Bank auto-categorisation rules — BUILT** (`packages/db/src/bank-rules.ts`,
+  `/v1/bank-rules` CRUD + `/suggestions` + `/run`). No new migration and no new engine:
+  the `bank_rule` table (0011) and `firstMatchingRule` had waited unreachable since M4 —
+  this slice is the missing middle. Two verbs, deliberately distinct: any active rule may
+  SUGGEST; only a rule whose owner flipped `autoApply` on POSTS, via the existing
+  `createEntryFromBankLine` with a per-line idempotency key (at most one journal per line,
+  ever, across re-runs and unmatch). Every firing is an ordinary match (method `RULE`)
+  named after its rule and reversible with `unmatch`. Rules run automatically after every
+  statement import — reported in the import response — and on demand for backlogs.
 - **Inbound email monitoring (contract → invoice draft)** — BLOCKED: needs the owner's
   Google OAuth credentials, plus an invoice DRAFT state (issue-immediately is the only
   flow today).
