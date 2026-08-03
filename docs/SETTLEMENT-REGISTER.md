@@ -164,7 +164,14 @@ No blocker. Not done.
 Next.js 15 + Tailwind 4 + TanStack Query. Built: login/register with organisation switch,
 first-run setup, the till (search → cart → serials → tender → change → receipt PDF), the
 workshop (intake, queue, quote, approve, ready, collect-with-payment, invoice PDF), stock
-levels with movement trails, the item catalogue, and Today (the Z-report as a dashboard).
+levels with movement trails, the item catalogue, Today (the Z-report as a dashboard),
+Insights (SVG charts), Team (role-aware member management), and **Banking**: create the
+account, upload/paste a CSV with preview-before-import (a wrong column map fails in front
+of the person who can fix it), the to-sort queue with the matching engine's reasons and
+one-tap accept, book-to-account for bank charges, and rules management (create, toggle
+auto-book, run over the backlog) — the whole reconciliation track usable from an iPad.
+One-to-many suggestions are shown with their reason but not one-tap-acceptable yet;
+splitting a settlement needs a fuller screen.
 Token store spends the rotating refresh token through one serialised in-flight promise —
 two racing 401s must not double-spend a token the server treats as stolen on reuse. The
 browser talks to /api/* and Next rewrites to the API, so CORS never exists. A Playwright
@@ -172,8 +179,9 @@ journey drives the real stack end to end: register → onboard → item → cash
 RM 50.00 → takings.
 
 Still to build, now screen-by-screen work on an existing shell: invoicing/AR beyond the
-till, bills and approvals, banking and reconciliation, reports, settings (tax codes, chart,
-users). The API for all of it exists and is conformance-documented at /openapi.json.
+till, bills and approvals, full reconciliation sign-off (the zero-variance session), reports
+beyond Insights, settings (tax codes, chart). The API for all of it exists and is
+conformance-documented at /openapi.json.
 
 ### 4.2 Onboarding — BUILT (`0030`, `packages/db/src/onboarding.ts`)
 

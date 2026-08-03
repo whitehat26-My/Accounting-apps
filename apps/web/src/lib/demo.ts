@@ -82,6 +82,41 @@ interface DemoStore {
   invoiceSeq: number;
   jobSeq: number;
   members?: DemoMember[];
+  bankAccounts?: DemoBankAccount[];
+  bankLines?: DemoBankLine[];
+  bankRules?: DemoBankRule[];
+}
+
+interface DemoBankAccount {
+  id: string;
+  name: string;
+  bankName: string;
+  currency: string;
+  glAccountId: string;
+  accountType: string;
+  isActive: boolean;
+}
+
+interface DemoBankLine {
+  id: string;
+  bankAccountId: string;
+  txnDate: string;
+  description: string;
+  reference: string | null;
+  amountCents: number;
+  status: string;
+}
+
+interface DemoBankRule {
+  id: string;
+  name: string;
+  contains: string | null;
+  matchesDirection: string | null;
+  accountId: string;
+  accountName: string;
+  autoApply: boolean;
+  isActive: boolean;
+  hitCount: number;
 }
 
 interface DemoMember {
@@ -178,7 +213,59 @@ const ACCOUNTS = [
   { id: 'acc-1200', code: '1200', name: 'Undeposited Funds', type: 'ASSET' },
   { id: 'acc-4000', code: '4000', name: 'Sales Revenue', type: 'INCOME' },
   { id: 'acc-5000', code: '5000', name: 'Cost of Sales', type: 'EXPENSE' },
+  { id: 'acc-6000', code: '6000', name: 'Utilities', type: 'EXPENSE' },
+  { id: 'acc-6050', code: '6050', name: 'Internet & Phone', type: 'EXPENSE' },
+  { id: 'acc-6100', code: '6100', name: 'Bank Charges', type: 'EXPENSE' },
+  { id: 'acc-6200', code: '6200', name: 'Rent', type: 'EXPENSE' },
 ];
+
+const DEMO_BANK: DemoBankAccount[] = [
+  { id: 'bank-1', name: 'Maybank Current', bankName: 'Malayan Banking Berhad',
+    currency: 'MYR', glAccountId: 'acc-1000', accountType: 'BANK', isActive: true },
+];
+
+function seedBankLines(): DemoBankLine[] {
+  return [
+    { id: 'bl-1', bankAccountId: 'bank-1', txnDate: today(), reference: null,
+      description: 'IBG TRANSFER FR NUSANTARA RETAIL SDN BHD INV-00042', amountCents: 108000, status: 'UNRECONCILED' },
+    { id: 'bl-2', bankAccountId: 'bank-1', txnDate: today(), reference: null,
+      description: 'SERVICE CHARGE', amountCents: -500, status: 'UNRECONCILED' },
+  ];
+}
+
+/** DD/MM/YYYY, DD-MM-YYYY or YYYY-MM-DD → ISO, or null when it is not a date. */
+function demoParseDate(value: string, format: string): string | null {
+  const v = value.trim();
+  if (format === 'YYYY-MM-DD') return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null;
+  const sep = format.includes('/') ? '/' : '-';
+  const parts = v.split(sep);
+  if (parts.length !== 3 || !/^\d{4}$/.test(parts[2] ?? '')) return null;
+  const [d, m, y] = parts;
+  if (!/^\d{1,2}$/.test(d ?? '') || !/^\d{1,2}$/.test(m ?? '')) return null;
+  return `${y}-${m!.padStart(2, '0')}-${d!.padStart(2, '0')}`;
+}
+
+function demoParseCsv(
+  content: string,
+  profile: { delimiter: string; dateFormat: string; columns: { txnDate: number; description: number; amount: number } },
+): { txnDate: string; description: string; amountCents: number }[] {
+  const rows: { txnDate: string; description: string; amountCents: number }[] = [];
+  for (const line of content.split(/\r?\n/)) {
+    const cells = line.split(profile.delimiter);
+    const date = demoParseDate(cells[profile.columns.txnDate] ?? '', profile.dateFormat);
+    const amountRaw = (cells[profile.columns.amount] ?? '').replace(/[, ]/g, '');
+    if (date === null || !/^-?\d+(\.\d+)?$/.test(amountRaw)) continue;
+    // cents() is unsigned; carry the sign separately.
+    const negative = amountRaw.startsWith('-');
+    const magnitude = cents(negative ? amountRaw.slice(1) : amountRaw);
+    rows.push({
+      txnDate: date,
+      description: (cells[profile.columns.description] ?? '').trim(),
+      amountCents: negative ? -magnitude : magnitude,
+    });
+  }
+  return rows;
+}
 
 /** The demo router. Same contract shape the screens already speak. */
 export function demoApi(
@@ -201,6 +288,7 @@ export function demoApi(
         'pos.sale', 'repair.read', 'repair.write', 'item.read', 'item.write',
         'stock.read', 'stock.adjust', 'report.read', 'user.read', 'user.manage',
         'invoice.read', 'invoice.create', 'contact.read', 'contact.write',
+        'bank.read', 'bank.import', 'bank.reconcile', 'journal.read', 'journal.post',
       ],
     };
   }
@@ -406,6 +494,172 @@ export function demoApi(
     });
     const limitMatch = /limit=(\d+)/.exec(p);
     return { digests: digests.slice(0, limitMatch ? Number(limitMatch[1]) : digests.length) };
+  }
+
+  // ---- banking -------------------------------------------------------------
+  if (p === '/v1/accounts') return { accounts: ACCOUNTS };
+
+  if (p === '/v1/bank-accounts' && method === 'GET') {
+    return { bankAccounts: store.bankAccounts ?? DEMO_BANK };
+  }
+  if (p === '/v1/bank-accounts' && method === 'POST') {
+    const input = b as { name: string; bankName: string; glAccountId: string };
+    const account: DemoBankAccount = {
+      id: uid(), name: input.name, bankName: input.bankName, currency: 'MYR',
+      glAccountId: input.glAccountId, accountType: 'BANK', isActive: true,
+    };
+    store.bankAccounts = [...(store.bankAccounts ?? DEMO_BANK), account];
+    save(store);
+    return { id: account.id };
+  }
+
+  const bankTxnsMatch = /^\/v1\/bank-accounts\/([^/]+)\/transactions$/.exec(p);
+  if (bankTxnsMatch) {
+    const lines = (store.bankLines ?? seedBankLines())
+      .filter((l) => l.bankAccountId === bankTxnsMatch[1] && l.status === 'UNRECONCILED');
+    return {
+      asOfDate: today(),
+      bookBalance: '18540.0000',
+      transactions: lines.map((l) => ({
+        id: l.id, bankAccountId: l.bankAccountId, txnDate: l.txnDate,
+        description: l.description, reference: l.reference,
+        amount: { amount: dec(l.amountCents), currency: 'MYR' }, status: l.status,
+      })),
+    };
+  }
+
+  const previewMatch = /^\/v1\/bank-accounts\/([^/]+)\/statements\/preview$/.exec(p);
+  if (previewMatch) {
+    const input = b as { content: string; profile: Parameters<typeof demoParseCsv>[1] };
+    const rows = demoParseCsv(input.content, input.profile);
+    return {
+      rows: rows.map((r) => ({
+        txnDate: r.txnDate, description: r.description,
+        amount: { amount: dec(r.amountCents), currency: 'MYR' },
+      })),
+      violations: rows.length === 0 ? [{ line: 1, problem: 'No rows could be read' }] : [],
+    };
+  }
+
+  const importMatch = /^\/v1\/bank-accounts\/([^/]+)\/statements$/.exec(p);
+  if (importMatch && method === 'POST') {
+    const input = b as { content: string; profile: Parameters<typeof demoParseCsv>[1] };
+    const rows = demoParseCsv(input.content, input.profile);
+    if (rows.length === 0) throw { status: 422, body: { message: 'No rows could be read from this file. Check the settings against a preview.' } };
+
+    const lines = store.bankLines ?? seedBankLines();
+    const fresh = rows.map((r): DemoBankLine => ({
+      id: uid(), bankAccountId: importMatch[1]!, txnDate: r.txnDate,
+      description: r.description, reference: null, amountCents: r.amountCents,
+      status: 'UNRECONCILED',
+    }));
+    store.bankLines = [...lines, ...fresh];
+
+    // Auto-apply rules, exactly like the real import response.
+    const rules = (store.bankRules ?? []).filter((r) => r.isActive && r.autoApply);
+    const applied: { ruleName: string; amount: string }[] = [];
+    for (const line of fresh) {
+      const hit = rules.find((r) =>
+        r.contains !== null && line.description.toUpperCase().includes(r.contains.toUpperCase()),
+      );
+      if (hit) {
+        line.status = 'MATCHED';
+        hit.hitCount += 1;
+        applied.push({ ruleName: hit.name, amount: dec(line.amountCents) });
+      }
+    }
+    const suggestOnly = (store.bankRules ?? []).filter((r) => r.isActive && !r.autoApply);
+    const suggested = fresh.filter((l) =>
+      l.status === 'UNRECONCILED' &&
+      suggestOnly.some((r) => r.contains !== null &&
+        l.description.toUpperCase().includes(r.contains.toUpperCase())),
+    ).length;
+    save(store);
+
+    return {
+      id: uid(), imported: fresh.length, duplicates: 0, violations: [],
+      openingBalance: null, closingBalance: null, replayed: false,
+      autoCategorised: applied, ruleSuggestions: suggested,
+    };
+  }
+
+  const suggestMatch = /^\/v1\/bank-accounts\/([^/]+)\/suggestions$/.exec(p);
+  if (suggestMatch) {
+    // The seeded inbound transfer matches an open invoice by reference — the
+    // matching engine's normal day. Imported lines get no canned suggestion.
+    const lines = (store.bankLines ?? seedBankLines()).filter(
+      (l) => l.status === 'UNRECONCILED' && l.description.includes('INV-00042'),
+    );
+    return {
+      lines: lines.map((l) => ({
+        bankTransactionId: l.id,
+        suggestions: [{
+          candidateIds: ['demo-payment-1'], kind: 'INVOICE', confidence: 96,
+          reason: 'Amount matches exactly and the narrative quotes invoice INV-00042 for Nusantara Retail Sdn Bhd',
+          amountDifference: '0.0000', dayDifference: 0,
+        }],
+      })),
+    };
+  }
+
+  const matchLineMatch = /^\/v1\/bank-transactions\/([^/]+)\/(match|journal)$/.exec(p);
+  if (matchLineMatch && method === 'POST') {
+    const lines = store.bankLines ?? seedBankLines();
+    const line = lines.find((l) => l.id === matchLineMatch[1]);
+    if (line) line.status = 'MATCHED';
+    store.bankLines = lines;
+    save(store);
+    return matchLineMatch[2] === 'match' ? { id: uid() } : { journalEntryId: uid(), matchId: uid() };
+  }
+
+  if (p === '/v1/bank-rules' && method === 'GET') {
+    return { rules: store.bankRules ?? [] };
+  }
+  if (p === '/v1/bank-rules' && method === 'POST') {
+    const input = b as { name: string; contains: string; accountId: string; autoApply?: boolean };
+    if (input.contains.trim().length < 3) {
+      throw { status: 422, body: { message: 'The match text must be at least 3 characters — shorter patterns match far too much.' } };
+    }
+    const account = ACCOUNTS.find((a) => a.id === input.accountId);
+    const rule: DemoBankRule = {
+      id: uid(), name: input.name, contains: input.contains.trim(),
+      matchesDirection: null, accountId: input.accountId,
+      accountName: account?.name ?? 'Account', autoApply: input.autoApply ?? false,
+      isActive: true, hitCount: 0,
+    };
+    store.bankRules = [...(store.bankRules ?? []), rule];
+    save(store);
+    return { id: rule.id };
+  }
+  if (p === '/v1/bank-rules/run' && method === 'POST') {
+    const lines = store.bankLines ?? seedBankLines();
+    const rules = (store.bankRules ?? []).filter((r) => r.isActive && r.autoApply);
+    const applied: { ruleName: string; amount: string }[] = [];
+    for (const line of lines) {
+      if (line.status !== 'UNRECONCILED') continue;
+      const hit = rules.find((r) =>
+        r.contains !== null && line.description.toUpperCase().includes(r.contains.toUpperCase()),
+      );
+      if (hit) {
+        line.status = 'MATCHED';
+        hit.hitCount += 1;
+        applied.push({ ruleName: hit.name, amount: dec(line.amountCents) });
+      }
+    }
+    store.bankLines = lines;
+    save(store);
+    return { applied, suggestedOnly: 0 };
+  }
+  const rulePatchMatch = /^\/v1\/bank-rules\/([^/]+)$/.exec(p);
+  if (rulePatchMatch && method === 'POST') {
+    const patch = b as { isActive?: boolean; autoApply?: boolean };
+    store.bankRules = (store.bankRules ?? []).map((r) =>
+      r.id === rulePatchMatch[1]
+        ? { ...r, isActive: patch.isActive ?? r.isActive, autoApply: patch.autoApply ?? r.autoApply }
+        : r,
+    );
+    save(store);
+    return { updated: true };
   }
 
   // ---- stock ---------------------------------------------------------------
