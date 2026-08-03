@@ -17,6 +17,8 @@ import {
   creditFromInvoice,
   issueCreditNote,
   issueInvoice,
+  listOpenBills,
+  listOpenInvoices,
   outstandingPayables,
   outstandingReceivables,
   paySupplier,
@@ -76,6 +78,14 @@ export class AccountingController {
     return withTenant(this.sql, ctx, (tx) =>
       issueInvoice(tx, ctx, { ...input, idempotencyKey }),
     );
+  }
+
+  /** The open items behind the receivables total — the Sales screen's list. */
+  @Requires('invoice.read')
+  @Get('invoices')
+  async listInvoices(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { invoices: await withTenant(this.sql, ctx, (tx) => listOpenInvoices(tx, ctx)) };
   }
 
   @Requires('invoice.read')
@@ -164,6 +174,14 @@ export class AccountingController {
     const input = parse(billSchema, body);
     const ctx = this.ctx(request);
     return withTenant(this.sql, ctx, (tx) => enterBill(tx, ctx, { ...input, idempotencyKey }));
+  }
+
+  /** The open items behind the payables total — the Purchases screen's list. */
+  @Requires('bill.read')
+  @Get('bills')
+  async listBills(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { bills: await withTenant(this.sql, ctx, (tx) => listOpenBills(tx, ctx)) };
   }
 
   @Requires('bill.read')

@@ -15,7 +15,7 @@ gap nobody noticed. Each entry below is one of four things:
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
 Last reconciled against the tree: migration `0033`, 140 HTTP routes (operations in the
-generated OpenAPI document — the measured figure, not a hand count), 1,341 tests
+generated OpenAPI document — the measured figure, not a hand count), 1,343 tests
 (610 domain · 506 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
@@ -189,10 +189,20 @@ browser talks to /api/* and Next rewrites to the API, so CORS never exists. A Pl
 journey drives the real stack end to end: register → onboard → item → cash sale → change
 RM 50.00 → takings.
 
-Still to build, now screen-by-screen work on an existing shell: invoicing/AR beyond the
-till, bills and approvals, full reconciliation sign-off (the zero-variance session), reports
-beyond Insights, settings (tax codes, chart). The API for all of it exists and is
-conformance-documented at /openapi.json.
+Now also built, completing the accounting surface: **Sales** (issue on terms with
+quick-create customer, unpaid list via the new `GET /v1/invoices`, record payment with
+allocation, PDF), **Purchases** (enter the supplier's bill, unpaid list via the new
+`GET /v1/bills` carrying BOTH numbers — theirs and ours — pay with allocation; an
+approval refusal is shown, not smoothed over), **Collections** (the queue of composed
+reminders with copy-and-open-WhatsApp, mark-sent, cancel, run-now; the overdue table
+with escalation state), and **Settings** (organisation, chart of accounts grouped by
+type with add, tax codes where every rate must cite its legal instrument — the rate
+field is a select of whole percents, so no float ever forms).
+
+Still to build, screen-by-screen on the same shell: bill approvals UI, full
+reconciliation sign-off (the zero-variance session), credit/debit notes, manual
+journals, statements beyond Insights, year-end close UI. The API for all of it exists
+and is conformance-documented at /openapi.json.
 
 ### 4.2 Onboarding — BUILT (`0030`, `packages/db/src/onboarding.ts`)
 

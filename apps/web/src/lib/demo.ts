@@ -85,6 +85,69 @@ interface DemoStore {
   bankAccounts?: DemoBankAccount[];
   bankLines?: DemoBankLine[];
   bankRules?: DemoBankRule[];
+  contacts?: DemoContact[];
+  openInvoices?: DemoOpenInvoice[];
+  openBills?: DemoOpenBill[];
+  reminders?: DemoReminder[];
+  extraAccounts?: { id: string; code: string; name: string; type: string }[];
+  taxCodes?: DemoTaxCode[];
+}
+
+interface DemoContact {
+  id: string;
+  name: string;
+  isCustomer: boolean;
+  isSupplier: boolean;
+}
+
+interface DemoOpenInvoice {
+  id: string;
+  invoiceNo: string;
+  contactId: string;
+  contactName: string;
+  issueDate: string;
+  dueDate: string;
+  currency: string;
+  totalCents: number;
+  amountDueCents: number;
+  status: string;
+  highestTierRaised: number;
+}
+
+interface DemoOpenBill {
+  id: string;
+  internalRef: string;
+  billNo: string;
+  supplierId: string;
+  supplierName: string;
+  billDate: string;
+  dueDate: string;
+  currency: string;
+  totalCents: number;
+  amountDueCents: number;
+  status: string;
+}
+
+interface DemoReminder {
+  id: string;
+  invoiceId: string;
+  invoiceNo: string;
+  contactName: string;
+  tier: number;
+  tone: string;
+  message: string;
+  status: string;
+  amountDueCents: number;
+  daysOverdue: number;
+}
+
+interface DemoTaxCode {
+  id: string;
+  code: string;
+  name: string;
+  regime: string;
+  inputTreatment: string;
+  rates: { rateBasisPoints: number; validFrom: string; validTo: string | null; legislationRef: string | null }[];
 }
 
 interface DemoBankAccount {
@@ -267,6 +330,48 @@ function demoParseCsv(
   return rows;
 }
 
+function daysFromToday(days: number): string {
+  const d = new Date(`${today()}T00:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + days);
+  return d.toISOString().slice(0, 10);
+}
+
+const DEMO_CONTACTS: DemoContact[] = [
+  { id: 'ct-1', name: 'Nusantara Retail Sdn Bhd', isCustomer: true, isSupplier: false },
+  { id: 'ct-2', name: 'Delima Networks Enterprise', isCustomer: true, isSupplier: false },
+  { id: 'ct-3', name: 'Selangor Supplies Sdn Bhd', isCustomer: false, isSupplier: true },
+];
+
+/** RM 7,000 across the two overdue rows — the same story the forecast tells. */
+function seedOpenInvoices(): DemoOpenInvoice[] {
+  return [
+    { id: 'oi-1', invoiceNo: 'INV-00042', contactId: 'ct-1', contactName: 'Nusantara Retail Sdn Bhd',
+      issueDate: daysFromToday(-5), dueDate: daysFromToday(10), currency: 'MYR',
+      totalCents: 108000, amountDueCents: 108000, status: 'ISSUED', highestTierRaised: 0 },
+    { id: 'oi-2', invoiceNo: 'INV-00038', contactId: 'ct-2', contactName: 'Delima Networks Enterprise',
+      issueDate: daysFromToday(-42), dueDate: daysFromToday(-12), currency: 'MYR',
+      totalCents: 450000, amountDueCents: 450000, status: 'ISSUED', highestTierRaised: 2 },
+    { id: 'oi-3', invoiceNo: 'INV-00035', contactId: 'ct-1', contactName: 'Nusantara Retail Sdn Bhd',
+      issueDate: daysFromToday(-55), dueDate: daysFromToday(-25), currency: 'MYR',
+      totalCents: 250000, amountDueCents: 250000, status: 'PART_PAID', highestTierRaised: 3 },
+  ];
+}
+
+function seedOpenBills(): DemoOpenBill[] {
+  return [
+    { id: 'ob-1', internalRef: 'BILL-00017', billNo: 'SS-2291', supplierId: 'ct-3',
+      supplierName: 'Selangor Supplies Sdn Bhd', billDate: daysFromToday(-8),
+      dueDate: daysFromToday(22), currency: 'MYR', totalCents: 60000,
+      amountDueCents: 60000, status: 'ENTERED' },
+  ];
+}
+
+const DEMO_TAX_CODES: DemoTaxCode[] = [
+  { id: 'tax-none', code: 'NONE', name: 'Not in scope for SST', regime: 'NONE',
+    inputTreatment: 'COST',
+    rates: [{ rateBasisPoints: 0, validFrom: '2018-09-01', validTo: null, legislationRef: null }] },
+];
+
 /** Maybank `Label : value` advices — the demo twin of the real parser. */
 function demoParseAdvice(
   content: string,
@@ -324,6 +429,8 @@ export function demoApi(
         'stock.read', 'stock.adjust', 'report.read', 'user.read', 'user.manage',
         'invoice.read', 'invoice.create', 'contact.read', 'contact.write',
         'bank.read', 'bank.import', 'bank.reconcile', 'journal.read', 'journal.post',
+        'bill.read', 'bill.create', 'payment.create', 'receipt.create',
+        'collections.chase', 'tax.read', 'tax.write', 'org.manage',
       ],
     };
   }
@@ -531,8 +638,212 @@ export function demoApi(
     return { digests: digests.slice(0, limitMatch ? Number(limitMatch[1]) : digests.length) };
   }
 
+  // ---- sales, purchases, collections, settings ------------------------------
+  if (p === '/v1/contacts' && method === 'GET') {
+    return { contacts: store.contacts ?? DEMO_CONTACTS };
+  }
+  if (p === '/v1/contacts' && method === 'POST') {
+    const input = b as { name: string; isCustomer?: boolean; isSupplier?: boolean };
+    const contact: DemoContact = {
+      id: uid(), name: input.name,
+      isCustomer: input.isCustomer ?? false, isSupplier: input.isSupplier ?? false,
+    };
+    store.contacts = [...(store.contacts ?? DEMO_CONTACTS), contact];
+    save(store);
+    return { id: contact.id, name: contact.name };
+  }
+
+  if (p === '/v1/invoices' && method === 'GET') {
+    const rows = (store.openInvoices ?? seedOpenInvoices()).filter((i) => i.amountDueCents > 0);
+    return {
+      invoices: rows.map((i) => ({
+        id: i.id, invoiceNo: i.invoiceNo, contactId: i.contactId, contactName: i.contactName,
+        issueDate: i.issueDate, dueDate: i.dueDate, currency: i.currency,
+        total: dec(i.totalCents), amountDue: dec(i.amountDueCents), status: i.status,
+      })),
+    };
+  }
+  if (p === '/v1/invoices' && method === 'POST') {
+    const input = b as {
+      contactId: string; issueDate: string; dueDate?: string;
+      lines: { description: string; quantity: string; unitPrice: string }[];
+    };
+    const contact = (store.contacts ?? DEMO_CONTACTS).find((c) => c.id === input.contactId);
+    const totalCents = input.lines.reduce(
+      (sum, l) => sum + Math.round(Number(l.quantity) * cents(l.unitPrice)), 0,
+    );
+    const invoice: DemoOpenInvoice = {
+      id: uid(), invoiceNo: `INV-${String(store.invoiceSeq++).padStart(5, '0')}`,
+      contactId: input.contactId, contactName: contact?.name ?? 'Customer',
+      issueDate: input.issueDate, dueDate: input.dueDate ?? daysFromToday(30),
+      currency: 'MYR', totalCents, amountDueCents: totalCents,
+      status: 'ISSUED', highestTierRaised: 0,
+    };
+    store.openInvoices = [...(store.openInvoices ?? seedOpenInvoices()), invoice];
+    save(store);
+    return { id: invoice.id, invoiceNo: invoice.invoiceNo, total: dec(totalCents) };
+  }
+
+  if (p === '/v1/receipts' && method === 'POST') {
+    const input = b as { allocations?: { invoiceId: string; amount: string }[] };
+    const invoices = store.openInvoices ?? seedOpenInvoices();
+    for (const alloc of input.allocations ?? []) {
+      const inv = invoices.find((i) => i.id === alloc.invoiceId);
+      if (inv) {
+        inv.amountDueCents = Math.max(0, inv.amountDueCents - cents(alloc.amount));
+        inv.status = inv.amountDueCents === 0 ? 'PAID' : 'PART_PAID';
+      }
+    }
+    store.openInvoices = invoices;
+    // Paying an invoice cancels its queued reminders — the rule the real
+    // follow-up pass enforces first.
+    store.reminders = (store.reminders ?? []).map((r) =>
+      invoices.find((i) => i.id === r.invoiceId && i.amountDueCents === 0)
+        ? { ...r, status: 'CANCELLED' }
+        : r,
+    );
+    save(store);
+    return { id: uid() };
+  }
+
+  if (p === '/v1/bills' && method === 'GET') {
+    const rows = (store.openBills ?? seedOpenBills()).filter((x) => x.amountDueCents > 0);
+    return {
+      bills: rows.map((x) => ({
+        id: x.id, internalRef: x.internalRef, billNo: x.billNo, supplierId: x.supplierId,
+        supplierName: x.supplierName, billDate: x.billDate, dueDate: x.dueDate,
+        currency: x.currency, total: dec(x.totalCents), amountDue: dec(x.amountDueCents),
+        status: x.status,
+      })),
+    };
+  }
+  if (p === '/v1/bills' && method === 'POST') {
+    const input = b as {
+      supplierId: string; billNo: string; billDate: string; dueDate?: string;
+      lines: { quantity: string; unitPrice: string }[];
+    };
+    const supplier = (store.contacts ?? DEMO_CONTACTS).find((c) => c.id === input.supplierId);
+    const totalCents = input.lines.reduce(
+      (sum, l) => sum + Math.round(Number(l.quantity) * cents(l.unitPrice)), 0,
+    );
+    const bills = store.openBills ?? seedOpenBills();
+    const bill: DemoOpenBill = {
+      id: uid(), internalRef: `BILL-${String(18 + bills.length).padStart(5, '0')}`,
+      billNo: input.billNo, supplierId: input.supplierId,
+      supplierName: supplier?.name ?? 'Supplier', billDate: input.billDate,
+      dueDate: input.dueDate ?? daysFromToday(30), currency: 'MYR',
+      totalCents, amountDueCents: totalCents, status: 'ENTERED',
+    };
+    store.openBills = [...bills, bill];
+    save(store);
+    return { id: bill.id, internalRef: bill.internalRef };
+  }
+
+  if (p === '/v1/supplier-payments' && method === 'POST') {
+    const input = b as { allocations?: { billId: string; amount: string }[] };
+    const bills = store.openBills ?? seedOpenBills();
+    for (const alloc of input.allocations ?? []) {
+      const bill = bills.find((x) => x.id === alloc.billId);
+      if (bill) {
+        bill.amountDueCents = Math.max(0, bill.amountDueCents - cents(alloc.amount));
+        bill.status = bill.amountDueCents === 0 ? 'PAID' : 'PART_PAID';
+      }
+    }
+    store.openBills = bills;
+    save(store);
+    return { id: uid() };
+  }
+
+  if (p === '/v1/collections/overdue') {
+    const t = today();
+    const rows = (store.openInvoices ?? seedOpenInvoices())
+      .filter((i) => i.amountDueCents > 0 && i.dueDate < t);
+    return {
+      overdue: rows.map((i) => ({
+        invoiceId: i.id, invoiceNo: i.invoiceNo, contactName: i.contactName,
+        dueDate: i.dueDate, amountDue: dec(i.amountDueCents), currency: 'MYR',
+        daysOverdue: Math.round((Date.parse(t) - Date.parse(i.dueDate)) / 86_400_000),
+        highestTierRaised: i.highestTierRaised,
+        queuedReminders: (store.reminders ?? []).filter(
+          (r) => r.invoiceId === i.id && r.status === 'QUEUED').length,
+      })),
+    };
+  }
+  if (p === '/v1/collections/run' && method === 'POST') {
+    const t = today();
+    const reminders = store.reminders ?? [];
+    let queued = 0;
+    for (const inv of (store.openInvoices ?? seedOpenInvoices())) {
+      if (inv.amountDueCents === 0 || inv.dueDate >= t) continue;
+      if (reminders.some((r) => r.invoiceId === inv.id && r.status === 'QUEUED')) continue;
+      const daysOverdue = Math.round((Date.parse(t) - Date.parse(inv.dueDate)) / 86_400_000);
+      const tier = daysOverdue >= 14 ? 3 : daysOverdue >= 7 ? 2 : daysOverdue >= 3 ? 1 : 0;
+      if (tier === 0 || tier <= inv.highestTierRaised) continue;
+      const tone = tier === 3 ? 'OWNER_ALERT' : tier === 2 ? 'FIRM' : 'FRIENDLY';
+      reminders.push({
+        id: uid(), invoiceId: inv.id, invoiceNo: inv.invoiceNo, contactName: inv.contactName,
+        tier, tone, status: 'QUEUED', amountDueCents: inv.amountDueCents, daysOverdue,
+        message: tone === 'OWNER_ALERT'
+          ? `⚠ ${inv.contactName} — invoice ${inv.invoiceNo} for RM ${dec(inv.amountDueCents)} is now ${daysOverdue} days overdue. Decide: call them, agree a payment plan, or hold further credit.`
+          : `Hi ${inv.contactName}, this is Demo Computer Shop following up on invoice ${inv.invoiceNo} for RM ${dec(inv.amountDueCents)}, now ${daysOverdue} days past due. Please arrange payment this week. Terima kasih!`,
+      });
+      inv.highestTierRaised = tier;
+      queued++;
+    }
+    store.reminders = reminders;
+    save(store);
+    return { queued, cancelledAsPaid: 0, ownerAlerts: reminders.filter((r) => r.tier === 3 && r.status === 'QUEUED').length };
+  }
+  if (p === '/v1/collections/reminders') {
+    const status = url.searchParams.get('status');
+    return {
+      reminders: (store.reminders ?? [])
+        .filter((r) => status === null || r.status === status)
+        .map((r) => ({
+          id: r.id, invoiceId: r.invoiceId, invoiceNo: r.invoiceNo,
+          contactName: r.contactName, tier: r.tier, tone: r.tone, message: r.message,
+          status: r.status, channel: null, queuedOn: today(),
+          amountDue: dec(r.amountDueCents), currency: 'MYR', daysOverdue: r.daysOverdue,
+        })),
+    };
+  }
+  const reminderAction = /^\/v1\/collections\/reminders\/([^/]+)\/(sent|cancel)$/.exec(p);
+  if (reminderAction && method === 'POST') {
+    store.reminders = (store.reminders ?? []).map((r) =>
+      r.id === reminderAction[1]
+        ? { ...r, status: reminderAction[2] === 'sent' ? 'SENT' : 'CANCELLED' }
+        : r,
+    );
+    save(store);
+    return { id: reminderAction[1]!, status: reminderAction[2] === 'sent' ? 'SENT' : 'CANCELLED' };
+  }
+
+  if (p === '/v1/organisation') {
+    return {
+      id: 'demo-tenant', name: store.orgName ?? 'Demo Computer Shop',
+      baseCurrency: 'MYR', reportingFramework: 'MPERS',
+    };
+  }
+  if (p === '/v1/tax-codes' && method === 'GET') {
+    return { taxCodes: store.taxCodes ?? DEMO_TAX_CODES };
+  }
+  if (p === '/v1/tax-codes' && method === 'POST') {
+    const input = b as DemoTaxCode;
+    const taxCode: DemoTaxCode = { ...input, id: uid() };
+    store.taxCodes = [...(store.taxCodes ?? DEMO_TAX_CODES), taxCode];
+    save(store);
+    return { id: taxCode.id };
+  }
+  if (p === '/v1/accounts' && method === 'POST') {
+    const input = b as { code: string; name: string; type: string };
+    const account = { id: uid(), code: input.code, name: input.name, type: input.type };
+    store.extraAccounts = [...(store.extraAccounts ?? []), account];
+    save(store);
+    return { id: account.id };
+  }
+
   // ---- banking -------------------------------------------------------------
-  if (p === '/v1/accounts') return { accounts: ACCOUNTS };
+  if (p === '/v1/accounts') return { accounts: [...ACCOUNTS, ...(store.extraAccounts ?? [])] };
 
   if (p === '/v1/bank-accounts' && method === 'GET') {
     return { bankAccounts: store.bankAccounts ?? DEMO_BANK };

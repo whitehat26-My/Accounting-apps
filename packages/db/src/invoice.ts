@@ -519,6 +519,48 @@ export async function outstandingReceivables(
   return { total: row!.total, count: Number(row!.count) };
 }
 
+export interface OpenInvoiceRow {
+  readonly id: string;
+  readonly invoiceNo: string;
+  readonly contactId: string;
+  readonly contactName: string;
+  readonly issueDate: string;
+  readonly dueDate: string;
+  readonly currency: string;
+  readonly total: string;
+  readonly amountDue: string;
+  readonly status: string;
+}
+
+/** The open items behind the receivables total — the screen's working list. */
+export async function listOpenInvoices(tx: Tx, ctx: TenantContext): Promise<OpenInvoiceRow[]> {
+  const rows = await tx<
+    { id: string; invoice_no: string; contact_id: string; contact_name: string;
+      issue_date: Date; due_date: Date; currency: string; total: string;
+      amount_due: string; status: string }[]
+  >`
+      SELECT i.id, i.invoice_no, i.contact_id, c.name AS contact_name, i.issue_date,
+             i.due_date, i.currency, i.total::text, i.amount_due::text, i.status
+        FROM invoice i
+        JOIN contact c ON c.tenant_id = i.tenant_id AND c.id = i.contact_id
+       WHERE i.tenant_id = ${ctx.tenantId}
+         AND i.status IN ('ISSUED', 'PART_PAID')
+       ORDER BY i.due_date, i.invoice_no
+  `;
+  return rows.map((r) => ({
+    id: r.id,
+    invoiceNo: r.invoice_no,
+    contactId: r.contact_id,
+    contactName: r.contact_name,
+    issueDate: toIsoDate(r.issue_date),
+    dueDate: toIsoDate(r.due_date),
+    currency: r.currency,
+    total: r.total,
+    amountDue: r.amount_due,
+    status: r.status,
+  }));
+}
+
 /** Outstanding receivables broken down by transaction currency. */
 export async function outstandingByCurrency(
   tx: Tx,

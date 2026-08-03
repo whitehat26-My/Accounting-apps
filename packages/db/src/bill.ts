@@ -11,7 +11,7 @@ import {
 import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
 import { loadBaseCurrency, loadTaxCodes, resolveRate } from './invoice.js';
-import { addDays, decimalToScaled } from './internal.js';
+import { addDays, decimalToScaled, toIsoDate } from './internal.js';
 import { routeBillForApproval } from './approval.js';
 import { resolveLineFromItem } from './item.js';
 import { loadStockAccounts, receiveTrackedStock, trackedItems } from './inventory.js';
@@ -505,6 +505,50 @@ export async function outstandingPayables(
          AND status IN ('ENTERED','PART_PAID')
   `;
   return { total: row!.total, count: Number(row!.count) };
+}
+
+export interface OpenBillRow {
+  readonly id: string;
+  readonly internalRef: string;
+  readonly billNo: string;
+  readonly supplierId: string;
+  readonly supplierName: string;
+  readonly billDate: string;
+  readonly dueDate: string;
+  readonly currency: string;
+  readonly total: string;
+  readonly amountDue: string;
+  readonly status: string;
+}
+
+/** The open items behind the payables total — the screen's working list. */
+export async function listOpenBills(tx: Tx, ctx: TenantContext): Promise<OpenBillRow[]> {
+  const rows = await tx<
+    { id: string; internal_ref: string; bill_no: string; supplier_id: string;
+      supplier_name: string; bill_date: Date; due_date: Date; currency: string;
+      total: string; amount_due: string; status: string }[]
+  >`
+      SELECT b.id, b.internal_ref, b.bill_no, b.supplier_id, c.name AS supplier_name,
+             b.bill_date, b.due_date, b.currency, b.total::text, b.amount_due::text, b.status
+        FROM bill b
+        JOIN contact c ON c.tenant_id = b.tenant_id AND c.id = b.supplier_id
+       WHERE b.tenant_id = ${ctx.tenantId}
+         AND b.status IN ('ENTERED', 'PART_PAID')
+       ORDER BY b.due_date, b.internal_ref
+  `;
+  return rows.map((r) => ({
+    id: r.id,
+    internalRef: r.internal_ref,
+    billNo: r.bill_no,
+    supplierId: r.supplier_id,
+    supplierName: r.supplier_name,
+    billDate: toIsoDate(r.bill_date),
+    dueDate: toIsoDate(r.due_date),
+    currency: r.currency,
+    total: r.total,
+    amountDue: r.amount_due,
+    status: r.status,
+  }));
 }
 
 /** Open bills a supplier payment can be allocated against. */

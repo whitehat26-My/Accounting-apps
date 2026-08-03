@@ -20,12 +20,16 @@ import { can, ROLE_LABELS, useMe } from '@/lib/me';
 const NAV: { href: string; label: string; needs: string | null }[] = [
   { href: '/', label: 'Today', needs: null },
   { href: '/pos', label: 'Point of sale', needs: 'pos.sale' },
+  { href: '/sales', label: 'Sales', needs: 'invoice.read' },
+  { href: '/collections', label: 'Collections', needs: 'invoice.read' },
+  { href: '/purchases', label: 'Purchases', needs: 'bill.read' },
   { href: '/repairs', label: 'Repairs', needs: 'repair.read' },
   { href: '/stock', label: 'Stock', needs: 'stock.read' },
   { href: '/items', label: 'Items', needs: 'item.read' },
   { href: '/banking', label: 'Banking', needs: 'bank.reconcile' },
   { href: '/insights', label: 'Insights', needs: 'report.read' },
   { href: '/team', label: 'Team', needs: 'user.read' },
+  { href: '/settings', label: 'Settings', needs: 'tax.read' },
 ];
 
 export default function AppLayout({ children }: { children: ReactNode }) {
