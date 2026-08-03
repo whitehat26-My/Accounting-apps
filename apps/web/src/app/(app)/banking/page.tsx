@@ -156,6 +156,7 @@ export default function BankingPage() {
             onChanged={refresh}
           />
           <RulesCard glAccounts={glAccounts.data?.accounts ?? []} onChanged={refresh} />
+          <ReconcileCard account={selected} />
         </>
       ) : null}
     </div>
@@ -555,6 +556,96 @@ function LineRow({
         </div>
       )}
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+interface ReconciliationView {
+  asOfDate: string;
+  adjustedBankBalance: string;
+  adjustedBookBalance: string;
+  variance: string;
+  reconciles: boolean;
+  unpresentedPayments: string;
+  depositsInTransit: string;
+  unrecordedBankMovement: string;
+}
+
+/**
+ * The month-end handshake: bank says, books say, and the difference must be
+ * ZERO before sign-off. The server refuses a session that does not balance —
+ * "reconciled with a RM 12 difference" is not a thing this system records.
+ */
+function ReconcileCard({ account }: { account: BankAccount }) {
+  const [asOf, setAsOf] = useState(new Date().toISOString().slice(0, 10));
+  const [signedOff, setSignedOff] = useState(false);
+
+  const recon = useQuery({
+    queryKey: ['reconciliation', account.id, asOf],
+    queryFn: () =>
+      api<ReconciliationView>(`/v1/bank-accounts/${account.id}/reconciliation?asOf=${asOf}`),
+  });
+
+  const signOff = useMutation({
+    mutationFn: () =>
+      api(`/v1/bank-accounts/${account.id}/reconciliation`, {
+        method: 'POST',
+        body: { periodStart: `${asOf.slice(0, 8)}01`, periodEnd: asOf },
+      }),
+    onSuccess: () => setSignedOff(true),
+  });
+
+  const r = recon.data;
+
+  return (
+    <Card title="Reconcile — does the bank agree with the books?">
+      <div className="space-y-3">
+        <Field label="As at">
+          <Input type="date" value={asOf} onChange={(e) => { setAsOf(e.target.value); setSignedOff(false); }} />
+        </Field>
+        {r ? (
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between">
+              <span className="text-neutral-500">Bank says (adjusted)</span>
+              <span className="font-medium">{rm(r.adjustedBankBalance)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span className="text-neutral-500">Books say (adjusted)</span>
+              <span className="font-medium">{rm(r.adjustedBookBalance)}</span>
+            </div>
+            <div
+              className={`flex justify-between rounded-md px-3 py-2 font-semibold ${
+                r.reconciles ? 'bg-emerald-50 text-emerald-900' : 'bg-amber-50 text-amber-900'
+              }`}
+            >
+              <span>Difference</span>
+              <span>{rm(r.variance)}</span>
+            </div>
+            {!r.reconciles ? (
+              <p className="text-xs text-neutral-500">
+                A non-zero difference means a missing entry, a duplicate, or a wrong
+                amount — work the “to sort” list above until this reads RM 0.00.
+                Sign-off is refused until it does.
+              </p>
+            ) : null}
+            {r.reconciles && !signedOff ? (
+              <Button onClick={() => signOff.mutate()} disabled={signOff.isPending}>
+                {signOff.isPending ? 'Signing off…' : 'Sign off this period'}
+              </Button>
+            ) : null}
+            {signedOff ? (
+              <p className="text-sm text-emerald-700">
+                Signed off. The evidence is recorded — an auditor can see who, and when.
+              </p>
+            ) : null}
+            {signOff.isError ? <ErrorNote error={signOff.error} /> : null}
+          </div>
+        ) : (
+          <p className="text-sm text-neutral-500">Loading…</p>
+        )}
+      </div>
+    </Card>
   );
 }
 

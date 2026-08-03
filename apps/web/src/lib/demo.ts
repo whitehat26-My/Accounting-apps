@@ -818,6 +818,93 @@ export function demoApi(
     return { id: reminderAction[1]!, status: reminderAction[2] === 'sent' ? 'SENT' : 'CANCELLED' };
   }
 
+  if (p === '/v1/approvals') return { pending: [] };
+
+  const creditMatch = /^\/v1\/invoices\/([^/]+)\/credit-note$/.exec(p);
+  if (creditMatch && method === 'POST') {
+    const invoices = store.openInvoices ?? seedOpenInvoices();
+    const inv = invoices.find((i) => i.id === creditMatch[1]);
+    if (inv) {
+      inv.amountDueCents = 0;
+      inv.status = 'CREDITED';
+    }
+    store.openInvoices = invoices;
+    save(store);
+    return { id: uid(), creditNoteNo: 'CN-00001' };
+  }
+
+  if (p === '/v1/reports/sopl') {
+    return {
+      lines: [
+        { label: 'Revenue', level: 0, lineType: 'HEADER', amount: '0.0000' },
+        { label: 'Sales Revenue', level: 1, lineType: 'DETAIL', amount: '54230.0000' },
+        { label: 'Total revenue', level: 0, lineType: 'SUBTOTAL', amount: '54230.0000' },
+        { label: 'Cost of sales', level: 1, lineType: 'DETAIL', amount: '37960.0000' },
+        { label: 'Gross profit', level: 0, lineType: 'SUBTOTAL', amount: '16270.0000' },
+        { label: 'Expenses', level: 0, lineType: 'HEADER', amount: '0.0000' },
+        { label: 'Rent', level: 1, lineType: 'DETAIL', amount: '3000.0000' },
+        { label: 'Utilities', level: 1, lineType: 'DETAIL', amount: '742.0000' },
+        { label: 'Internet & Phone', level: 1, lineType: 'DETAIL', amount: '258.0000' },
+        { label: 'Profit for the period', level: 0, lineType: 'TOTAL', amount: '12270.0000' },
+      ],
+    };
+  }
+  if (p === '/v1/reports/sofp') {
+    return {
+      lines: [
+        { label: 'Assets', level: 0, lineType: 'HEADER', amount: '0.0000' },
+        { label: 'Cash and Bank', level: 1, lineType: 'DETAIL', amount: '18540.0000' },
+        { label: 'Trade Receivables', level: 1, lineType: 'DETAIL', amount: '8080.0000' },
+        { label: 'Inventory on Hand', level: 1, lineType: 'DETAIL', amount: '22740.0000' },
+        { label: 'Total assets', level: 0, lineType: 'SUBTOTAL', amount: '49360.0000' },
+        { label: 'Liabilities', level: 0, lineType: 'HEADER', amount: '0.0000' },
+        { label: 'Trade Payables', level: 1, lineType: 'DETAIL', amount: '600.0000' },
+        { label: 'Equity', level: 0, lineType: 'HEADER', amount: '0.0000' },
+        { label: 'Retained Earnings', level: 1, lineType: 'DETAIL', amount: '48760.0000' },
+        { label: 'Liabilities and equity', level: 0, lineType: 'TOTAL', amount: '49360.0000' },
+      ],
+    };
+  }
+  if (p === '/v1/reports/trial-balance') {
+    return {
+      rows: [
+        { accountId: 'acc-1000', code: '1000', name: 'Cash and Bank', type: 'ASSET', debit: '18540.0000', credit: '0.0000' },
+        { accountId: 'acc-1100', code: '1100', name: 'Trade Receivables', type: 'ASSET', debit: '8080.0000', credit: '0.0000' },
+        { accountId: 'acc-1300', code: '1300', name: 'Inventory on Hand', type: 'ASSET', debit: '22740.0000', credit: '0.0000' },
+        { accountId: 'acc-2000', code: '2000', name: 'Trade Payables', type: 'LIABILITY', debit: '0.0000', credit: '600.0000' },
+        { accountId: 'acc-4000', code: '4000', name: 'Sales Revenue', type: 'INCOME', debit: '0.0000', credit: '54230.0000' },
+        { accountId: 'acc-5000', code: '5000', name: 'Cost of Sales', type: 'EXPENSE', debit: '37960.0000', credit: '0.0000' },
+        { accountId: 'acc-3000', code: '3000', name: 'Retained Earnings', type: 'EQUITY', debit: '0.0000', credit: '32490.0000' },
+      ],
+      totalDebit: '87320.0000',
+      totalCredit: '87320.0000',
+      balanced: true,
+    };
+  }
+
+  const reconMatch = /^\/v1\/bank-accounts\/([^/]+)\/reconciliation$/.exec(p);
+  if (reconMatch && method === 'GET') {
+    const unmatched = (store.bankLines ?? seedBankLines())
+      .filter((l) => l.status === 'UNRECONCILED');
+    const reconciles = unmatched.length === 0;
+    return {
+      asOfDate: today(),
+      adjustedBankBalance: '18540.0000',
+      adjustedBookBalance: reconciles ? '18540.0000' : '17465.0000',
+      variance: reconciles ? '0.0000' : '1075.0000',
+      reconciles,
+      unpresentedPayments: '0.0000',
+      depositsInTransit: '0.0000',
+      unrecordedBankMovement: reconciles ? '0.0000' : '1075.0000',
+      counts: { unpresented: 0, unrecorded: unmatched.length },
+      invariantEight: { holds: reconciles, fullyReconciled: reconciles,
+                        expected: '18540.0000', actual: '18540.0000' },
+    };
+  }
+  if (reconMatch && method === 'POST') {
+    return { id: uid(), status: 'COMPLETED', variance: '0.0000' };
+  }
+
   if (p === '/v1/organisation') {
     return {
       id: 'demo-tenant', name: store.orgName ?? 'Demo Computer Shop',

@@ -199,10 +199,19 @@ with escalation state), and **Settings** (organisation, chart of accounts groupe
 type with add, tax codes where every rate must cite its legal instrument — the rate
 field is a select of whole percents, so no float ever forms).
 
-Still to build, screen-by-screen on the same shell: bill approvals UI, full
-reconciliation sign-off (the zero-variance session), credit/debit notes, manual
-journals, statements beyond Insights, year-end close UI. The API for all of it exists
-and is conformance-documented at /openapi.json.
+And the follow-up batch: **Approvals** (the queue of bills waiting for a yes, with the
+outstanding step named and approve/reject-with-comment), **Reports** (SOPL, SOFP and
+trial balance rendered exactly as the server lays them out — the screen is
+typesetting, no figure is computed client-side), **reconciliation sign-off** on the
+Banking screen (bank says / books say / difference, sign-off offered only at zero —
+the server refuses a non-balancing session anyway), and **Credit fully** on the Sales
+list (no lines sent: everything comes off the original, per the credit-from-invoice
+rule).
+
+Still to build, screen-by-screen on the same shell: debit notes UI, manual journals,
+cash flow / equity statements and CSV exports on the Reports screen, year-end close
+UI, audit log viewer. The API for all of it exists and is conformance-documented at
+/openapi.json.
 
 ### 4.2 Onboarding — BUILT (`0030`, `packages/db/src/onboarding.ts`)
 

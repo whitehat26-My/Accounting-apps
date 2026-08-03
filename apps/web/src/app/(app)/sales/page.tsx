@@ -137,6 +137,18 @@ function InvoiceRow({
   const [depositAccountId, setDepositAccountId] = useState('');
   const [amount, setAmount] = useState(invoice.amountDue);
 
+  const credit = useMutation({
+    mutationFn: (reason: string) =>
+      api(`/v1/invoices/${invoice.id}/credit-note`, {
+        method: 'POST',
+        // No lines: credit everything not already credited. Price, account
+        // and tax come from the original — a credit that differs from the
+        // sale is not a reversal of it.
+        body: { creditDate: todayIso(), reason },
+      }),
+    onSuccess: onChanged,
+  });
+
   const receive = useMutation({
     mutationFn: () =>
       api('/v1/receipts', {
@@ -185,7 +197,27 @@ function InvoiceRow({
         <Button onClick={() => setPaying(!paying)}>
           {paying ? 'Cancel' : 'Record payment'}
         </Button>
+        <Button
+          onClick={() => {
+            const reason = window.prompt(
+              'Credit this invoice in full? Type a reason:\n' +
+                'RETURN, OVERCHARGE, DISCOUNT, CANCELLATION, BAD_DEBT or OTHER',
+              'CANCELLATION',
+            );
+            if (reason === null) return;
+            const normalised = reason.trim().toUpperCase();
+            if (!['RETURN', 'OVERCHARGE', 'DISCOUNT', 'CANCELLATION', 'BAD_DEBT', 'OTHER'].includes(normalised)) {
+              alert('Not a recognised reason — nothing was credited.');
+              return;
+            }
+            credit.mutate(normalised);
+          }}
+          disabled={credit.isPending}
+        >
+          Credit fully
+        </Button>
       </div>
+      {credit.isError ? <ErrorNote error={credit.error} /> : null}
 
       {paying ? (
         <div className="mt-2 flex flex-wrap items-end gap-2 rounded-md bg-neutral-50 p-2">
