@@ -150,6 +150,22 @@ const HELP: Record<string, { title: string; steps: string[] }> = {
       'A report that does not reconcile SAYS SO on its face — never ignore that line.',
     ],
   },
+  journals: {
+    title: 'Journals',
+    steps: [
+      'The journal book shows every posted entry — from sales, purchases, banking, or by hand.',
+      'A manual journal is for accruals, prepayments and corrections; debits must equal credits.',
+      'Posted entries are permanent. A mistake is fixed by a reversing entry, never by editing.',
+    ],
+  },
+  audit: {
+    title: 'Audit trail',
+    steps: [
+      'Every change in the system, with who made it, when, and from where.',
+      'The green banner means the log proves itself — a hash chain shows nothing was altered.',
+      'Filter by table name or action to answer "who touched this?"',
+    ],
+  },
   team: {
     title: 'Team',
     steps: [

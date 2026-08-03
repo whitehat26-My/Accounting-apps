@@ -103,9 +103,11 @@ THE APP'S SCREENS
 - Approvals: bills waiting for an approver.
 - Banking: import a bank statement (CSV or Maybank payment advice), match lines to invoices/bills, sign off the month; rules auto-categorise repeat lines.
 - Insights: charts — daily takings, cash runway.
-- Reports: P&L, balance sheet, trial balance, cash flow — with CSV export.
+- Reports: P&L, balance sheet, trial balance, cash flow, changes in equity — with CSV export.
+- Journals: the journal book, and manual entries (accruals, corrections) for the accountant.
 - Team: who works here and what role each holds.
-- Settings: chart of accounts and tax codes.
+- Audit: every change ever made — who, when, from where — on a tamper-evident chain.
+- Settings: chart of accounts, tax codes, period lock and year-end close.
 `;
 
 function systemPrompt(snapshot: string, screen: string | undefined): string {

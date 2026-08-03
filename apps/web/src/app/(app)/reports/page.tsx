@@ -1,16 +1,20 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { api, apiBlobUrl } from '@/lib/api';
 import { rm, todayIso } from '@/lib/display';
-import { Card, Field, Input, Skeleton } from '@/components/ui';
+import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
+import { can, useMe } from '@/lib/me';
 
 /**
- * The statements: profit or loss, financial position, trial balance.
+ * The statements: profit or loss, financial position, trial balance, cash
+ * flow, changes in equity — with CSV exports for the accountant.
  *
  * Rendered exactly as the server lays them out — label, indent level, line
  * type, amount string. No figure is computed here; the screen is typesetting.
+ * A statement that does not reconcile says so ON ITS FACE, in red, because
+ * the number and the doubt must travel together.
  */
 
 interface StatementLine {
@@ -27,13 +31,37 @@ interface TrialBalance {
   balanced: boolean;
 }
 
+interface CashFlow {
+  sections: {
+    activity: string;
+    subtotal: string;
+    lines: { accountId: string; code: string; name: string; amount: string }[];
+  }[];
+  netCashFlow: string;
+  openingCash: string;
+  closingCash: string;
+  reconciles: boolean;
+  difference: string;
+  unclassifiedAccounts: { id: string; code: string; name: string }[];
+}
+
+interface Equity {
+  components: { kind: string; key: string; label: string; opening: string; movement: string; closing: string }[];
+  openingEquity: string;
+  closingEquity: string;
+  consistent: boolean;
+}
+
 function firstOfMonth(): string {
   return `${todayIso().slice(0, 8)}01`;
 }
 
 export default function ReportsPage() {
+  const me = useMe();
+  const queryClient = useQueryClient();
   const [from, setFrom] = useState(firstOfMonth());
   const [to, setTo] = useState(todayIso());
+  const [exportError, setExportError] = useState<unknown>(null);
 
   const sopl = useQuery({
     queryKey: ['sopl', from, to],
@@ -47,6 +75,36 @@ export default function ReportsPage() {
     queryKey: ['trial-balance', from, to],
     queryFn: () => api<TrialBalance>(`/v1/reports/trial-balance?from=${from}&to=${to}`),
   });
+  const cashFlow = useQuery({
+    queryKey: ['cash-flow', from, to],
+    queryFn: () => api<CashFlow>(`/v1/reports/cash-flow?from=${from}&to=${to}`),
+  });
+  const equity = useQuery({
+    queryKey: ['equity', from, to],
+    queryFn: () => api<Equity>(`/v1/reports/changes-in-equity?from=${from}&to=${to}`),
+  });
+
+  const classify = useMutation({
+    mutationFn: (input: { accountId: string; classification: string }) =>
+      api('/v1/reports/cash-flow/classifications', { method: 'POST', body: input }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['cash-flow'] }),
+  });
+
+  // Fetch with the session attached, then hand the bytes to the browser as a
+  // download — a plain <a href> cannot carry the Authorization header.
+  async function exportCsv(path: string, filename: string) {
+    setExportError(null);
+    try {
+      const url = await apiBlobUrl(path);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setExportError(e);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -71,7 +129,141 @@ export default function ReportsPage() {
         </Card>
       </div>
 
-      <Card title="Trial balance">
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card
+          title="Cash flow"
+          action={
+            <Button variant="ghost" onClick={() => void exportCsv(`/v1/reports/cash-flow/export?from=${from}&to=${to}`, `cash-flow-${from}-to-${to}.csv`)}>
+              CSV
+            </Button>
+          }
+        >
+          {cashFlow.data ? (
+            <div className="space-y-3 text-sm">
+              {cashFlow.data.sections
+                .filter((s) => !(s.activity === 'UNCLASSIFIED' && s.lines.length === 0))
+                .map((section) => (
+                  <div key={section.activity}>
+                    <div className="pt-1 text-xs font-semibold uppercase text-slate-400">
+                      {section.activity.charAt(0) + section.activity.slice(1).toLowerCase()}
+                    </div>
+                    {section.lines.map((line) => (
+                      <div key={line.accountId} className="flex justify-between border-t border-slate-50 py-1">
+                        <span>
+                          <span className="font-mono text-xs text-slate-400">{line.code}</span> {line.name}
+                        </span>
+                        <span className={line.amount.startsWith('-') ? 'text-red-700' : ''}>{rm(line.amount)}</span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between border-t border-slate-100 py-1 font-semibold">
+                      <span>Net</span>
+                      <span className={section.subtotal.startsWith('-') ? 'text-red-700' : ''}>{rm(section.subtotal)}</span>
+                    </div>
+                  </div>
+                ))}
+              <div className="space-y-1 border-t-2 border-slate-300 pt-2">
+                <div className="flex justify-between font-semibold">
+                  <span>Net change in cash</span>
+                  <span>{rm(cashFlow.data.netCashFlow)}</span>
+                </div>
+                <div className="flex justify-between text-slate-500">
+                  <span>Cash at start</span>
+                  <span>{rm(cashFlow.data.openingCash)}</span>
+                </div>
+                <div className="flex justify-between font-semibold">
+                  <span>Cash at end</span>
+                  <span>{rm(cashFlow.data.closingCash)}</span>
+                </div>
+              </div>
+              {!cashFlow.data.reconciles ? (
+                <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-800">
+                  Does NOT reconcile to the movement in cash (off by {rm(cashFlow.data.difference)}). Do not
+                  rely on this statement.
+                </p>
+              ) : null}
+              {cashFlow.data.unclassifiedAccounts.length > 0 ? (
+                <div className="space-y-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                  <p>These accounts need a cash flow classification:</p>
+                  {cashFlow.data.unclassifiedAccounts.map((account) => (
+                    <div key={account.id} className="flex items-center justify-between gap-2">
+                      <span>
+                        {account.code} {account.name}
+                      </span>
+                      {can(me.data, 'org.manage') ? (
+                        <select
+                          className="rounded-md border-0 bg-white px-2 py-1 text-xs shadow-sm ring-1 ring-inset ring-amber-300"
+                          defaultValue=""
+                          onChange={(e) => {
+                            if (e.target.value)
+                              classify.mutate({ accountId: account.id, classification: e.target.value });
+                          }}
+                        >
+                          <option value="">Classify…</option>
+                          <option value="OPERATING">Operating</option>
+                          <option value="INVESTING">Investing</option>
+                          <option value="FINANCING">Financing</option>
+                        </select>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </div>
+          ) : (
+            <Loading />
+          )}
+        </Card>
+
+        <Card title="Changes in equity">
+          {equity.data ? (
+            <div className="overflow-x-auto text-sm">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-1 text-right text-xs text-slate-500">
+                <span className="text-left">Component</span>
+                <span>Opening</span>
+                <span>Movement</span>
+                <span>Closing</span>
+              </div>
+              {equity.data.components.map((component) => (
+                <div
+                  key={component.key}
+                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-slate-50 py-1 text-right"
+                >
+                  <span className="text-left">{component.label}</span>
+                  <span className="whitespace-nowrap">{rm(component.opening)}</span>
+                  <span className={`whitespace-nowrap ${component.movement.startsWith('-') ? 'text-red-700' : ''}`}>
+                    {rm(component.movement)}
+                  </span>
+                  <span className="whitespace-nowrap">{rm(component.closing)}</span>
+                </div>
+              ))}
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t-2 border-slate-300 py-1.5 text-right font-semibold">
+                <span className="text-left">Total equity</span>
+                <span className="whitespace-nowrap">{rm(equity.data.openingEquity)}</span>
+                <span />
+                <span className="whitespace-nowrap">{rm(equity.data.closingEquity)}</span>
+              </div>
+              {!equity.data.consistent ? (
+                <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-800">
+                  The components do not add up to the balance sheet&apos;s equity — tell your accountant.
+                </p>
+              ) : null}
+            </div>
+          ) : (
+            <Loading />
+          )}
+        </Card>
+      </div>
+
+      <ErrorNote error={exportError} />
+
+      <Card
+        title="Trial balance"
+        action={
+          <Button variant="ghost" onClick={() => void exportCsv(`/v1/reports/trial-balance/export?from=${from}&to=${to}`, `trial-balance-${from}-to-${to}.csv`)}>
+            CSV
+          </Button>
+        }
+      >
         {tb.data ? (
           <div>
             <table className="w-full text-sm">

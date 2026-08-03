@@ -54,12 +54,14 @@ const SECTIONS: { label: string | null; items: NavItem[] }[] = [
       { href: '/banking', label: 'Banking', icon: 'banking', needs: 'bank.reconcile' },
       { href: '/insights', label: 'Insights', icon: 'insights', needs: 'report.read' },
       { href: '/reports', label: 'Reports', icon: 'reports', needs: 'report.read' },
+      { href: '/journals', label: 'Journals', icon: 'journals', needs: 'journal.read' },
     ],
   },
   {
     label: 'Manage',
     items: [
       { href: '/team', label: 'Team', icon: 'team', needs: 'user.read' },
+      { href: '/audit', label: 'Audit', icon: 'audit', needs: 'audit.read' },
       { href: '/settings', label: 'Settings', icon: 'settings', needs: 'tax.read' },
     ],
   },

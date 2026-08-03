@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate } from '@/lib/display';
-import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
+import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
 
 /**
@@ -75,7 +75,189 @@ export default function SettingsPage() {
 
       <ChartCard canAdd={manages} />
       <TaxCard canAdd={writesTax} />
+      <PeriodsCard canLock={can(me.data, 'period.lock')} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+interface Period {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  status: 'OPEN' | 'CLOSED' | 'LOCKED';
+  entryCount: number;
+}
+
+interface FiscalYear {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+  openPeriods: number;
+}
+
+/**
+ * Periods and the year end.
+ *
+ * Closing a period stops routine posting into it; locking makes it final;
+ * closing the YEAR posts the profit to retained earnings and locks
+ * everything. Each is a judgement, so each asks before it acts — and
+ * reopening a closed year demands a written reason, which the audit trail
+ * keeps forever.
+ */
+function PeriodsCard({ canLock }: { canLock: boolean }) {
+  const queryClient = useQueryClient();
+  const [confirmYear, setConfirmYear] = useState<string | null>(null);
+
+  const periods = useQuery({
+    queryKey: ['periods'],
+    queryFn: () => api<{ periods: Period[] }>('/v1/periods'),
+  });
+  const years = useQuery({
+    queryKey: ['fiscal-years'],
+    queryFn: () => api<{ fiscalYears: FiscalYear[] }>('/v1/fiscal-years'),
+  });
+
+  const setStatus = useMutation({
+    mutationFn: (input: { id: string; status: string; reason?: string }) =>
+      api(`/v1/periods/${input.id}/status`, {
+        method: 'POST',
+        body: { status: input.status, ...(input.reason ? { reason: input.reason } : {}) },
+      }),
+    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ['periods'] }),
+  });
+
+  const closeYear = useMutation({
+    mutationFn: (id: string) => api(`/v1/fiscal-years/${id}/close`, { method: 'POST', body: {} }),
+    onSuccess: () => {
+      setConfirmYear(null);
+      void queryClient.invalidateQueries();
+    },
+  });
+
+  const reopenYear = useMutation({
+    mutationFn: (input: { id: string; reason: string }) =>
+      api(`/v1/fiscal-years/${input.id}/reopen`, { method: 'POST', body: { reason: input.reason } }),
+    onSuccess: () => void queryClient.invalidateQueries(),
+  });
+
+  return (
+    <Card title="Periods & year end">
+      {periods.data && years.data ? (
+        <div className="space-y-4">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-500">
+                <th className="pb-1">Period</th>
+                <th className="pb-1 text-right">Entries</th>
+                <th className="pb-1 pl-4">Status</th>
+                {canLock ? <th className="pb-1 text-right">Change</th> : null}
+              </tr>
+            </thead>
+            <tbody>
+              {periods.data.periods.map((period) => (
+                <tr key={period.id} className="border-t border-slate-100">
+                  <td className="py-1.5">
+                    {period.label}
+                    <span className="ml-2 text-xs text-slate-400">
+                      {displayDate(period.startDate)} – {displayDate(period.endDate)}
+                    </span>
+                  </td>
+                  <td className="py-1.5 text-right text-slate-500">{period.entryCount}</td>
+                  <td className="py-1.5 pl-4">
+                    <Badge status={period.status} />
+                  </td>
+                  {canLock ? (
+                    <td className="py-1.5 text-right">
+                      {period.status === 'OPEN' ? (
+                        <Button variant="ghost" onClick={() => setStatus.mutate({ id: period.id, status: 'CLOSED' })}>
+                          Close
+                        </Button>
+                      ) : period.status === 'CLOSED' ? (
+                        <span className="inline-flex gap-1.5">
+                          <Button variant="ghost" onClick={() => setStatus.mutate({ id: period.id, status: 'LOCKED' })}>
+                            Lock
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            onClick={() => {
+                              const reason = window.prompt('Why reopen this period? (kept in the audit trail)');
+                              if (reason) setStatus.mutate({ id: period.id, status: 'OPEN', reason });
+                            }}
+                          >
+                            Reopen
+                          </Button>
+                        </span>
+                      ) : (
+                        <span className="text-xs text-slate-400">Final</span>
+                      )}
+                    </td>
+                  ) : null}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <ErrorNote error={setStatus.error} />
+
+          <div className="space-y-2 border-t border-slate-100 pt-3">
+            {years.data.fiscalYears.map((year) => (
+              <div key={year.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
+                <span>
+                  <span className="font-medium">{year.label}</span>
+                  <span className="ml-2 text-xs text-slate-400">
+                    {displayDate(year.startDate)} – {displayDate(year.endDate)} · {year.openPeriods} period(s) still open
+                  </span>
+                </span>
+                <span className="flex items-center gap-2">
+                  <Badge status={year.status} />
+                  {canLock && year.status !== 'CLOSED' ? (
+                    confirmYear === year.id ? (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Button variant="danger" disabled={closeYear.isPending} onClick={() => closeYear.mutate(year.id)}>
+                          {closeYear.isPending ? 'Closing…' : 'Yes, close the year'}
+                        </Button>
+                        <Button variant="ghost" onClick={() => setConfirmYear(null)}>
+                          Cancel
+                        </Button>
+                      </span>
+                    ) : (
+                      <Button variant="ghost" onClick={() => setConfirmYear(year.id)}>
+                        Close year
+                      </Button>
+                    )
+                  ) : null}
+                  {canLock && year.status === 'CLOSED' ? (
+                    <Button
+                      variant="ghost"
+                      onClick={() => {
+                        const reason = window.prompt('Why reopen this closed year? (kept in the audit trail)');
+                        if (reason) reopenYear.mutate({ id: year.id, reason });
+                      }}
+                    >
+                      Reopen
+                    </Button>
+                  ) : null}
+                </span>
+              </div>
+            ))}
+            {confirmYear ? (
+              <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                Closing the year posts this year&apos;s profit to retained earnings and locks every
+                period. It can be reopened later, with a reason.
+              </p>
+            ) : null}
+            <ErrorNote error={closeYear.error} />
+            <ErrorNote error={reopenYear.error} />
+          </div>
+        </div>
+      ) : (
+        <Skeleton />
+      )}
+    </Card>
   );
 }
 

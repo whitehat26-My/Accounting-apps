@@ -208,10 +208,20 @@ the server refuses a non-balancing session anyway), and **Credit fully** on the 
 list (no lines sent: everything comes off the original, per the credit-from-invoice
 rule).
 
-Still to build, screen-by-screen on the same shell: debit notes UI, manual journals,
-cash flow / equity statements and CSV exports on the Reports screen, year-end close
-UI, audit log viewer. The API for all of it exists and is conformance-documented at
-/openapi.json.
+And the closing batch: **Journals** (the journal book from `GET /v1/reports/journal`
+with source filter, plus the manual-journal form — which shows NO client-side running
+total, deliberately: summing is arithmetic, arithmetic is the server's, and the
+validator's exact refusal is relayed verbatim), **Audit** (the trail with actor, IP
+and changed-fields columns, under a hash-chain-verified banner — a log that can prove
+nobody edited it), **Reports** completed (cash flow with inline classification of
+unclassified accounts, changes in equity, CSV export buttons for both plus the trial
+balance; a statement that does not reconcile says so in red on its face), and
+**Settings** gains **Periods & year end** (close/lock/reopen-with-reason per period,
+close-the-year with an inline confirm, reopen-with-reason).
+
+Still to build, screen-by-screen on the same shell: debit notes UI, and a fuller
+Banking screen for splitting one-to-many settlements. The API for both exists and is
+conformance-documented at /openapi.json.
 
 ### 4.2 Onboarding — BUILT (`0030`, `packages/db/src/onboarding.ts`)
 

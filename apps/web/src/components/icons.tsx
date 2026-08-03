@@ -21,6 +21,8 @@ const paths: Record<string, string> = {
   approvals: 'M3 8.5 6.5 12 13 4.5',
   team: 'M6 8a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5Zm-4 6a4 4 0 0 1 8 0M11 7.5a2 2 0 1 0-1.2-3.6M10.5 10a4 4 0 0 1 3.5 4',
   settings: 'M8 5.5A2.5 2.5 0 1 0 8 10.5 2.5 2.5 0 0 0 8 5.5ZM8 1.5v2m0 9v2m6.5-6.5h-2m-9 0h-2m10.6-4.6-1.4 1.4m-6.4 6.4-1.4 1.4m9.2 0-1.4-1.4M4.8 4.8 3.4 3.4',
+  journals: 'M4 2.5h8a1 1 0 0 1 1 1v9a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1Zm1.5 0v11M8 5.5h3m-3 2.5h3m-3 2.5h2',
+  audit: 'M8 1.5 13 3.5v4c0 3.2-2.1 5.6-5 7-2.9-1.4-5-3.8-5-7v-4L8 1.5ZM6 8l1.5 1.5L10.5 6',
 };
 
 export function Icon({ name, className = '' }: { name: string; className?: string }) {

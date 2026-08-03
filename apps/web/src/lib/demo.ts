@@ -91,6 +91,57 @@ interface DemoStore {
   reminders?: DemoReminder[];
   extraAccounts?: { id: string; code: string; name: string; type: string }[];
   taxCodes?: DemoTaxCode[];
+  manualJournals?: DemoJournalEntry[];
+  journalSeq?: number;
+  periods?: DemoPeriod[];
+  fyClosed?: boolean;
+}
+
+interface DemoJournalEntry {
+  entryId: string;
+  entryNo: string;
+  entryDate: string;
+  description: string | null;
+  sourceModule: string;
+  status: string;
+  reversalOfId: string | null;
+  lines: { accountCode: string; accountName: string; description: string | null; debit: string; credit: string }[];
+  totalDebit: string;
+  totalCredit: string;
+}
+
+interface DemoPeriod {
+  id: string;
+  fiscalYearId: string;
+  label: string;
+  sequence: number;
+  startDate: string;
+  endDate: string;
+  status: 'OPEN' | 'CLOSED' | 'LOCKED';
+  lockedBy: string | null;
+  lockedAt: string | null;
+  entryCount: number;
+}
+
+/** Jan–Aug 2026: months before July closed, July/August open. */
+function seedPeriods(): DemoPeriod[] {
+  return Array.from({ length: 8 }, (_, i) => {
+    const month = i + 1;
+    const mm = String(month).padStart(2, '0');
+    const lastDay = new Date(Date.UTC(2026, month, 0)).getUTCDate();
+    return {
+      id: `period-2026-${mm}`,
+      fiscalYearId: 'fy-2026',
+      label: `2026-${mm}`,
+      sequence: month,
+      startDate: `2026-${mm}-01`,
+      endDate: `2026-${mm}-${lastDay}`,
+      status: month < 7 ? ('CLOSED' as const) : ('OPEN' as const),
+      lockedBy: null,
+      lockedAt: null,
+      entryCount: month < 7 ? 120 + month * 7 : month === 7 ? 164 : 12,
+    };
+  });
 }
 
 interface DemoContact {
@@ -431,6 +482,7 @@ export function demoApi(
         'bank.read', 'bank.import', 'bank.reconcile', 'journal.read', 'journal.post',
         'bill.read', 'bill.create', 'bill.approve', 'payment.create', 'receipt.create',
         'collections.chase', 'tax.read', 'tax.write', 'org.manage',
+        'audit.read', 'period.lock',
       ],
     };
   }
@@ -1180,6 +1232,164 @@ export function demoApi(
       save(store);
       return { jobId: job.id, jobNo: job.jobNo, invoiceId: job.invoiceId, invoiceNo, total: dec(totalCents), changeDue, paid: true };
     }
+  }
+
+  // ---- journals, audit, periods — sample data like the reports -------------
+
+  if (p === '/v1/reports/journal') {
+    const manual = store.manualJournals ?? [];
+    const entries = [
+      ...manual,
+      {
+        entryId: 'demo-je-2', entryNo: 'JE-000102', entryDate: daysFromToday(-1),
+        description: 'Cash sale INV-00087', sourceModule: 'SALES', status: 'POSTED', reversalOfId: null,
+        lines: [
+          { accountCode: '1000', accountName: 'Cash and Bank', description: null, debit: '450.0000', credit: '0.0000' },
+          { accountCode: '4000', accountName: 'Sales Revenue', description: null, debit: '0.0000', credit: '450.0000' },
+        ],
+        totalDebit: '450.0000', totalCredit: '450.0000',
+      },
+      {
+        entryId: 'demo-je-1', entryNo: 'JE-000101', entryDate: daysFromToday(-2),
+        description: 'Stock received from Delima Networks', sourceModule: 'PURCHASES', status: 'POSTED', reversalOfId: null,
+        lines: [
+          { accountCode: '1300', accountName: 'Inventory', description: null, debit: '2400.0000', credit: '0.0000' },
+          { accountCode: '2000', accountName: 'Accounts Payable', description: null, debit: '0.0000', credit: '2400.0000' },
+        ],
+        totalDebit: '2400.0000', totalCredit: '2400.0000',
+      },
+    ];
+    const module = url.searchParams.get('sourceModule');
+    return { entries: module ? entries.filter((e) => e.sourceModule === module) : entries, truncated: false };
+  }
+
+  if (p === '/v1/journals' && method === 'POST') {
+    const input = b as {
+      entryDate: string; description?: string;
+      lines: { accountId: string; side: 'DEBIT' | 'CREDIT'; amount: string }[];
+    };
+    const debits = input.lines.filter((l) => l.side === 'DEBIT').reduce((s, l) => s + cents(l.amount), 0);
+    const credits = input.lines.filter((l) => l.side === 'CREDIT').reduce((s, l) => s + cents(l.amount), 0);
+    if (debits !== credits) {
+      throw demoError(422, `The journal entry is not valid: debits RM ${dec(debits)} do not equal credits RM ${dec(credits)}`);
+    }
+    const accountName = (id: string) =>
+      [...ACCOUNTS, ...(store.extraAccounts ?? [])].find((a) => a.id === id) ??
+      { code: '????', name: 'Account' };
+    const entryNo = `JE-${String(store.journalSeq ?? 103).padStart(6, '0')}`;
+    store.journalSeq = (store.journalSeq ?? 103) + 1;
+    store.manualJournals = [
+      {
+        entryId: uid(), entryNo, entryDate: input.entryDate,
+        description: input.description ?? null, sourceModule: 'MANUAL', status: 'POSTED', reversalOfId: null,
+        lines: input.lines.map((l) => ({
+          accountCode: accountName(l.accountId).code, accountName: accountName(l.accountId).name,
+          description: null,
+          debit: l.side === 'DEBIT' ? dec(cents(l.amount)) : '0.0000',
+          credit: l.side === 'CREDIT' ? dec(cents(l.amount)) : '0.0000',
+        })),
+        totalDebit: dec(debits), totalCredit: dec(credits),
+      },
+      ...(store.manualJournals ?? []),
+    ];
+    save(store);
+    return { entryNo, replayed: false };
+  }
+
+  if (p === '/v1/audit-chain/verify') {
+    return { intact: true, entries: 214, breaks: [] };
+  }
+
+  if (p === '/v1/audit') {
+    const entries = [
+      { id: '214', action: 'CREATE', entityType: 'payment', entityId: uid(), actorEmail: 'boss@shahgtech.my', actorIp: '175.139.1.20', occurredAt: `${today()}T14:05:00Z`, changed: [] },
+      { id: '213', action: 'UPDATE', entityType: 'invoice', entityId: uid(), actorEmail: 'boss@shahgtech.my', actorIp: '175.139.1.20', occurredAt: `${today()}T14:05:00Z`, changed: ['status', 'amount_due'] },
+      { id: '212', action: 'CREATE', entityType: 'journal_entry', entityId: uid(), actorEmail: 'cashier@shahgtech.my', actorIp: '175.139.1.21', occurredAt: `${today()}T11:32:00Z`, changed: [] },
+      { id: '211', action: 'UPDATE', entityType: 'repair_job', entityId: uid(), actorEmail: 'tech1@shahgtech.my', actorIp: '175.139.1.22', occurredAt: `${daysFromToday(-1)}T16:40:00Z`, changed: ['status'] },
+      { id: '210', action: 'UPDATE', entityType: 'item', entityId: uid(), actorEmail: 'boss@shahgtech.my', actorIp: '175.139.1.20', occurredAt: `${daysFromToday(-1)}T10:12:00Z`, changed: ['sale_unit_price'] },
+      { id: '209', action: 'CREATE', entityType: 'contact', entityId: uid(), actorEmail: 'cashier@shahgtech.my', actorIp: '175.139.1.21', occurredAt: `${daysFromToday(-2)}T09:03:00Z`, changed: [] },
+    ];
+    const action = url.searchParams.get('action');
+    const entityType = url.searchParams.get('entityType');
+    return {
+      entries: entries
+        .filter((e) => !action || e.action === action)
+        .filter((e) => !entityType || e.entityType.includes(entityType.toLowerCase())),
+      nextCursor: null,
+    };
+  }
+
+  if (p === '/v1/periods') {
+    return { periods: store.periods ?? seedPeriods() };
+  }
+
+  const periodStatus = /^\/v1\/periods\/([^/]+)\/status$/.exec(p);
+  if (periodStatus && method === 'POST') {
+    const input = b as { status: 'OPEN' | 'CLOSED' | 'LOCKED' };
+    const periods = store.periods ?? seedPeriods();
+    const period = periods.find((x) => x.id === periodStatus[1]);
+    if (!period) throw demoError(404, 'Period not found');
+    period.status = input.status;
+    store.periods = periods;
+    save(store);
+    return period as unknown as Record<string, unknown>;
+  }
+
+  if (p === '/v1/fiscal-years') {
+    const open = (store.periods ?? seedPeriods()).filter((x) => x.status === 'OPEN').length;
+    return {
+      fiscalYears: [{
+        id: 'fy-2026', label: 'FY2026', startDate: '2026-01-01', endDate: '2026-12-31',
+        status: store.fyClosed ? 'CLOSED' : 'OPEN', closedAt: null, closingEntryId: null, openPeriods: open,
+      }],
+    };
+  }
+
+  if (/^\/v1\/fiscal-years\/[^/]+\/close$/.test(p) && method === 'POST') {
+    store.fyClosed = true;
+    store.periods = (store.periods ?? seedPeriods()).map((x) => ({ ...x, status: 'LOCKED' as const }));
+    save(store);
+    return { closed: true };
+  }
+
+  if (/^\/v1\/fiscal-years\/[^/]+\/reopen$/.test(p) && method === 'POST') {
+    store.fyClosed = false;
+    save(store);
+    return { reopened: true };
+  }
+
+  if (p === '/v1/reports/cash-flow' && method === 'GET') {
+    return {
+      periodStart: url.searchParams.get('from'), periodEnd: url.searchParams.get('to'), currency: 'MYR',
+      sections: [
+        {
+          activity: 'OPERATING', subtotal: '8420.0000',
+          lines: [
+            { accountId: 'a1', code: '4000', name: 'Sales Revenue', amount: '12076.0000', entryCount: 31 },
+            { accountId: 'a2', code: '5000', name: 'Cost of Sales', amount: '-2400.0000', entryCount: 6 },
+            { accountId: 'a3', code: '6000', name: 'Rent & utilities', amount: '-1256.0000', entryCount: 3 },
+          ],
+        },
+        { activity: 'INVESTING', subtotal: '0.0000', lines: [] },
+        { activity: 'FINANCING', subtotal: '0.0000', lines: [] },
+        { activity: 'UNCLASSIFIED', subtotal: '0.0000', lines: [] },
+      ],
+      netCashFlow: '8420.0000', openingCash: '10120.0000', closingCash: '18540.0000',
+      entryCount: 40, unclassifiedAccounts: [],
+      reconciles: true, difference: '0.0000', violations: [], rollupAgrees: true, rollupClosingCash: '18540.0000',
+    };
+  }
+
+  if (p === '/v1/reports/changes-in-equity') {
+    return {
+      periodStart: url.searchParams.get('from'), periodEnd: url.searchParams.get('to'), currency: 'MYR',
+      components: [
+        { kind: 'ACCOUNT', key: 'sc', code: '3100', label: 'Share capital', opening: '10000.0000', movement: '0.0000', closing: '10000.0000' },
+        { kind: 'RETAINED', key: 're', code: '3000', label: 'Retained earnings', opening: '21340.0000', movement: '3552.0000', closing: '24892.0000' },
+      ],
+      openingEquity: '31340.0000', profitForPeriod: '3552.0000', otherMovements: '0.0000',
+      closingEquity: '34892.0000', consistent: true, violations: [],
+    };
   }
 
   // ---- assistant -----------------------------------------------------------
