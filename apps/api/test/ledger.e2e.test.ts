@@ -104,6 +104,90 @@ describe('manual journal entries', () => {
 });
 
 // ---------------------------------------------------------------------------
+// The journal form's auto-fill: mined from THIS tenant's own posting history
+// ---------------------------------------------------------------------------
+
+describe('journal counter-account suggestion', () => {
+  it('has never seen this account before, and says so honestly', async () => {
+    const response = await call(api, {
+      method: 'GET',
+      // Cost of Sales: seeded, but nothing before this describe block ever
+      // posts to it, so it has no pairing history yet.
+      ...as(`/v1/journals/suggest-pair?accountId=${tenant.accounts['5000']}&side=DEBIT`),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body['suggestion']).toBeNull();
+  });
+
+  it('learns the pair after two-line entries have posted it that way', async () => {
+    // Post the same two-line pairing three times, so it is a pattern rather
+    // than a coincidence — the SQL orders by frequency, but one post already
+    // beats zero.
+    for (let i = 0; i < 3; i++) {
+      const response = await call(api, {
+        method: 'POST',
+        ...as('/v1/journals'),
+        body: {
+          entryDate: '2026-08-07',
+          description: 'Utilities paid',
+          lines: [
+            { accountId: tenant.accounts['6000'], side: 'DEBIT', amount: '10.00' },
+            { accountId: tenant.accounts['1000'], side: 'CREDIT', amount: '10.00' },
+          ],
+        },
+      });
+      expect(response.status).toBe(201);
+    }
+
+    const debitSide = await call(api, {
+      method: 'GET',
+      ...as(`/v1/journals/suggest-pair?accountId=${tenant.accounts['6000']}&side=DEBIT`),
+    });
+    expect(debitSide.body['suggestion']).toMatchObject({
+      accountId: tenant.accounts['1000'],
+      code: '1000',
+    });
+
+    // Symmetric: picking the credit side first suggests back the debit side.
+    const creditSide = await call(api, {
+      method: 'GET',
+      ...as(`/v1/journals/suggest-pair?accountId=${tenant.accounts['1000']}&side=CREDIT`),
+    });
+    expect(creditSide.body['suggestion']).toMatchObject({
+      accountId: tenant.accounts['6000'],
+      code: '6000',
+    });
+  });
+
+  it('ignores multi-line entries — a shared entry is not a chosen pair', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...as('/v1/journals'),
+      body: {
+        entryDate: '2026-08-07',
+        description: 'Three-way split, should not count as a pair',
+        lines: [
+          // Accounts Receivable: seeded, and otherwise untouched by any
+          // journal in this file, so a false positive here can only come
+          // from this entry.
+          { accountId: tenant.accounts['1100'], side: 'DEBIT', amount: '100.00' },
+          { accountId: tenant.accounts['1000'], side: 'CREDIT', amount: '60.00' },
+          { accountId: tenant.accounts['2000'], side: 'CREDIT', amount: '40.00' },
+        ],
+      },
+    });
+    expect(response.status).toBe(201);
+
+    const suggestion = await call(api, {
+      method: 'GET',
+      ...as(`/v1/journals/suggest-pair?accountId=${tenant.accounts['1100']}&side=DEBIT`),
+    });
+    expect(suggestion.body['suggestion']).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
 // Chart of accounts
 // ---------------------------------------------------------------------------
 

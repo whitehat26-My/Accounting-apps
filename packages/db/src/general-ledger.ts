@@ -430,6 +430,79 @@ export function trialBalanceCsv(
   return toCsv(rows);
 }
 
+export interface JournalCounterAccountSuggestion {
+  readonly accountId: string;
+  readonly code: string;
+  readonly name: string;
+  /** How many past two-line entries paired these accounts this way. */
+  readonly occurrences: number;
+}
+
+/**
+ * The account most often paired with this one on the OTHER side of a
+ * two-line posted entry — the manual journal form's "auto-fill the other
+ * line" feature.
+ *
+ * ---------------------------------------------------------------------------
+ * MINED FROM THE TENANT'S OWN POSTING HISTORY, NEVER GUESSED.
+ *
+ * "Rent is usually paid from Cash and Bank" is not a rule this system knows —
+ * it is a fact about how THIS shop has posted before, and the query below
+ * reads exactly that fact back. A hardcoded table of "sensible" pairs would
+ * be a plausible-looking guess for a tenant whose actual chart of accounts
+ * doesn't work that way, which is the same failure CLAUDE.md's rule against
+ * guessing statutory values exists to prevent — just for a UX default instead
+ * of a tax rate.
+ *
+ * Restricted to entries with EXACTLY two lines: a multi-line accrual would
+ * otherwise pollute the count with every account it happens to share an
+ * entry with, not the one it was actually paired against.
+ * ---------------------------------------------------------------------------
+ */
+export async function suggestJournalCounterAccount(
+  tx: Tx,
+  ctx: TenantContext,
+  accountId: string,
+  side: 'DEBIT' | 'CREDIT',
+): Promise<JournalCounterAccountSuggestion | null> {
+  // `journal_line` has no single "side" column — a line's side is which of
+  // its `debit`/`credit` amounts is non-zero (0001_ledger_core.sql). The
+  // `side <> 'X' OR column > 0` pairs below are a parameter-bound way to pick
+  // the right column per call without interpolating an identifier: when
+  // `side` is the OTHER value the clause is vacuously true, so only the
+  // matching branch actually constrains anything.
+  const [row] = await tx<
+    { account_id: string; code: string; name: string; occurrences: string }[]
+  >`
+      SELECT other.account_id, a.code, a.name, COUNT(*)::text AS occurrences
+        FROM journal_line l
+        JOIN journal_entry e
+          ON e.tenant_id = l.tenant_id AND e.id = l.journal_entry_id
+        JOIN journal_line other
+          ON other.tenant_id = l.tenant_id
+         AND other.journal_entry_id = l.journal_entry_id
+         AND other.id <> l.id
+        JOIN account a ON a.tenant_id = other.tenant_id AND a.id = other.account_id
+       WHERE l.tenant_id = ${ctx.tenantId}
+         AND l.account_id = ${accountId}
+         AND (${side} <> 'DEBIT' OR l.debit > 0)
+         AND (${side} <> 'CREDIT' OR l.credit > 0)
+         AND (${side} <> 'DEBIT' OR other.credit > 0)
+         AND (${side} <> 'CREDIT' OR other.debit > 0)
+         AND e.status IN ('POSTED', 'REVERSED')
+         AND (
+           SELECT COUNT(*) FROM journal_line jl2
+            WHERE jl2.tenant_id = e.tenant_id AND jl2.journal_entry_id = e.id
+         ) = 2
+       GROUP BY other.account_id, a.code, a.name
+       ORDER BY COUNT(*) DESC, other.account_id
+       LIMIT 1
+  `;
+
+  if (!row) return null;
+  return { accountId: row.account_id, code: row.code, name: row.name, occurrences: Number(row.occurrences) };
+}
+
 // ------------------------------------------------------------------ internals
 
 function isoDate(value: Date): string {

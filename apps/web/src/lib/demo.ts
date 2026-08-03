@@ -221,6 +221,18 @@ interface DemoBankLine {
   status: string;
 }
 
+interface SuggestionEntry {
+  bankTransactionId: string;
+  suggestions: {
+    candidateIds: string[];
+    kind: string;
+    confidence: number;
+    reason: string;
+    amountDifference: string;
+    dayDifference: number;
+  }[];
+}
+
 interface DemoBankRule {
   id: string;
   name: string;
@@ -344,6 +356,8 @@ function seedBankLines(): DemoBankLine[] {
       description: 'IBG TRANSFER FR NUSANTARA RETAIL SDN BHD INV-00042', amountCents: 108000, status: 'UNRECONCILED' },
     { id: 'bl-2', bankAccountId: 'bank-1', txnDate: today(), reference: null,
       description: 'SERVICE CHARGE', amountCents: -500, status: 'UNRECONCILED' },
+    { id: 'bl-3', bankAccountId: 'bank-1', txnDate: today(), reference: null,
+      description: 'IBG TRANSFER FR NUSANTARA RETAIL SDN BHD INV-00042 INV-00035', amountCents: 358000, status: 'UNRECONCILED' },
   ];
 }
 
@@ -482,7 +496,7 @@ export function demoApi(
         'bank.read', 'bank.import', 'bank.reconcile', 'journal.read', 'journal.post',
         'bill.read', 'bill.create', 'bill.approve', 'payment.create', 'receipt.create',
         'collections.chase', 'tax.read', 'tax.write', 'org.manage',
-        'audit.read', 'period.lock',
+        'audit.read', 'period.lock', 'debitnote.create',
       ],
     };
   }
@@ -884,6 +898,19 @@ export function demoApi(
     return { id: uid(), creditNoteNo: 'CN-00001' };
   }
 
+  const debitMatch = /^\/v1\/bills\/([^/]+)\/debit-note$/.exec(p);
+  if (debitMatch && method === 'POST') {
+    const bills = store.openBills ?? seedOpenBills();
+    const bill = bills.find((x) => x.id === debitMatch[1]);
+    if (bill) {
+      bill.amountDueCents = 0;
+      bill.status = 'CREDITED';
+    }
+    store.openBills = bills;
+    save(store);
+    return { id: uid(), debitNoteNo: 'DN-00001' };
+  }
+
   if (p === '/v1/reports/sopl') {
     return {
       lines: [
@@ -1073,21 +1100,27 @@ export function demoApi(
 
   const suggestMatch = /^\/v1\/bank-accounts\/([^/]+)\/suggestions$/.exec(p);
   if (suggestMatch) {
-    // The seeded inbound transfer matches an open invoice by reference — the
-    // matching engine's normal day. Imported lines get no canned suggestion.
-    const lines = (store.bankLines ?? seedBankLines()).filter(
-      (l) => l.status === 'UNRECONCILED' && l.description.includes('INV-00042'),
-    );
-    return {
-      lines: lines.map((l) => ({
-        bankTransactionId: l.id,
-        suggestions: [{
-          candidateIds: ['demo-payment-1'], kind: 'INVOICE', confidence: 96,
-          reason: 'Amount matches exactly and the narrative quotes invoice INV-00042 for Nusantara Retail Sdn Bhd',
-          amountDifference: '0.0000', dayDifference: 0,
-        }],
-      })),
+    const byId = (id: string, suggestions: SuggestionEntry['suggestions']): SuggestionEntry | null => {
+      const line = (store.bankLines ?? seedBankLines()).find((l) => l.id === id && l.status === 'UNRECONCILED');
+      return line ? { bankTransactionId: id, suggestions } : null;
     };
+    const lines = [
+      // The plain case: one bank line, one invoice, matched on amount and reference.
+      byId('bl-1', [{
+        candidateIds: ['oi-1'], kind: 'INVOICE', confidence: 96,
+        reason: 'Amount matches exactly and the narrative quotes invoice INV-00042 for Nusantara Retail Sdn Bhd',
+        amountDifference: '0.0000', dayDifference: 0,
+      }]),
+      // The one-to-many case: one transfer, several invoices from the same
+      // customer settled together — this is what "Confirm split" is for.
+      byId('bl-3', [{
+        candidateIds: ['oi-1', 'oi-3'], kind: 'INVOICE', confidence: 82,
+        reason: 'Amount matches the sum of two open invoices for Nusantara Retail Sdn Bhd, both quoted in the narrative',
+        amountDifference: '0.0000', dayDifference: 0,
+      }]),
+    ].filter((l): l is SuggestionEntry => l !== null);
+
+    return { lines };
   }
 
   const matchLineMatch = /^\/v1\/bank-transactions\/([^/]+)\/(match|journal)$/.exec(p);
@@ -1261,6 +1294,22 @@ export function demoApi(
     ];
     const module = url.searchParams.get('sourceModule');
     return { entries: module ? entries.filter((e) => e.sourceModule === module) : entries, truncated: false };
+  }
+
+  if (p === '/v1/journals/suggest-pair') {
+    // The demo has no real posting history to mine, so it answers with the
+    // one pairing the seeded sample data actually shows — Rent paid from
+    // Cash and Bank — and nothing for any other account, same honesty as the
+    // real endpoint returning null when it has never seen the pair.
+    const accountId = url.searchParams.get('accountId');
+    const side = url.searchParams.get('side');
+    if (accountId === 'acc-6200' && side === 'DEBIT') {
+      return { suggestion: { accountId: 'acc-1000', code: '1000', name: 'Cash and Bank', occurrences: 3 } };
+    }
+    if (accountId === 'acc-1000' && side === 'CREDIT') {
+      return { suggestion: { accountId: 'acc-6200', code: '6200', name: 'Rent', occurrences: 3 } };
+    }
+    return { suggestion: null };
   }
 
   if (p === '/v1/journals' && method === 'POST') {

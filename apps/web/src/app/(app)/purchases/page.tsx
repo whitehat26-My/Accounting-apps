@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
+import { can, useMe } from '@/lib/me';
 
 /**
  * Bills: what the shop owes, entered when the paper arrives, paid when due.
@@ -64,6 +65,8 @@ const EMPTY_LINE: DraftLine = {
 
 export default function PurchasesPage() {
   const queryClient = useQueryClient();
+  const me = useMe();
+  const canDebit = can(me.data, 'debitnote.create');
 
   const bills = useQuery({
     queryKey: ['open-bills'],
@@ -100,6 +103,7 @@ export default function PurchasesPage() {
                   bill={bill}
                   overdue={bill.dueDate < today}
                   assetAccounts={(accounts.data?.accounts ?? []).filter((a) => a.type === 'ASSET')}
+                  canDebit={canDebit}
                   onChanged={refresh}
                 />
               ))}
@@ -127,15 +131,25 @@ export default function PurchasesPage() {
 
 // ---------------------------------------------------------------------------
 
+/**
+ * The reasons a debit note may cite — the same list `CreditNoteReason`
+ * defines for the payables side of the same correction, so a return and its
+ * mirror-image credit note are described the same way on both sides of the
+ * transaction.
+ */
+const DEBIT_NOTE_REASONS = ['RETURN', 'OVERCHARGE', 'DISCOUNT', 'CANCELLATION', 'BAD_DEBT', 'OTHER'];
+
 function BillRow({
   bill,
   overdue,
   assetAccounts,
+  canDebit,
   onChanged,
 }: {
   bill: OpenBill;
   overdue: boolean;
   assetAccounts: GlAccount[];
+  canDebit: boolean;
   onChanged: () => void;
 }) {
   const [paying, setPaying] = useState(false);
@@ -162,6 +176,18 @@ function BillRow({
     },
   });
 
+  const debit = useMutation({
+    mutationFn: (reason: string) =>
+      api(`/v1/bills/${bill.id}/debit-note`, {
+        method: 'POST',
+        // No lines: reverse everything not already reversed. Price, account
+        // and tax come off the bill — a debit note that differs from it is
+        // not a reversal of it.
+        body: { debitDate: todayIso(), reason },
+      }),
+    onSuccess: onChanged,
+  });
+
   return (
     <div className="rounded-md border border-slate-200 p-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
@@ -180,9 +206,32 @@ function BillRow({
         </div>
       </div>
 
-      <div className="mt-2">
+      <div className="mt-2 flex flex-wrap gap-2">
         <Button onClick={() => setPaying(!paying)}>{paying ? 'Cancel' : 'Pay'}</Button>
+        {canDebit ? (
+          <Button
+            variant="ghost"
+            onClick={() => {
+              const reason = window.prompt(
+                'Debit note this bill in full — send goods back or dispute the charge? Type a reason:\n' +
+                  DEBIT_NOTE_REASONS.join(', '),
+                'RETURN',
+              );
+              if (reason === null) return;
+              const normalised = reason.trim().toUpperCase();
+              if (!DEBIT_NOTE_REASONS.includes(normalised)) {
+                alert('Not a recognised reason — nothing was debited.');
+                return;
+              }
+              debit.mutate(normalised);
+            }}
+            disabled={debit.isPending}
+          >
+            {debit.isPending ? 'Recording…' : 'Debit note'}
+          </Button>
+        ) : null}
       </div>
+      {debit.isError ? <ErrorNote error={debit.error} /> : null}
 
       {paying ? (
         <div className="mt-2 flex flex-wrap items-end gap-2 rounded-md bg-slate-50 p-2">

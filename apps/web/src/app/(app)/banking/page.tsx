@@ -59,6 +59,20 @@ interface GlAccount {
   type: string;
 }
 
+interface OpenInvoice {
+  id: string;
+  invoiceNo: string;
+  contactName: string;
+  amountDue: string;
+}
+
+interface OpenBill {
+  id: string;
+  billNo: string;
+  supplierName: string;
+  amountDue: string;
+}
+
 interface BankRule {
   id: string;
   name: string;
@@ -108,6 +122,19 @@ export default function BankingPage() {
     enabled: can(me.data, 'journal.read'),
   });
 
+  // For explaining a one-to-many settlement suggestion — "these three
+  // invoices" needs to know their numbers and amounts, not just their ids.
+  const openInvoices = useQuery({
+    queryKey: ['open-invoices'],
+    queryFn: () => api<{ invoices: OpenInvoice[] }>('/v1/invoices'),
+    enabled: can(me.data, 'invoice.read'),
+  });
+  const openBills = useQuery({
+    queryKey: ['open-bills'],
+    queryFn: () => api<{ bills: OpenBill[] }>('/v1/bills'),
+    enabled: can(me.data, 'bill.read'),
+  });
+
   const selected =
     accounts.data?.bankAccounts.find((a) => a.id === accountId) ??
     accounts.data?.bankAccounts[0];
@@ -153,6 +180,8 @@ export default function BankingPage() {
           <ToSortCard
             account={selected}
             glAccounts={glAccounts.data?.accounts ?? []}
+            openInvoices={openInvoices.data?.invoices ?? []}
+            openBills={openBills.data?.bills ?? []}
             onChanged={refresh}
           />
           <RulesCard glAccounts={glAccounts.data?.accounts ?? []} onChanged={refresh} />
@@ -412,10 +441,14 @@ function ImportCard({
 function ToSortCard({
   account,
   glAccounts,
+  openInvoices,
+  openBills,
   onChanged,
 }: {
   account: BankAccount;
   glAccounts: GlAccount[];
+  openInvoices: OpenInvoice[];
+  openBills: OpenBill[];
   onChanged: () => void;
 }) {
   const lines = useQuery({
@@ -449,6 +482,8 @@ function ToSortCard({
                 line={line}
                 suggestion={suggestionFor(line.id)}
                 glAccounts={glAccounts}
+                openInvoices={openInvoices}
+                openBills={openBills}
                 onChanged={onChanged}
               />
             ))}
@@ -465,15 +500,26 @@ function ToSortCard({
   );
 }
 
+/** One document behind a one-to-many settlement: what it is, and what it owes. */
+interface SplitCandidate {
+  id: string;
+  label: string;
+  amountDue: string;
+}
+
 function LineRow({
   line,
   suggestion,
   glAccounts,
+  openInvoices,
+  openBills,
   onChanged,
 }: {
   line: BankLine;
   suggestion: { candidateIds: string[]; kind: string; confidence: number; reason: string } | undefined;
   glAccounts: GlAccount[];
+  openInvoices: OpenInvoice[];
+  openBills: OpenBill[];
   onChanged: () => void;
 }) {
   const [bookAccountId, setBookAccountId] = useState('');
@@ -493,6 +539,52 @@ function LineRow({
           reason: suggestion!.reason,
         },
       }),
+    onSuccess: onChanged,
+  });
+
+  /**
+   * One bank line settling several open documents at once — a customer
+   * paying three invoices in a single transfer, most often. Each candidate is
+   * confirmed as its OWN match, at its OWN amount: that is what lets the
+   * matching engine's one-to-many suggestion become one-tap acceptable
+   * without inventing a split the documents themselves don't already state.
+   */
+  const candidates: SplitCandidate[] | null =
+    suggestion && suggestion.candidateIds.length > 1
+      ? (() => {
+          const lookup: (id: string) => SplitCandidate | undefined =
+            suggestion.kind === 'INVOICE'
+              ? (id) => {
+                  const inv = openInvoices.find((i) => i.id === id);
+                  return inv ? { id: inv.id, label: `${inv.invoiceNo} — ${inv.contactName}`, amountDue: inv.amountDue } : undefined;
+                }
+              : suggestion.kind === 'BILL'
+                ? (id) => {
+                    const bill = openBills.find((b) => b.id === id);
+                    return bill ? { id: bill.id, label: `${bill.billNo} — ${bill.supplierName}`, amountDue: bill.amountDue } : undefined;
+                  }
+                : () => undefined;
+          const resolved = suggestion.candidateIds.map(lookup);
+          return resolved.every((c): c is SplitCandidate => c !== undefined) ? resolved : null;
+        })()
+      : null;
+
+  const acceptSplit = useMutation({
+    mutationFn: async () => {
+      for (const candidate of candidates ?? []) {
+        await api(`/v1/bank-transactions/${line.id}/match`, {
+          method: 'POST',
+          body: {
+            matchedType: suggestion!.kind,
+            matchedId: candidate.id,
+            amount: candidate.amountDue,
+            confidence: suggestion!.confidence,
+            method: 'MANUAL',
+            reason: suggestion!.reason,
+          },
+        });
+      }
+    },
     onSuccess: onChanged,
   });
 
@@ -528,9 +620,27 @@ function LineRow({
             >
               Accept match ({suggestion.confidence}%)
             </Button>
+          ) : candidates ? (
+            <div className="mt-2 space-y-1.5">
+              <ul className="space-y-1 rounded-md bg-white/60 px-2 py-1.5">
+                {candidates.map((c) => (
+                  <li key={c.id} className="flex justify-between gap-3">
+                    <span>{c.label}</span>
+                    <span className="font-medium">{rm(c.amountDue)}</span>
+                  </li>
+                ))}
+              </ul>
+              <Button onClick={() => acceptSplit.mutate()} disabled={acceptSplit.isPending}>
+                {acceptSplit.isPending
+                  ? 'Confirming…'
+                  : `Confirm split — settles ${candidates.length} (${suggestion.confidence}%)`}
+              </Button>
+              {acceptSplit.isError ? <ErrorNote error={acceptSplit.error} /> : null}
+            </div>
           ) : (
             <p className="mt-1 italic">
-              Settles several documents at once — confirm this one from the desktop for now.
+              Settles several documents at once, but their details are not loaded here —
+              confirm this one from the desktop for now.
             </p>
           )}
           {accept.isError ? <ErrorNote error={accept.error} /> : null}

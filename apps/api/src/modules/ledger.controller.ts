@@ -18,6 +18,7 @@ import {
   reopenFiscalYear,
   receivablesAtClosingRate,
   runRevaluation,
+  suggestJournalCounterAccount,
   updateAccount,
   withTenant,
   type Sql,
@@ -290,6 +291,25 @@ export class LedgerController {
     });
   }
 
+  /**
+   * "The other line usually goes to…" — mined from this tenant's own posting
+   * history, never guessed. See `suggestJournalCounterAccount`.
+   */
+  @Requires('journal.read')
+  @Get('journals/suggest-pair')
+  async suggestPair(
+    @Query('accountId') accountId: string,
+    @Query('side') side: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const parsed = parse(suggestPairSchema, { accountId, side });
+    const ctx = tenantContextOf(request);
+    const suggestion = await withTenant(this.sql, ctx, (tx) =>
+      suggestJournalCounterAccount(tx, ctx, parsed.accountId, parsed.side),
+    );
+    return { suggestion };
+  }
+
   // ---- Period-end revaluation ---------------------------------------------
 
   /**
@@ -455,6 +475,11 @@ const journalSchema = z.object({
     // Two lines is the minimum that can balance. One is always wrong, and
     // catching it here gives a better message than the trigger would.
     .min(2),
+});
+
+const suggestPairSchema = z.object({
+  accountId: z.string().uuid(),
+  side: z.enum(['DEBIT', 'CREDIT']),
 });
 
 const listAccountsSchema = z.object({

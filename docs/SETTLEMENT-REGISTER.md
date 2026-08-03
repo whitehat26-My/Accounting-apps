@@ -14,9 +14,9 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0033`, 144 HTTP routes (operations in the
-generated OpenAPI document — the measured figure, not a hand count), 1,352 tests
-(633 domain · 516 db · 165 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0033`, 145 HTTP routes (operations in the
+generated OpenAPI document — the measured figure, not a hand count), 1,355 tests
+(633 domain · 516 db · 168 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
 **The AUTOMATION track (started 2026-08-02):** the target is the full
@@ -181,8 +181,8 @@ account, upload/paste a CSV with preview-before-import (a wrong column map fails
 of the person who can fix it), the to-sort queue with the matching engine's reasons and
 one-tap accept, book-to-account for bank charges, and rules management (create, toggle
 auto-book, run over the backlog) — the whole reconciliation track usable from an iPad.
-One-to-many suggestions are shown with their reason but not one-tap-acceptable yet;
-splitting a settlement needs a fuller screen.
+One-to-many suggestions are one-tap acceptable too, resolved against the open
+invoices/bills already on hand and confirmed as one match per document (below).
 Token store spends the rotating refresh token through one serialised in-flight promise —
 two racing 401s must not double-spend a token the server treats as stolen on reuse. The
 browser talks to /api/* and Next rewrites to the API, so CORS never exists. A Playwright
@@ -219,9 +219,32 @@ balance; a statement that does not reconcile says so in red on its face), and
 **Settings** gains **Periods & year end** (close/lock/reopen-with-reason per period,
 close-the-year with an inline confirm, reopen-with-reason).
 
-Still to build, screen-by-screen on the same shell: debit notes UI, and a fuller
-Banking screen for splitting one-to-many settlements. The API for both exists and is
-conformance-documented at /openapi.json.
+And the shell's last two gaps, now closed: **Purchases** gains **Debit note** on
+each open bill (`POST /v1/bills/:id/debit-note`, `debitnote.create`) — full reversal
+with the same cited-reason prompt Sales' Credit fully already used, so a return and
+its mirror-image credit note are described the same way on both sides. **Banking**'s
+one-to-many suggestions are now one-tap acceptable: when the matching engine's
+`candidateIds` names more than one document, the screen resolves each against the
+open invoices/bills already fetched for Sales/Purchases, shows the breakdown (which
+document, how much of the transfer is theirs), and Confirm split posts one match per
+candidate at ITS OWN amount — the same `POST /v1/bank-transactions/:id/match` a
+single match uses, called once per document rather than a new endpoint inventing a
+split the documents don't already state.
+
+The manual-journal form also grew two small assists, both mined from the tenant's
+own posting history rather than guessed: picking the first line's account and
+typing its amount fills the SAME amount onto the second line (not a guess — a
+two-line entry's debit and credit must be equal, so any other value would be
+refused anyway), and the second line's ACCOUNT auto-fills from whichever account
+has most often appeared on the other side of a two-line entry with the first
+(`GET /v1/journals/suggest-pair`, mined from `journal_line`/`journal_entry`,
+restricted to two-line entries so a multi-line accrual can't pollute the count). A
+brand-new tenant with no posting history simply gets no suggestion — the honest
+answer, not a hardcoded "rent usually means cash" table.
+
+With this, every screen the shell promised has a working equivalent. What remains
+outstanding is stated deliberately (§2, §3) or is genuinely not started (§4.3, §4.6,
+§4.8) — nothing is a UI gap over a working API anymore.
 
 ### 4.2 Onboarding — BUILT (`0030`, `packages/db/src/onboarding.ts`)
 

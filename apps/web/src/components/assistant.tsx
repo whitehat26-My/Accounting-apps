@@ -132,6 +132,7 @@ const HELP: Record<string, { title: string; steps: string[] }> = {
     steps: [
       'Import the bank statement — CSV, or a Maybank payment advice as-is.',
       'Match each line to the invoice or bill it settles; rules learn repeat lines.',
+      'One transfer covering several invoices shows a breakdown — confirm the split in one tap.',
       'When the difference reads RM 0.00, sign off the month.',
     ],
   },

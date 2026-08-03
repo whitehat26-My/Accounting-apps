@@ -16,6 +16,21 @@ import { can, useMe } from '@/lib/me';
  * relays verbatim. A client-side total that disagreed with the server's would
  * be worse than none.
  *
+ * Two small assists on the default two-line entry, both explained on the
+ * form itself:
+ *
+ *   - The AMOUNT mirrors between the two lines as you type. This is not a
+ *     guess — a two-line entry has exactly one debit and one credit, so they
+ *     must be equal, and the server would refuse anything else anyway.
+ *   - The OTHER ACCOUNT is suggested from this tenant's own posting history
+ *     (`GET /v1/journals/suggest-pair`) the moment the first account is
+ *     picked, if the other side is still blank. It is a fact about how this
+ *     shop has posted before, not a hardcoded "rent usually means cash" rule —
+ *     a new tenant with no history simply gets no suggestion.
+ *
+ * Both stop applying the moment a third line is added — from there the split
+ * is the user's judgement, not a pattern to auto-complete.
+ *
  * The journal book below is `GET /v1/reports/journal` typeset: every posted
  * entry in the window, both sides shown, bounded by entry.
  */
@@ -68,6 +83,7 @@ export default function JournalsPage() {
     { accountId: '', side: 'CREDIT', amount: '' },
   ]);
   const [posted, setPosted] = useState<string | null>(null);
+  const [suggesting, setSuggesting] = useState(false);
 
   const accounts = useQuery({
     queryKey: ['accounts'],
@@ -105,8 +121,47 @@ export default function JournalsPage() {
     },
   });
 
+  /**
+   * A two-line entry has exactly one debit and one credit, which MUST be
+   * equal — so mirroring the amount the user just typed onto the other line
+   * is not a guess, it is the only value that entry can ever balance with.
+   * The moment a third line exists, the split is a judgement call again and
+   * this stops.
+   */
   const setLine = (i: number, patch: Partial<FormLine>) =>
-    setLines((all) => all.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+    setLines((all) => {
+      const next = all.map((l, j) => (j === i ? { ...l, ...patch } : l));
+      if (patch.amount !== undefined && next.length === 2) {
+        const other = i === 0 ? 1 : 0;
+        next[other] = { ...next[other]!, amount: patch.amount };
+      }
+      return next;
+    });
+
+  /**
+   * The account was just picked on line `i`. If this is still the simple
+   * two-line form and the OTHER line has no account yet, ask what has paired
+   * with this one before and fill it in — the user can always change it.
+   */
+  async function chooseAccount(i: number, accountId: string) {
+    setLine(i, { accountId });
+    if (lines.length !== 2) return;
+    const other = i === 0 ? 1 : 0;
+    if (lines[other]!.accountId !== '') return;
+
+    setSuggesting(true);
+    try {
+      const { suggestion } = await api<{
+        suggestion: { accountId: string; code: string; name: string; occurrences: number } | null;
+      }>(`/v1/journals/suggest-pair?accountId=${accountId}&side=${lines[i]!.side}`);
+      if (suggestion) setLine(other, { accountId: suggestion.accountId });
+    } catch {
+      // No suggestion is a perfectly normal answer — a brand new tenant has no
+      // history to mine, and the form works exactly as well without one.
+    } finally {
+      setSuggesting(false);
+    }
+  }
 
   return (
     <div className="space-y-4">
@@ -141,7 +196,7 @@ export default function JournalsPage() {
                   <select
                     className="min-w-0 flex-1 rounded-lg border-0 bg-white px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-emerald-600"
                     value={line.accountId}
-                    onChange={(e) => setLine(i, { accountId: e.target.value })}
+                    onChange={(e) => void chooseAccount(i, e.target.value)}
                     required
                   >
                     <option value="">Account…</option>
@@ -195,8 +250,9 @@ export default function JournalsPage() {
             </div>
 
             <p className="text-xs text-slate-400">
-              Debits must equal credits — the server checks and will name the exact problem.
-              Posted entries are permanent; a mistake is fixed by a reversing entry.
+              {suggesting
+                ? 'Checking how you posted this before…'
+                : 'Pick the first account and the amount fills both lines; the other account fills itself in from how you posted before, if it has seen the pair. Debits must equal credits — the server checks and will name the exact problem. Posted entries are permanent; a mistake is fixed by a reversing entry.'}
             </p>
             <ErrorNote error={post.error} />
             {posted ? (
