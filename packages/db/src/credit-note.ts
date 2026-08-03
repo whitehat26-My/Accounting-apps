@@ -1,4 +1,7 @@
 import {
+  deriveCorrectionLines,
+  type CorrectableLine,
+  type CorrectionDerivationViolation,
   buildCreditNoteJournal,
   computeDocument,
   isErr,
@@ -33,7 +36,32 @@ export interface IssueCreditNoteInput {
   /** The invoice being corrected. Omit for a standalone customer credit. */
   readonly invoiceId?: string;
   readonly creditDate: string;
+  /**
+   * Decides which SST RETURN this credit reduces. Defaults to the credit date.
+   *
+   * A credit issued in April reduces April's return; back-dating it to the
+   * original supply's period would mean amending a return already filed. See
+   * `packages/domain/src/tax-return.ts`.
+   */
   readonly taxPointDate?: string;
+  /**
+   * Tax point of the SUPPLY BEING CORRECTED. Decides which RATE VERSION
+   * applies, and nothing else.
+   *
+   * ---------------------------------------------------------------------------
+   * WITHOUT THIS, A PRE-2024 INVOICE COULD NOT BE CREDITED AT ALL.
+   *
+   * Malaysia raised service tax from 6% to 8% on 1 March 2024. Computing a
+   * credit at the CREDIT date's rate reverses a RM 1,060 supply with a RM 1,080
+   * credit — and the over-credit guard then refuses the whole document with
+   * `CREDIT_EXCEEDS_INVOICE`, blaming the amount rather than the rate. Measured
+   * against the real engine, not theorised; `credit-note.test.ts` pins it.
+   *
+   * Defaults to the referenced invoice's tax point when one is referenced,
+   * which is the answer nobody should have to supply by hand.
+   * ---------------------------------------------------------------------------
+   */
+  readonly originalTaxPointDate?: string;
   readonly reason: CreditNoteReason;
   readonly reasonDetail?: string;
   readonly currency?: string;
@@ -48,6 +76,8 @@ export interface IssueCreditNoteInput {
 }
 
 export interface IssueCreditNoteLine {
+  /** The invoice line this reverses. Set by `creditFromInvoice`. */
+  readonly sourceLineId?: string;
   readonly description: string;
   readonly quantity: string;
   readonly unitPrice: string;
@@ -128,7 +158,28 @@ export async function issueCreditNote(
   }
 
   const currency = input.currency ?? 'MYR';
+
+  // Which return this reduces: the credit note's own period.
   const taxPointDate = input.taxPointDate ?? input.creditDate;
+
+  /*
+   * Which RATE applies: the original supply's tax point.
+   *
+   * Looked up from the referenced invoice when the caller did not say, because
+   * requiring it would mean every caller gets it right and the default is the
+   * bug. Falls back to the credit note's own tax point for a standalone credit,
+   * which corrects no particular earlier supply and so has no other answer.
+   */
+  const [referencedInvoice] = input.invoiceId
+    ? await tx<{ tax_point_date: Date }[]>`
+          SELECT tax_point_date FROM invoice
+           WHERE tenant_id = ${ctx.tenantId} AND id = ${input.invoiceId}
+      `
+    : [];
+
+  const rateTaxPointDate =
+    input.originalTaxPointDate ??
+    (referencedInvoice ? toIsoDate(referencedInvoice.tax_point_date) : taxPointDate);
 
   const [contact] = await tx<{ id: string }[]>`
       SELECT id FROM contact WHERE tenant_id = ${ctx.tenantId} AND id = ${input.contactId}
@@ -162,7 +213,10 @@ export async function issueCreditNote(
 
   const computed = computeDocument({
     lines: documentLines,
-    taxPointDate,
+    // The RATE date, not the return date. `computeTax` uses this only to
+    // resolve the rate version and any exemption in force — both of which are
+    // properties of the original supply, not of the correction.
+    taxPointDate: rateTaxPointDate,
     direction: 'OUTPUT',
     amountsAreTaxInclusive: input.amountsAreTaxInclusive ?? false,
     taxCodes,
@@ -262,12 +316,13 @@ export async function issueCreditNote(
   const [row] = await tx<{ id: string }[]>`
       INSERT INTO credit_note (
           tenant_id, credit_note_no, contact_id, invoice_id, credit_date,
-          tax_point_date, reason, reason_detail, currency, amounts_tax_inclusive,
+          tax_point_date, original_tax_point_date, reason, reason_detail,
+          currency, amounts_tax_inclusive,
           subtotal, tax_total, total, allocated_amount, status,
           idempotency_key, issued_by, issued_at
       ) VALUES (
           ${ctx.tenantId}, ${creditNoteNo}, ${input.contactId}, ${input.invoiceId ?? null},
-          ${input.creditDate}, ${taxPointDate}, ${input.reason},
+          ${input.creditDate}, ${taxPointDate}, ${rateTaxPointDate}, ${input.reason},
           ${input.reasonDetail ?? null}, ${currency},
           ${input.amountsAreTaxInclusive ?? false},
           ${doc.subtotal.toDecimalString()}, ${doc.taxTotal.toDecimalString()},
@@ -285,7 +340,8 @@ export async function issueCreditNote(
         INSERT INTO credit_note_line (
             tenant_id, credit_note_id, line_no, item_id, description, quantity,
             unit_price, discount_basis_points, account_id, tax_code_id,
-            taxable_amount, tax_amount, line_total, classification_code
+            taxable_amount, tax_amount, line_total, classification_code,
+            source_invoice_line_id
         ) VALUES (
             ${ctx.tenantId}, ${creditNoteId}, ${index + 1}, ${line.itemId ?? null},
             ${line.description}, ${line.quantity}, ${line.unitPrice},
@@ -293,7 +349,8 @@ export async function issueCreditNote(
             ${computedLine.netAmount.toDecimalString()},
             ${computedLine.taxAmount.toDecimalString()},
             ${computedLine.lineTotal.toDecimalString()},
-            ${line.classificationCode ?? null}
+            ${line.classificationCode ?? null},
+            ${line.sourceLineId ?? null}
         )
     `;
   }
@@ -491,3 +548,173 @@ export async function outputTaxForPeriod(
   return { taxableAmount: row!.taxable, taxAmount: row!.tax };
 }
 
+// ---------------------------------------------------------------------------
+// Crediting from the original document
+// ---------------------------------------------------------------------------
+
+export interface CreditFromInvoiceInput {
+  readonly invoiceId: string;
+  readonly creditDate: string;
+  readonly reason: CreditNoteReason;
+  readonly reasonDetail?: string;
+  /** Omit to credit everything not already credited. */
+  readonly lines?: readonly { invoiceLineId: string; quantity?: string }[];
+  readonly idempotencyKey: string;
+}
+
+/**
+ * Credit an invoice from the invoice itself.
+ *
+ * ---------------------------------------------------------------------------
+ * THE ROUTE A USER SHOULD ALWAYS TAKE, AND THE ONLY ONE THAT CAN BE RIGHT.
+ *
+ * `issueCreditNote` accepts arbitrary lines, which is necessary — a standalone
+ * customer credit corrects no particular invoice. But when there IS an invoice,
+ * retyping its figures is a chance to get each of them wrong:
+ *
+ *   * a price at today's list rather than what the customer was charged;
+ *   * a different tax code, so the SST reversed is not the SST charged;
+ *   * a different revenue account, leaving two accounts wrong by one amount;
+ *   * a rate from today rather than from the supply — which, across Malaysia's
+ *     2024 6%→8% change, made pre-2024 invoices impossible to credit at all.
+ *
+ * This reads all of it off the original, refuses to credit more of a line than
+ * remains, and passes the invoice's tax point so the rate is the one that was
+ * charged.
+ * ---------------------------------------------------------------------------
+ */
+export async function creditFromInvoice(
+  tx: Tx,
+  ctx: TenantContext,
+  input: CreditFromInvoiceInput,
+): Promise<IssuedCreditNote> {
+  const [invoice] = await tx<
+    { id: string; contact_id: string; currency: string; tax_point_date: Date; status: string }[]
+  >`
+      SELECT id, contact_id, currency, tax_point_date, status
+        FROM invoice
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${input.invoiceId}
+  `;
+
+  // 404-shaped, and indistinguishable from another tenant's invoice — RLS has
+  // already filtered that out, so the service genuinely cannot tell.
+  if (!invoice) {
+    throw new CreditNoteError('INVOICE_NOT_FOUND', `Invoice ${input.invoiceId} not found`);
+  }
+
+  if (invoice.status === 'DRAFT') {
+    throw new CreditNoteError(
+      'CREDIT_INVALID',
+      'A draft invoice has not been issued, so there is nothing to credit. Delete it instead.',
+    );
+  }
+
+  /*
+   * How much of each line has already been reversed.
+   *
+   * Summed from `credit_note_line` rather than read from a counter on
+   * `invoice_line`. A counter is a denormalisation that drifts — usually when a
+   * document is voided, which is exactly when somebody is already having a bad
+   * day — and this sum is over a handful of rows behind an index.
+   *
+   * VOIDED credit notes are excluded: a voided credit reverses nothing, so the
+   * quantity it named is available again.
+   */
+  const lineRows = await tx<
+    {
+      id: string; line_no: number; description: string; quantity: string;
+      unit_price: string; account_id: string; tax_code_id: string;
+      discount_basis_points: number; classification_code: string | null;
+      item_id: string | null; already_credited: string;
+    }[]
+  >`
+      SELECT il.id, il.line_no, il.description, il.quantity::text, il.unit_price::text,
+             il.account_id, il.tax_code_id, il.discount_basis_points,
+             il.classification_code, il.item_id,
+             COALESCE((
+                 SELECT SUM(cnl.quantity)
+                   FROM credit_note_line cnl
+                   JOIN credit_note cn
+                     ON cn.tenant_id = cnl.tenant_id AND cn.id = cnl.credit_note_id
+                  WHERE cnl.tenant_id = il.tenant_id
+                    AND cnl.source_invoice_line_id = il.id
+                    AND cn.status <> 'VOIDED'
+             ), 0)::text AS already_credited
+        FROM invoice_line il
+       WHERE il.tenant_id = ${ctx.tenantId} AND il.invoice_id = ${input.invoiceId}
+       ORDER BY il.line_no
+  `;
+
+  const creditable: CorrectableLine[] = lineRows.map((r) => ({
+    sourceLineId: r.id,
+    lineNo: r.line_no,
+    description: r.description,
+    quantity: r.quantity,
+    unitPrice: Money.fromDecimal(r.unit_price, invoice.currency),
+    accountId: r.account_id,
+    taxCodeId: r.tax_code_id,
+    ...(r.discount_basis_points ? { discountBasisPoints: r.discount_basis_points } : {}),
+    ...(r.classification_code !== null ? { classificationCode: r.classification_code } : {}),
+    ...(r.item_id !== null ? { itemId: r.item_id } : {}),
+    alreadyCredited: r.already_credited,
+  }));
+
+  const derived = deriveCorrectionLines(
+    creditable,
+    // The public input names an INVOICE line, because that is what a caller is
+    // holding. The deriver is document-agnostic — the same logic backs debit
+    // notes against bills — so the name is neutralised here at the boundary.
+    input.lines !== undefined
+      ? { lines: input.lines.map((l) => ({ sourceLineId: l.invoiceLineId, ...(l.quantity !== undefined ? { quantity: l.quantity } : {}) })) }
+      : {},
+  );
+
+  if (isErr(derived)) {
+    throw new CreditNoteError(
+      'CREDIT_INVALID',
+      derived.error.map(describeDerivation).join('; '),
+      derived.error,
+    );
+  }
+
+  return issueCreditNote(tx, ctx, {
+    contactId: invoice.contact_id,
+    invoiceId: input.invoiceId,
+    creditDate: input.creditDate,
+    // The RATE follows the original supply. `issueCreditNote` would look this
+    // up itself; passing it makes the intent visible at the call site.
+    originalTaxPointDate: toIsoDate(invoice.tax_point_date),
+    reason: input.reason,
+    ...(input.reasonDetail !== undefined ? { reasonDetail: input.reasonDetail } : {}),
+    currency: invoice.currency,
+    lines: derived.value.map((l) => ({
+      sourceLineId: l.sourceLineId,
+      description: l.description,
+      quantity: l.quantity,
+      unitPrice: l.unitPrice.toDecimalString(),
+      accountId: l.accountId,
+      taxCodeId: l.taxCodeId,
+      ...(l.discountBasisPoints !== undefined
+        ? { discountBasisPoints: l.discountBasisPoints }
+        : {}),
+      ...(l.classificationCode !== undefined
+        ? { classificationCode: l.classificationCode }
+        : {}),
+      ...(l.itemId !== undefined ? { itemId: l.itemId } : {}),
+    })),
+    idempotencyKey: input.idempotencyKey,
+  });
+}
+
+function describeDerivation(v: CorrectionDerivationViolation): string {
+  switch (v.code) {
+    case 'NO_SUCH_LINE':
+      return `Invoice line ${v.sourceLineId} is not on this invoice`;
+    case 'NOTHING_TO_CREDIT':
+      return 'Every line on this invoice has already been credited in full';
+    case 'EXCEEDS_REMAINING':
+      return `Line ${v.sourceLineId}: asked to credit ${v.requested}, only ${v.remaining} remains uncredited`;
+    case 'NON_POSITIVE_QUANTITY':
+      return `Line ${v.sourceLineId}: ${v.quantity} is not a creditable quantity`;
+  }
+}

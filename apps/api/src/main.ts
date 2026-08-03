@@ -1,6 +1,6 @@
 import 'reflect-metadata';
 import { randomUUID } from 'node:crypto';
-import { Logger } from '@nestjs/common';
+import { BadRequestException, Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FastifyAdapter, type NestFastifyApplication } from '@nestjs/platform-fastify';
 import type { FastifyRequest } from 'fastify';
@@ -17,10 +17,17 @@ import { attachContext } from './context/request-context.js';
  * own subset of the middleware proves the subset works, not the application.
  */
 export async function createApp(): Promise<NestFastifyApplication> {
+  const config = loadConfig();
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ trustProxy: true, bodyLimit: 8 * 1024 * 1024 }),
-    { logger: ['error', 'warn'] },
+    // `trustProxy` is config, defaulting to `false` — see config.ts. Trusting
+    // every hop (the old `true`) let a client forge `request.ip` via
+    // `X-Forwarded-For`, defeating the rate limiter and the audit `actor_ip`.
+    new FastifyAdapter({ trustProxy: config.trustProxy, bodyLimit: 8 * 1024 * 1024 }),
+    // `bodyParser: false` so the JSON parser registered below is the only one.
+    // Nest registers its own during `init()`, which would collide — and it is
+    // the one that rejects an empty body. See the parser for why that matters.
+    { logger: ['error', 'warn'], bodyParser: false },
   );
 
   // The request context is attached in a Fastify `onRequest` hook rather than
@@ -45,6 +52,46 @@ export async function createApp(): Promise<NestFastifyApplication> {
     });
     done();
   });
+
+  /*
+   * An empty body is `{}`, not a 400.
+   *
+   * Fastify's built-in JSON parser rejects a zero-length body outright when the
+   * request declares `Content-Type: application/json`. Two routes take no body
+   * at all — closing a fiscal year and submitting a tax return — and a client
+   * that sets the header anyway, which every HTTP library does by default on a
+   * POST, got "Body cannot be empty" with no hint that the body was never
+   * wanted. Nothing on the server had to change for the route to work; the
+   * request just had to say less.
+   *
+   * Registered here rather than worked around per route, because the next
+   * bodyless POST would hit it too.
+   */
+  app.getHttpAdapter().getInstance().addContentTypeParser(
+    'application/json',
+    { parseAs: 'string' },
+    (request, body: string, done) => {
+      // Keep the EXACT bytes received, before JSON.parse loses them. A gateway
+      // signs the raw payload, and re-serialising the parsed object (different
+      // key order, whitespace, unicode escaping) yields a different string whose
+      // signature never matches — the webhook verifier reads `rawBody`, not a
+      // round-tripped copy. Harmless for every other route, which ignores it.
+      (request as FastifyRequest & { rawBody?: string }).rawBody = body;
+      if (body.length === 0) return done(null, {});
+      try {
+        done(null, JSON.parse(body));
+      } catch {
+        // Malformed JSON is still a 400 — a body that was MEANT to say
+        // something and failed is a different case from one that says nothing.
+        done(new BadRequestException('Request body is not valid JSON'), undefined);
+      }
+    },
+  );
+
+  // Without this Nest never calls `onApplicationShutdown`, and the database
+  // pool in `DatabaseLifecycle` is never drained. `app.close()` alone tears
+  // down the HTTP server and leaves the PostgreSQL connections open.
+  app.enableShutdownHooks();
 
   // Deliberately NO `ValidationPipe`. Nest's pipe validates class-validator
   // decorators on DTO classes; this API validates with Zod in `parse()`, at the

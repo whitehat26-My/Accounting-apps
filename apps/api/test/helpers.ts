@@ -67,6 +67,12 @@ export async function createTestApi(name: string): Promise<TestApi> {
   process.env['DATABASE_URL'] = appUrl;
   process.env['JWT_SECRET'] = 'test-secret-that-is-long-enough-to-pass-validation';
   process.env['RATE_LIMIT'] = '10000';
+  process.env['PUBLIC_RATE_LIMIT'] = '10000';
+  // Registers the in-memory FakeGateway, which accepts any signature. Safe
+  // only because `loadConfig` refuses this flag when NODE_ENV is production —
+  // there is a test below asserting exactly that.
+  process.env['EMIL_ENABLE_FAKE_GATEWAY'] = '1';
+  process.env['EMIL_ENABLE_SANDBOX_VALUES'] = '1';
 
   const app = await createApp();
   await app.init();
@@ -177,6 +183,31 @@ export async function accessTokenFor(
     accessToken: response.body['accessToken'] as string,
     refreshToken: response.body['refreshToken'] as string,
     status: response.status,
+    body: response.body,
+  };
+}
+
+/**
+ * The same request, without parsing the body as JSON.
+ *
+ * `call` assumes JSON, which is right for every route but the CSV exports —
+ * and a test that ran those through `JSON.parse` would fail on the response
+ * rather than on the assertion, hiding what actually broke.
+ */
+export async function callRaw(api: TestApi, options: Call) {
+  const headers: Record<string, string> = {};
+  if (options.token) headers['authorization'] = `Bearer ${options.token}`;
+  if (options.tenantId) headers['x-tenant-id'] = options.tenantId;
+
+  const response = await api.app.getHttpAdapter().getInstance().inject({
+    method: options.method,
+    url: options.url,
+    headers,
+  });
+
+  return {
+    status: response.statusCode,
+    headers: response.headers as Record<string, string>,
     body: response.body,
   };
 }

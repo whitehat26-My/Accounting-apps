@@ -375,7 +375,9 @@ async function loadOpenPayables(
 
 async function resolveClosingRates(
   tx: Tx,
-  ctx: TenantContext,
+  // Unused: `rate_on_or_before` reads `current_tenant_id()` from the session.
+  // Kept for signature consistency — see `resolveRate` in invoice.ts.
+  _ctx: TenantContext,
   currencies: readonly string[],
   baseCurrency: string,
   asOfDate: string,

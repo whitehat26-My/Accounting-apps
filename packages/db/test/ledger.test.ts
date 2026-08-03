@@ -63,14 +63,36 @@ describe('posting a journal entry', () => {
     expect(events[0]).toMatchObject({ event_type: 'invoice.issued', status: 'PENDING' });
   });
 
-  it('writes a hash-chained audit row', async () => {
+  it('writes a hash-chained audit row for the entry AND every line', async () => {
+    // This used to assert a single hand-written 'JOURNAL_POSTED' row — the only
+    // audit row anywhere in the system. Migration 0016 replaced that insert with
+    // a trigger on every audited table, so the assertion is now about coverage:
+    // the header and each of its lines, each carrying a before image and the
+    // actor's origin, none of which the hand-written row had.
     const rows = await withTenant(sql, { tenantId: tenant.tenantId }, (tx) =>
-      tx<{ action: string; row_hash: Uint8Array }[]>`
-          SELECT action, row_hash FROM audit_log WHERE tenant_id = ${tenant.tenantId}
+      tx<{ action: string; entity_type: string; row_hash: Uint8Array; after_json: unknown }[]>`
+          SELECT action, entity_type, row_hash, after_json
+            FROM audit_log
+           WHERE tenant_id = ${tenant.tenantId}
+             AND entity_type IN ('journal_entry', 'journal_line')
+           ORDER BY id
       `,
     );
-    expect(rows[0]?.action).toBe('JOURNAL_POSTED');
-    expect(rows[0]?.row_hash.length).toBe(32); // sha256
+
+    const headers = rows.filter((r) => r.entity_type === 'journal_entry');
+    const lines = rows.filter((r) => r.entity_type === 'journal_line');
+
+    expect(headers.length).toBeGreaterThan(0);
+    // A balanced entry has at least two lines, and each is now attributable.
+    expect(lines.length).toBeGreaterThanOrEqual(2 * headers.length);
+
+    for (const row of rows) {
+      expect(row.action).toBe('CREATE');
+      expect(row.row_hash.length).toBe(32); // sha256
+    }
+
+    // The whole header, not a five-field summary that drifts from the schema.
+    expect(headers[0]!.after_json).toMatchObject({ status: 'POSTED' });
   });
 
   it('is idempotent — a replayed key posts exactly one entry', async () => {

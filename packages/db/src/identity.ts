@@ -3,6 +3,7 @@ import { hash as argonHash, verify as argonVerify } from '@node-rs/argon2';
 import {
   evaluateRefresh,
   expiryFrom,
+  familyExpired,
   resolvePrincipal,
   DEFAULT_SESSION_POLICY,
   type Permission,
@@ -320,6 +321,22 @@ export async function refreshSession(
     };
   }
 
+  // The family ceiling, enforced at last. Rotation bounds how long a STOLEN
+  // token is useful; this bounds how long a login persists at all, so a
+  // session refreshed daily cannot live forever. Checked here — not by a sweep
+  // — so a stopped job cannot silently extend every session.
+  const [family] = await tx<{ started_at: Date | null }[]>`
+      SELECT session_family_started_at(${outcome.session.familyId}::uuid) AS started_at
+  `;
+  if (family?.started_at && familyExpired(family.started_at.toISOString(), now, policy)) {
+    await tx`SELECT revoke_session_family(${outcome.session.familyId}::uuid, ${'Session family reached its 90-day ceiling'})`;
+    return {
+      ok: false,
+      code: 'SESSION_INVALID',
+      message: 'This session has reached its maximum age. Please sign in again.',
+    };
+  }
+
   const { token, hash } = mintToken();
   const expiresAt = expiryFrom(now, policy.refreshTokenSeconds);
 
@@ -350,6 +367,32 @@ export async function refreshSession(
 
 export async function revokeSession(tx: Tx, sessionId: string, reason = 'Signed out'): Promise<void> {
   await tx`SELECT revoke_session(${sessionId}::uuid, ${reason})`;
+}
+
+/**
+ * Sign out — by presenting the refresh token, which is proof of ownership.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY NOT BY SESSION ID.
+ *
+ * Logout is unauthenticated (a client whose access token expired must still be
+ * able to sign out), so it cannot demand a bearer token. Taking a `sessionId`
+ * instead let anyone who learned a session id — it is a readable claim inside
+ * any access token, including an expired one — revoke someone else's live
+ * session. The refresh token is a 256-bit secret only its holder has, so
+ * revoking the family it belongs to proves the caller owns that session.
+ * Returns quietly whether or not the token matched: telling a caller their
+ * token was already invalid is an oracle, and logout has nothing to gain from
+ * it.
+ * ---------------------------------------------------------------------------
+ */
+export async function revokeByRefreshToken(tx: Tx, refreshToken: string): Promise<void> {
+  const [row] = await tx<{ family_id: string }[]>`
+      SELECT family_id FROM find_session_by_token(${hashToken(refreshToken)})
+  `;
+  if (row) {
+    await tx`SELECT revoke_session_family(${row.family_id}::uuid, ${'Signed out'})`;
+  }
 }
 
 export async function revokeAllSessions(tx: Tx, familyId: string, reason: string): Promise<number> {
@@ -439,6 +482,47 @@ export async function principalFor(
   );
 
   return resolved.ok ? resolved.principal : undefined;
+}
+
+export interface TenantMember {
+  readonly membershipId: string;
+  readonly userId: string;
+  readonly email: string;
+  readonly fullName: string;
+  readonly role: RoleCode;
+  readonly status: string;
+  readonly expiresAt: string | null;
+  readonly joinedAt: string | null;
+}
+
+/** The team page: everyone with access to the current organisation. */
+export async function listMembers(tx: Tx): Promise<TenantMember[]> {
+  const rows = await tx<
+    { membership_id: string; user_id: string; email: string; full_name: string;
+      role_code: RoleCode; status: string; expires_at: Date | null;
+      joined_at: Date | null }[]
+  >`
+      SELECT * FROM members_of_current_tenant()
+  `;
+
+  return rows.map((r) => ({
+    membershipId: r.membership_id,
+    userId: r.user_id,
+    email: r.email,
+    fullName: r.full_name,
+    role: r.role_code,
+    status: r.status,
+    expiresAt: r.expires_at ? r.expires_at.toISOString() : null,
+    joinedAt: r.joined_at ? r.joined_at.toISOString() : null,
+  }));
+}
+
+/** "Add my cashier by email." Undefined when no active user holds it. */
+export async function userIdForEmail(tx: Tx, email: string): Promise<string | undefined> {
+  const [row] = await tx<{ user_id_for_email: string | null }[]>`
+      SELECT user_id_for_email(${email})
+  `;
+  return row?.user_id_for_email ?? undefined;
 }
 
 export interface AddMemberInput {

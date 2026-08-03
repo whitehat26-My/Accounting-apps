@@ -1,0 +1,29 @@
+-- =============================================================================
+-- 0030_onboarding
+--
+-- Self-serve organisation provisioning.
+--
+-- -----------------------------------------------------------------------------
+-- THE GAP: THERE HAS NEVER BEEN A WAY TO CREATE AN ORGANISATION.
+--
+-- Every test seeds `organisation`, the chart, the fiscal calendar and the
+-- posting map directly on the ADMIN connection — including the year-end e2e,
+-- which had to insert fiscal_year rows by hand before it could close anything.
+-- A real first-time user could authenticate and then do NOTHING: all 120
+-- routes assume a tenant that no route could create.
+--
+-- The fix is one INSERT grant plus a service. `emil_app` gains INSERT on
+-- `organisation`, and the RLS policy's WITH CHECK (id = current_tenant_id())
+-- still binds: a connection can only ever insert an organisation whose id it
+-- has already claimed as its tenant context. Claiming a FRESH uuid and
+-- creating that organisation is not an escalation — it is what self-serve
+-- signup IS. What the grant does NOT allow is touching any organisation whose
+-- id you cannot claim, which is every existing one, because the API only sets
+-- a tenant context after membership is verified — except in the one
+-- provisioning path, which generates the uuid itself.
+-- -----------------------------------------------------------------------------
+GRANT INSERT ON organisation TO emil_app;
+
+-- The provisioning path writes the first membership for the new organisation.
+-- INSERT on membership was already granted in 0012; nothing further needed —
+-- noted so nobody hunts for it here.

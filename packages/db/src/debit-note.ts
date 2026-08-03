@@ -1,4 +1,7 @@
 import {
+  deriveCorrectionLines,
+  type CorrectableLine,
+  type CorrectionDerivationViolation,
   buildDebitNoteJournal,
   computeDocument,
   isErr,
@@ -40,7 +43,22 @@ export interface IssueDebitNoteInput {
   /** The bill being corrected. Omit for a standalone supplier debit. */
   readonly billId?: string;
   readonly debitDate: string;
+  /** Decides which period this falls in. Defaults to the debit date. */
   readonly taxPointDate?: string;
+  /**
+   * Tax point of the SUPPLY BEING CORRECTED. Decides which RATE VERSION
+   * applies, and nothing else.
+   *
+   * The payables twin of the same field on `IssueCreditNoteInput`, and it
+   * exists for the same measured reason: computing a correction at the CURRENT
+   * date's rate reverses a 6% charge with an 8% credit across Malaysia's 2024
+   * service-tax change, overstating the reduction in the payable and tripping
+   * the over-correction guard so the document is refused outright.
+   *
+   * Defaults to the referenced bill's tax point, because requiring it would
+   * mean every caller has to get it right and the default is the bug.
+   */
+  readonly originalTaxPointDate?: string;
   readonly reason: CreditNoteReason;
   readonly reasonDetail?: string;
   readonly currency?: string;
@@ -51,6 +69,8 @@ export interface IssueDebitNoteInput {
 }
 
 export interface IssueDebitNoteLine {
+  /** The bill line this reverses. Set by `debitFromBill`. */
+  readonly sourceBillLineId?: string;
   readonly description: string;
   readonly quantity: string;
   readonly unitPrice: string;
@@ -135,7 +155,20 @@ export async function issueDebitNote(
   }
 
   const currency = input.currency ?? 'MYR';
+  // Which period this falls in: the debit note's own date.
   const taxPointDate = input.taxPointDate ?? input.debitDate;
+
+  // Which RATE applies: the original supply's tax point. See the field's note.
+  const [referencedBill] = input.billId
+    ? await tx<{ tax_point_date: Date }[]>`
+          SELECT tax_point_date FROM bill
+           WHERE tenant_id = ${ctx.tenantId} AND id = ${input.billId}
+      `
+    : [];
+
+  const rateTaxPointDate =
+    input.originalTaxPointDate ??
+    (referencedBill ? toIsoDate(referencedBill.tax_point_date) : taxPointDate);
 
   const [supplier] = await tx<{ id: string }[]>`
       SELECT id FROM contact WHERE tenant_id = ${ctx.tenantId} AND id = ${input.supplierId}
@@ -166,7 +199,10 @@ export async function issueDebitNote(
 
   const computed = computeDocument({
     lines: documentLines,
-    taxPointDate,
+    // The RATE date, not the period date. `computeTax` uses this only to
+    // resolve the rate version and any exemption in force, both of which are
+    // properties of the original supply rather than of the correction.
+    taxPointDate: rateTaxPointDate,
     // INPUT, so `inputTreatment` is resolved on every line and the COST vs
     // RECOVERABLE split is reversed the same way it was originally booked.
     direction: 'INPUT',
@@ -282,12 +318,12 @@ export async function issueDebitNote(
   const [row] = await tx<{ id: string }[]>`
       INSERT INTO debit_note (
           tenant_id, debit_note_no, supplier_id, bill_id, debit_date,
-          tax_point_date, reason, reason_detail, currency,
+          tax_point_date, original_tax_point_date, reason, reason_detail, currency,
           subtotal, tax_total, total, allocated_amount, status,
           idempotency_key, issued_by, issued_at
       ) VALUES (
           ${ctx.tenantId}, ${debitNoteNo}, ${input.supplierId}, ${input.billId ?? null},
-          ${input.debitDate}, ${taxPointDate}, ${input.reason},
+          ${input.debitDate}, ${taxPointDate}, ${rateTaxPointDate}, ${input.reason},
           ${input.reasonDetail ?? null}, ${currency},
           ${doc.subtotal.toDecimalString()}, ${doc.taxTotal.toDecimalString()},
           ${doc.total.toDecimalString()},
@@ -304,14 +340,15 @@ export async function issueDebitNote(
         INSERT INTO debit_note_line (
             tenant_id, debit_note_id, line_no, description, quantity,
             unit_price, discount_basis_points, account_id, tax_code_id,
-            taxable_amount, tax_amount, line_total
+            taxable_amount, tax_amount, line_total, source_bill_line_id
         ) VALUES (
             ${ctx.tenantId}, ${debitNoteId}, ${index + 1},
             ${line.description}, ${line.quantity}, ${line.unitPrice},
             ${line.discountBasisPoints ?? 0}, ${line.accountId}, ${line.taxCodeId},
             ${computedLine.netAmount.toDecimalString()},
             ${computedLine.taxAmount.toDecimalString()},
-            ${computedLine.lineTotal.toDecimalString()}
+            ${computedLine.lineTotal.toDecimalString()},
+            ${line.sourceBillLineId ?? null}
         )
     `;
   }
@@ -499,4 +536,150 @@ export async function inputTaxForPeriod(
          AND tax_point_date BETWEEN ${from} AND ${to}
   `;
   return { taxableAmount: row!.taxable, taxAmount: row!.tax };
+}
+
+// ---------------------------------------------------------------------------
+// Correcting from the original document
+// ---------------------------------------------------------------------------
+
+export interface DebitFromBillInput {
+  readonly billId: string;
+  readonly debitDate: string;
+  readonly reason: CreditNoteReason;
+  readonly reasonDetail?: string;
+  /** Omit to reverse everything not already reversed. */
+  readonly lines?: readonly { billLineId: string; quantity?: string }[];
+  readonly idempotencyKey: string;
+}
+
+/**
+ * Raise a debit note from the bill it corrects.
+ *
+ * The payables mirror of `creditFromInvoice`, and it exists for the same
+ * reason: every figure comes off the document being corrected rather than
+ * being retyped. On this side the figures are the SUPPLIER's — their price,
+ * their tax code, the account the spend landed in — and a debit note that
+ * differs from the bill in any of them is not a reversal of that bill.
+ */
+export async function debitFromBill(
+  tx: Tx,
+  ctx: TenantContext,
+  input: DebitFromBillInput,
+): Promise<IssuedDebitNote> {
+  const [bill] = await tx<
+    { id: string; supplier_id: string; currency: string; tax_point_date: Date; status: string }[]
+  >`
+      SELECT id, supplier_id, currency, tax_point_date, status
+        FROM bill
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${input.billId}
+  `;
+
+  // 404-shaped, and indistinguishable from another tenant's bill — RLS has
+  // already filtered that out, so the service genuinely cannot tell.
+  if (!bill) {
+    throw new DebitNoteError('BILL_NOT_FOUND', `Bill ${input.billId} not found`);
+  }
+
+  if (bill.status === 'DRAFT') {
+    throw new DebitNoteError(
+      'DEBIT_INVALID',
+      'A draft bill has not been entered, so there is nothing to correct.',
+    );
+  }
+
+  /*
+   * How much of each line has already been reversed, summed from
+   * `debit_note_line` rather than kept in a counter on `bill_line`. VOIDED
+   * debit notes are excluded: a voided document reverses nothing, so the
+   * quantity it named is available again.
+   */
+  const lineRows = await tx<
+    {
+      id: string; line_no: number; description: string; quantity: string;
+      unit_price: string; account_id: string; tax_code_id: string;
+      discount_basis_points: number; already_reversed: string;
+    }[]
+  >`
+      SELECT bl.id, bl.line_no, bl.description, bl.quantity::text, bl.unit_price::text,
+             bl.account_id, bl.tax_code_id, bl.discount_basis_points,
+             COALESCE((
+                 SELECT SUM(dnl.quantity)
+                   FROM debit_note_line dnl
+                   JOIN debit_note dn
+                     ON dn.tenant_id = dnl.tenant_id AND dn.id = dnl.debit_note_id
+                  WHERE dnl.tenant_id = bl.tenant_id
+                    AND dnl.source_bill_line_id = bl.id
+                    AND dn.status <> 'VOIDED'
+             ), 0)::text AS already_reversed
+        FROM bill_line bl
+       WHERE bl.tenant_id = ${ctx.tenantId} AND bl.bill_id = ${input.billId}
+       ORDER BY bl.line_no
+  `;
+
+  const correctable: CorrectableLine[] = lineRows.map((r) => ({
+    sourceLineId: r.id,
+    lineNo: r.line_no,
+    description: r.description,
+    quantity: r.quantity,
+    unitPrice: Money.fromDecimal(r.unit_price, bill.currency),
+    accountId: r.account_id,
+    taxCodeId: r.tax_code_id,
+    ...(r.discount_basis_points ? { discountBasisPoints: r.discount_basis_points } : {}),
+    alreadyCredited: r.already_reversed,
+  }));
+
+  const derived = deriveCorrectionLines(
+    correctable,
+    input.lines !== undefined
+      ? {
+          lines: input.lines.map((l) => ({
+            sourceLineId: l.billLineId,
+            ...(l.quantity !== undefined ? { quantity: l.quantity } : {}),
+          })),
+        }
+      : {},
+  );
+
+  if (isErr(derived)) {
+    throw new DebitNoteError(
+      'DEBIT_INVALID',
+      derived.error.map(describeDerivation).join('; '),
+      derived.error,
+    );
+  }
+
+  return issueDebitNote(tx, ctx, {
+    supplierId: bill.supplier_id,
+    billId: input.billId,
+    debitDate: input.debitDate,
+    originalTaxPointDate: toIsoDate(bill.tax_point_date),
+    reason: input.reason,
+    ...(input.reasonDetail !== undefined ? { reasonDetail: input.reasonDetail } : {}),
+    currency: bill.currency,
+    lines: derived.value.map((l) => ({
+      sourceBillLineId: l.sourceLineId,
+      description: l.description,
+      quantity: l.quantity,
+      unitPrice: l.unitPrice.toDecimalString(),
+      accountId: l.accountId,
+      taxCodeId: l.taxCodeId,
+      ...(l.discountBasisPoints !== undefined
+        ? { discountBasisPoints: l.discountBasisPoints }
+        : {}),
+    })),
+    idempotencyKey: input.idempotencyKey,
+  });
+}
+
+function describeDerivation(v: CorrectionDerivationViolation): string {
+  switch (v.code) {
+    case 'NO_SUCH_LINE':
+      return `Bill line ${v.sourceLineId} is not on this bill`;
+    case 'NOTHING_TO_CREDIT':
+      return 'Every line on this bill has already been reversed in full';
+    case 'EXCEEDS_REMAINING':
+      return `Line ${v.sourceLineId}: asked to reverse ${v.requested}, only ${v.remaining} remains`;
+    case 'NON_POSITIVE_QUANTITY':
+      return `Line ${v.sourceLineId}: ${v.quantity} is not a reversible quantity`;
+  }
 }

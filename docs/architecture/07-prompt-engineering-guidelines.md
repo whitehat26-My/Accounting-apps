@@ -53,7 +53,7 @@ You will get a `createInvoice` function with an ORM you don't use, floats for mo
 >
 > **Edge cases:** already issued (idempotent no-op) · zero-amount invoice · customer missing a TIN (allow issue, flag e-invoice as blocked) · foreign currency (fetch rate for the invoice date, store on the lines) · line-level rounding producing a 1-sen difference (post to the rounding account).
 >
-> **Acceptance:** Vitest integration test with Testcontainers proving debits = credits, AR control agrees with the invoice total, and a duplicate call with the same idempotency key produces exactly one journal entry.
+> **Acceptance:** Vitest integration test against a real PostgreSQL proving debits = credits, AR control agrees with the invoice total, and a duplicate call with the same idempotency key produces exactly one journal entry.
 >
 > **Non-goals:** Do not modify `LedgerService`, the tax engine, or the database schema. If you believe a change is needed there, say so instead of making it.
 
@@ -277,7 +277,7 @@ Architecture: docs/architecture/. Read the relevant document before implementing
 
 ## Stack
 TypeScript · NestJS · Next.js · PostgreSQL 16 · `postgres.js` · Redis/BullMQ ·
-Zod · TanStack Query · shadcn/ui · Vitest · Testcontainers · fast-check
+Zod · TanStack Query · shadcn/ui · Vitest · fast-check
 
 ## Definition of done
 Typechecks · unit tests · integration test against real PostgreSQL ·

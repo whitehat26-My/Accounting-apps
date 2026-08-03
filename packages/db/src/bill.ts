@@ -11,7 +11,10 @@ import {
 import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
 import { loadBaseCurrency, loadTaxCodes, resolveRate } from './invoice.js';
-import { addDays, decimalToScaled } from './internal.js';
+import { addDays, decimalToScaled, toIsoDate } from './internal.js';
+import { routeBillForApproval } from './approval.js';
+import { resolveLineFromItem } from './item.js';
+import { loadStockAccounts, receiveTrackedStock, trackedItems } from './inventory.js';
 
 /**
  * BillService.enter() — the DRAFT -> ENTERED transition (M3).
@@ -34,10 +37,10 @@ import { addDays, decimalToScaled } from './internal.js';
  * `allocate_document_number('BILL')`, and what an auditor follows.
  * ---------------------------------------------------------------------------
  *
- * WHAT IS NOT HERE: an approval workflow. Threshold routing and separation of
- * duties need users and roles, which arrive with M0. Until then a bill is
- * entered by whoever is connected, and pretending otherwise would give a false
- * assurance of control.
+ * APPROVAL: a bill is routed on entry when a threshold rule matches, and it is
+ * still POSTED either way. Approval gates PAYMENT, not recognition — see
+ * `packages/db/src/approval.ts` for why holding a bill out of the ledger
+ * pending an internal signature understates payables and expenses.
  */
 
 export interface EnterBillInput {
@@ -56,16 +59,41 @@ export interface EnterBillInput {
   readonly idempotencyKey: string;
 }
 
+/**
+ * One bill line.
+ *
+ * Symmetrical with `IssueInvoiceLine`: everything but `quantity` is optional
+ * when `itemId` is supplied, and the defaults come from the item's PURCHASE
+ * side. An item marked as sold but not purchased is refused here rather than
+ * quietly lending its revenue account to an expense line — which would balance,
+ * and would post a purchase to income.
+ */
 export interface EnterBillLine {
+  /** Decimal string, e.g. "2.5". Never a float. Never defaulted. */
+  readonly quantity: string;
+  readonly itemId?: string;
+  readonly description?: string;
+  readonly unitPrice?: string;
+  /** The expense or asset account the spend lands in. */
+  readonly accountId?: string;
+  readonly taxCodeId?: string;
+  readonly discountBasisPoints?: number;
+  readonly unitOfMeasure?: string;
+  /** For a serialised item: one serial per unit received. */
+  readonly serialNumbers?: readonly string[];
+}
+
+/** A line with every field settled — from the item, the caller, or both. */
+interface SettledBillLine {
   readonly description: string;
-  /** Decimal string, e.g. "2.5". Never a float. */
   readonly quantity: string;
   readonly unitPrice: string;
-  /** The expense or asset account the spend lands in. */
   readonly accountId: string;
   readonly taxCodeId: string;
   readonly itemId?: string;
   readonly discountBasisPoints?: number;
+  readonly unitOfMeasure?: string;
+  readonly uomCode?: string;
 }
 
 export interface EnteredBill {
@@ -77,6 +105,12 @@ export interface EnteredBill {
   readonly total: string;
   /** Null for a zero-total bill, which has no ledger effect to post. */
   readonly journalEntryId: string | null;
+  /**
+   * Set when a routing rule matched. The bill IS posted either way — approval
+   * gates payment, not recognition — so this says "cash is blocked", not
+   * "nothing happened".
+   */
+  readonly approvalRequestId?: string;
   readonly replayed: boolean;
 }
 
@@ -88,7 +122,8 @@ export class BillError extends Error {
       | 'NO_POSTING_ACCOUNTS'
       | 'DOCUMENT_INVALID'
       | 'NO_EXCHANGE_RATE'
-      | 'JOURNAL_INVALID',
+      | 'JOURNAL_INVALID'
+      | 'LINE_INCOMPLETE',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -166,8 +201,42 @@ export async function enterBill(
       SELECT sst_registered FROM organisation WHERE id = ${ctx.tenantId}
   `;
 
+  // ---- Settle each line against the catalogue ------------------------------
+  const baseCurrency = await loadBaseCurrency(tx, ctx);
+  const lines = await settleBillLines(tx, ctx, input.lines, currency, baseCurrency);
+
+  /*
+   * ---- Perpetual inventory: a tracked purchase is an ASSET -----------------
+   *
+   * A tracked line's expense account is REPLACED with the INVENTORY posting
+   * role before the journal is built. This is what perpetual inventory means:
+   * buying twenty laptops is not a cost, it is stock — the cost happens when
+   * one SELLS, posted by `issueTrackedStockForInvoice` at weighted average.
+   * Without this override the spend would hit an expense on entry AND COGS on
+   * sale: counted twice, and the balance sheet would not know the shelf exists.
+   *
+   * Overridden rather than refused: the account on the line came from the item
+   * defaults, and asking the user to hand-pick the inventory account on every
+   * purchase line is asking them to get it wrong once.
+   */
+  const tracked = await trackedItems(
+    tx,
+    ctx,
+    input.lines.flatMap((l) => (l.itemId !== undefined ? [l.itemId] : [])),
+  );
+
+  if (tracked.size > 0) {
+    const stockAccounts = await loadStockAccounts(tx, ctx);
+    for (const [index, line] of lines.entries()) {
+      const itemId = input.lines[index]!.itemId;
+      if (itemId !== undefined && tracked.has(itemId)) {
+        lines[index] = { ...line, accountId: stockAccounts.inventoryId };
+      }
+    }
+  }
+
   // ---- Compute (pure domain) ----------------------------------------------
-  const documentLines: DocumentLine[] = input.lines.map((line, index) => ({
+  const documentLines: DocumentLine[] = lines.map((line, index) => ({
     lineId: `L${index + 1}`,
     description: line.description,
     quantity: decimalToScaled(line.quantity, QUANTITY_SCALE),
@@ -208,7 +277,6 @@ export async function enterBill(
 
   const dueDate = input.dueDate ?? addDays(input.billDate, supplier.payment_terms_days);
 
-  const baseCurrency = await loadBaseCurrency(tx, ctx);
   const rate = await resolveRate(tx, ctx, currency, baseCurrency, input.billDate, input.fxRate);
 
   const [billRow] = await tx<{ id: string }[]>`
@@ -229,20 +297,21 @@ export async function enterBill(
   `;
   const billId = billRow!.id;
 
-  for (const [index, line] of input.lines.entries()) {
+  for (const [index, line] of lines.entries()) {
     const computedLine = doc.lines[index]!;
     await tx`
         INSERT INTO bill_line (
             tenant_id, bill_id, line_no, item_id, description, quantity,
             unit_price, discount_basis_points, account_id, tax_code_id,
-            taxable_amount, tax_amount, line_total
+            taxable_amount, tax_amount, line_total, unit_of_measure, uom_code
         ) VALUES (
             ${ctx.tenantId}, ${billId}, ${index + 1}, ${line.itemId ?? null},
             ${line.description}, ${line.quantity}, ${line.unitPrice},
             ${line.discountBasisPoints ?? 0}, ${line.accountId}, ${line.taxCodeId},
             ${computedLine.netAmount.toDecimalString()},
             ${computedLine.taxAmount.toDecimalString()},
-            ${computedLine.lineTotal.toDecimalString()}
+            ${computedLine.lineTotal.toDecimalString()},
+            ${line.unitOfMeasure ?? null}, ${line.uomCode ?? null}
         )
     `;
   }
@@ -316,6 +385,55 @@ export async function enterBill(
        WHERE tenant_id = ${ctx.tenantId} AND id = ${billId}
   `;
 
+  /*
+   * ---- Receive tracked stock ----------------------------------------------
+   *
+   * The quantity side of the Dr Inventory the journal above just posted. Cost
+   * is the line's NET amount in base currency — tax is not part of stock cost
+   * here, because under SST a registered trader's input tax on goods for
+   * resale is the supplier's output tax already inside the price, and a
+   * COST-treatment tax line lands in the expense the tax engine routed it to.
+   * Same transaction as the bill: a crash leaves neither ledger nor shelf.
+   */
+  if (tracked.size > 0) {
+    const convert = rate.isOne() ? null : converter(rate, baseCurrency);
+    await receiveTrackedStock(tx, ctx, {
+      sourceDocumentType: 'BILL',
+      sourceDocumentId: billId,
+      journalEntryId,
+      movedOn: input.billDate,
+      lines: input.lines.flatMap((line, index) => {
+        if (line.itemId === undefined || !tracked.has(line.itemId)) return [];
+        const net = doc.lines[index]!.netAmount;
+        return [
+          {
+            itemId: line.itemId,
+            quantity: line.quantity,
+            baseCost: convert
+              ? convert(net)
+              : Money.fromDecimal(net.toDecimalString(), baseCurrency),
+            ...(line.serialNumbers !== undefined ? { serialNumbers: line.serialNumbers } : {}),
+          },
+        ];
+      }),
+    });
+  }
+
+  // Routed in the SAME transaction as the bill. A bill that committed without
+  // its approval request would be payable by a caller who never saw a rule —
+  // and the gap would be invisible, because nothing would look wrong.
+  //
+  // Note the bill is already ENTERED and already posted at this point. That is
+  // deliberate: the obligation exists once the supplier has invoiced, and
+  // holding it out of the ledger pending an internal signature understates
+  // payables and expenses. Approval gates the PAYMENT.
+  const approval = await routeBillForApproval(
+    tx,
+    ctx,
+    billId,
+    rate.isOne() ? doc.total : converter(rate, baseCurrency)(doc.total),
+  );
+
   return {
     id: billId,
     internalRef,
@@ -324,6 +442,7 @@ export async function enterBill(
     taxTotal: doc.taxTotal.toDecimalString(),
     total: doc.total.toDecimalString(),
     journalEntryId,
+    ...(approval !== null ? { approvalRequestId: approval.requestId } : {}),
     replayed: false,
   };
 }
@@ -388,6 +507,50 @@ export async function outstandingPayables(
   return { total: row!.total, count: Number(row!.count) };
 }
 
+export interface OpenBillRow {
+  readonly id: string;
+  readonly internalRef: string;
+  readonly billNo: string;
+  readonly supplierId: string;
+  readonly supplierName: string;
+  readonly billDate: string;
+  readonly dueDate: string;
+  readonly currency: string;
+  readonly total: string;
+  readonly amountDue: string;
+  readonly status: string;
+}
+
+/** The open items behind the payables total — the screen's working list. */
+export async function listOpenBills(tx: Tx, ctx: TenantContext): Promise<OpenBillRow[]> {
+  const rows = await tx<
+    { id: string; internal_ref: string; bill_no: string; supplier_id: string;
+      supplier_name: string; bill_date: Date; due_date: Date; currency: string;
+      total: string; amount_due: string; status: string }[]
+  >`
+      SELECT b.id, b.internal_ref, b.bill_no, b.supplier_id, c.name AS supplier_name,
+             b.bill_date, b.due_date, b.currency, b.total::text, b.amount_due::text, b.status
+        FROM bill b
+        JOIN contact c ON c.tenant_id = b.tenant_id AND c.id = b.supplier_id
+       WHERE b.tenant_id = ${ctx.tenantId}
+         AND b.status IN ('ENTERED', 'PART_PAID')
+       ORDER BY b.due_date, b.internal_ref
+  `;
+  return rows.map((r) => ({
+    id: r.id,
+    internalRef: r.internal_ref,
+    billNo: r.bill_no,
+    supplierId: r.supplier_id,
+    supplierName: r.supplier_name,
+    billDate: toIsoDate(r.bill_date),
+    dueDate: toIsoDate(r.due_date),
+    currency: r.currency,
+    total: r.total,
+    amountDue: r.amount_due,
+    status: r.status,
+  }));
+}
+
 /** Open bills a supplier payment can be allocated against. */
 export async function openBills(
   tx: Tx,
@@ -436,4 +599,91 @@ export async function openBills(
     fxRate: r.fx_rate,
     amountDue: r.amount_due,
   }));
+}
+
+
+/**
+ * Fill in whatever the caller left out, from the item catalogue.
+ *
+ * Mirrors `settleLines` in `invoice.ts`, including the refusal to default a
+ * base-currency item price onto a foreign-currency document — an item price is
+ * NUMERIC with no currency, so treating RM 1,000 as $1,000 would be a four-fold
+ * overstatement that stays arithmetically consistent all the way through the
+ * ledger and is therefore invisible to every check.
+ */
+async function settleBillLines(
+  tx: Tx,
+  ctx: TenantContext,
+  lines: readonly EnterBillLine[],
+  currency: string,
+  baseCurrency: string,
+): Promise<SettledBillLine[]> {
+  const settled: SettledBillLine[] = [];
+
+  for (const [index, line] of lines.entries()) {
+    const where = `line ${index + 1}`;
+
+    if (line.itemId === undefined) {
+      const missing = (['description', 'unitPrice', 'accountId', 'taxCodeId'] as const).filter(
+        (field) => line[field] === undefined,
+      );
+
+      if (missing.length > 0) {
+        throw new BillError(
+          'LINE_INCOMPLETE',
+          `${where} has no itemId, so it must supply ${missing.join(', ')}`,
+        );
+      }
+
+      settled.push({
+        description: line.description!,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice!,
+        accountId: line.accountId!,
+        taxCodeId: line.taxCodeId!,
+        ...(line.discountBasisPoints !== undefined
+          ? { discountBasisPoints: line.discountBasisPoints }
+          : {}),
+        ...(line.unitOfMeasure !== undefined ? { unitOfMeasure: line.unitOfMeasure } : {}),
+      });
+      continue;
+    }
+
+    if (currency !== baseCurrency && line.unitPrice === undefined) {
+      throw new BillError(
+        'LINE_INCOMPLETE',
+        `${where} uses an item on a ${currency} bill. Item prices are held in ` +
+          `${baseCurrency} and are not converted, so this line must supply its own unit price.`,
+      );
+    }
+
+    const resolved = await resolveLineFromItem(tx, ctx, line.itemId, 'PURCHASE', {
+      quantity: line.quantity,
+      ...(line.description !== undefined ? { description: line.description } : {}),
+      ...(line.unitPrice !== undefined
+        ? { unitPrice: Money.fromDecimal(line.unitPrice, baseCurrency) }
+        : {}),
+      ...(line.accountId !== undefined ? { accountId: line.accountId } : {}),
+      ...(line.taxCodeId !== undefined ? { taxCodeId: line.taxCodeId } : {}),
+      ...(line.unitOfMeasure !== undefined ? { unitOfMeasure: line.unitOfMeasure } : {}),
+    });
+
+    settled.push({
+      description: resolved.description,
+      quantity: resolved.quantity,
+      unitPrice: resolved.unitPrice.toDecimalString(),
+      accountId: resolved.accountId,
+      taxCodeId: resolved.taxCodeId,
+      itemId: line.itemId,
+      ...(line.discountBasisPoints !== undefined
+        ? { discountBasisPoints: line.discountBasisPoints }
+        : {}),
+      ...(resolved.unitOfMeasure !== undefined
+        ? { unitOfMeasure: resolved.unitOfMeasure }
+        : {}),
+      ...(resolved.uomCode !== undefined ? { uomCode: resolved.uomCode } : {}),
+    });
+  }
+
+  return settled;
 }

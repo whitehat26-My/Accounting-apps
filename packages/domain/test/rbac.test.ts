@@ -6,6 +6,8 @@ import {
   canAll,
   canAny,
   canGrantRole,
+  effectivePermissions,
+  mayActOnRole,
   requiresFinancialEvent,
   resolvePrincipal,
   type Permission,
@@ -79,6 +81,58 @@ describe('can', () => {
     expect(canAll(principal(), ['invoice.read', 'period.override'])).toBe(false);
     expect(canAny(principal(), ['period.override', 'invoice.read'])).toBe(true);
     expect(canAny(principal(), ['period.override', 'org.delete'])).toBe(false);
+  });
+});
+
+describe('effectivePermissions — the set for a route with no @Requires', () => {
+  it('returns the whole role set when there is no API key', () => {
+    const p = principal({ permissions: new Set<Permission>(['invoice.read', 'journal.post']) });
+    expect([...effectivePermissions(p)].sort()).toEqual(['invoice.read', 'journal.post']);
+  });
+
+  it('narrows the role set by the key’s scopes — never wider than either', () => {
+    // The exact bug this closes: the assistant route has no @Requires, so the
+    // guard never intersected scopes. Reading permissions directly would hand a
+    // "read invoices" key the whole snapshot and the write tools.
+    const scoped = principal({
+      permissions: new Set<Permission>(['invoice.read', 'invoice.create', 'journal.post']),
+      apiKeyId: 'k',
+      scopes: new Set<Permission>(['invoice.read', 'period.override']),
+    });
+    // period.override is in scopes but NOT the role, so it must not appear.
+    expect([...effectivePermissions(scoped)].sort()).toEqual(['invoice.read']);
+  });
+
+  it('agrees with can() for every permission (property)', () => {
+    const ALL: Permission[] = ['invoice.read', 'invoice.create', 'journal.post', 'period.override'];
+    fc.assert(
+      fc.property(fc.subarray(ALL), fc.subarray(ALL), fc.boolean(), (perms, scopes, hasKey) => {
+        const p = principal({
+          permissions: new Set(perms),
+          ...(hasKey ? { apiKeyId: 'k', scopes: new Set(scopes) } : {}),
+        });
+        const eff = effectivePermissions(p);
+        for (const probe of ALL) {
+          expect(eff.has(probe)).toBe(can(p, probe));
+        }
+      }),
+    );
+  });
+});
+
+describe('mayActOnRole — you cannot act on someone senior', () => {
+  it('refuses to act on a member who outranks the actor', () => {
+    // The demote-the-Owner hole: granting READ_ONLY is below an Admin's rank so
+    // canGrantRole permits it, but the TARGET is the Owner. This is the guard
+    // that stops an Admin stripping the one member senior to them.
+    expect(mayActOnRole('ADMIN', 'OWNER')).toBe(false);
+    expect(mayActOnRole('BOOKKEEPER', 'ACCOUNTANT')).toBe(false);
+  });
+
+  it('allows acting on the actor’s own rank and anyone below', () => {
+    expect(mayActOnRole('OWNER', 'OWNER')).toBe(true);
+    expect(mayActOnRole('OWNER', 'READ_ONLY')).toBe(true);
+    expect(mayActOnRole('ADMIN', 'BOOKKEEPER')).toBe(true);
   });
 });
 

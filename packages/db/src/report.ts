@@ -38,7 +38,15 @@ import { loadBaseCurrency } from './invoice.js';
 
 export class ReportError extends Error {
   constructor(
-    readonly code: 'NO_TEMPLATE' | 'REPORT_INVALID' | 'NO_FISCAL_YEAR',
+    /*
+     * `ACCOUNT_NOT_FOUND` is not decoration. The API's exception filter maps
+     * any code ending `_NOT_FOUND` to a 404, and CLAUDE.md §9 requires that a
+     * record belonging to another tenant answers 404 rather than 403 or 422 —
+     * confirming it exists is what leaks. RLS has already filtered the row out
+     * before this layer sees it, so "absent" and "not yours" are genuinely the
+     * same case here, and they must stay the same answer.
+     */
+    readonly code: 'NO_TEMPLATE' | 'REPORT_INVALID' | 'NO_FISCAL_YEAR' | 'ACCOUNT_NOT_FOUND',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -58,6 +66,7 @@ export async function accountBalances(
   ctx: TenantContext,
   window: { from: string | null; to: string },
   baseCurrency: string,
+  options: { readonly excludeYearEndClose?: boolean } = {},
 ): Promise<AccountBalance[]> {
   const rows = await tx<
     { account_id: string; code: string; name: string; type: AccountType; movement: string; tags: string[] }[]
@@ -92,14 +101,80 @@ export async function accountBalances(
        ORDER BY a.code
   `;
 
-  return rows.map((r) => ({
-    accountId: r.account_id,
-    code: r.code,
-    name: r.name,
-    type: r.type,
-    tags: r.tags ?? [],
-    amount: Money.fromDecimal(r.movement, baseCurrency),
-  }));
+  const closing = options.excludeYearEndClose
+    ? await yearEndCloseMovement(tx, ctx, window, baseCurrency)
+    : new Map<string, Money>();
+
+  return rows.map((r) => {
+    const total = Money.fromDecimal(r.movement, baseCurrency);
+    const closingPart = closing.get(r.account_id);
+
+    return {
+      accountId: r.account_id,
+      code: r.code,
+      name: r.name,
+      type: r.type,
+      tags: r.tags ?? [],
+      amount: closingPart ? total.subtract(closingPart) : total,
+    };
+  });
+}
+
+/**
+ * Movement contributed by year-end closing entries, so the income statement can
+ * take it back out.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS AT ALL.
+ *
+ * The closing entry is dated the LAST DAY of the year it closes — it has to be,
+ * or the profit moves out of the year that earned it and every comparative
+ * reading movement by date disagrees with the accounts.
+ *
+ * But that puts it INSIDE the window an income statement for that year asks
+ * for. Run the SOPL for a closed year and the closing entry, which exists
+ * precisely to zero those accounts, zeroes them in the report too: a year that
+ * made RM 70,000 reports nothing. The figures are not wrong, the question is —
+ * "movement in the year" and "trading in the year" stopped being the same thing
+ * the moment a close was posted.
+ *
+ * So the P&L subtracts it and the balance sheet does not, which is exactly
+ * right: the balance sheet WANTS the transfer, because that is where the profit
+ * now lives.
+ *
+ * Read from `journal_line` rather than the rollup, deliberately. The rollup is
+ * one number per account per period and cannot say which part of it came from a
+ * close; adding a second column to carry that would be a denormalisation that
+ * drifts. The scan is bounded by closing entries — one per year, a few lines
+ * each — and hits `journal_entry_source_idx`.
+ * ---------------------------------------------------------------------------
+ */
+async function yearEndCloseMovement(
+  tx: Tx,
+  ctx: TenantContext,
+  window: { from: string | null; to: string },
+  baseCurrency: string,
+): Promise<Map<string, Money>> {
+  const rows = await tx<{ account_id: string; movement: string }[]>`
+      SELECT l.account_id,
+             SUM(l.base_debit - l.base_credit)::text AS movement
+        FROM journal_line l
+        JOIN journal_entry e
+          ON e.tenant_id = l.tenant_id AND e.id = l.journal_entry_id
+        JOIN fiscal_period p
+          ON p.tenant_id = e.tenant_id AND p.id = e.fiscal_period_id
+       WHERE l.tenant_id = ${ctx.tenantId}
+         AND e.source_document_type = 'YEAR_END_CLOSE'
+         -- REVERSED included on purpose. A reopened year's closing entry and
+         -- its reversal both stand in the ledger and cancel; dropping one would
+         -- leave the other subtracted from the P&L on its own.
+         AND e.status IN ('POSTED', 'REVERSED')
+         AND p.end_date <= ${window.to}::date
+         AND (${window.from}::date IS NULL OR p.start_date >= ${window.from}::date)
+       GROUP BY l.account_id
+  `;
+
+  return new Map(rows.map((r) => [r.account_id, Money.fromDecimal(r.movement, baseCurrency)]));
 }
 
 /** Load a global statement template into the pure domain shape. */
@@ -191,13 +266,22 @@ export async function statementOfProfitOrLoss(
   const baseCurrency = await loadBaseCurrency(tx, ctx);
   const definition = await loadTemplate(tx, 'SOPL', options.framework ?? 'MPERS');
 
-  const all = await accountBalances(tx, ctx, { from: options.from, to: options.to }, baseCurrency);
+  // `excludeYearEndClose` — see `yearEndCloseMovement`. Without it, running
+  // this statement for a year that has been CLOSED reports zero trading,
+  // because the closing entry is dated inside the window and exists to zero
+  // exactly these accounts.
+  const all = await accountBalances(
+    tx, ctx, { from: options.from, to: options.to }, baseCurrency,
+    { excludeYearEndClose: true },
+  );
   const profitAndLoss = all.filter((b) => b.type === 'INCOME' || b.type === 'EXPENSE');
 
   const comparative = options.comparative
-    ? (await accountBalances(tx, ctx, options.comparative, baseCurrency)).filter(
-        (b) => b.type === 'INCOME' || b.type === 'EXPENSE',
-      )
+    ? (
+        await accountBalances(tx, ctx, options.comparative, baseCurrency, {
+          excludeYearEndClose: true,
+        })
+      ).filter((b) => b.type === 'INCOME' || b.type === 'EXPENSE')
     : undefined;
 
   const rendered = evaluateReport(definition, profitAndLoss, {

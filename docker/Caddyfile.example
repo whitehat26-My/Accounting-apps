@@ -1,0 +1,35 @@
+# HTTPS in one file. Point your domain's DNS A-record at the server, put
+# this beside docker-compose.prod.yml as `Caddyfile`, and add to the compose:
+#
+#   caddy:
+#     image: caddy:2
+#     ports: ['80:80', '443:443']
+#     volumes:
+#       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+#       - caddy_data:/data
+#     depends_on: [web]
+#     restart: unless-stopped
+#
+# (and `caddy_data:` under volumes:). Caddy fetches and renews the
+# certificate itself. Then remove the `ports:` mapping from `web` — Caddy
+# reaches it on the internal network.
+
+shop.example.com {
+    reverse_proxy web:3000
+
+    # Security headers at the edge. The Next server already sets these on its
+    # own responses (apps/web/next.config.ts); setting them here too means any
+    # response Caddy itself generates — a 502 while `web` restarts, an ACME
+    # challenge error — is covered as well, and the edge is the one place that
+    # can promise HSTS is present on every byte the browser sees.
+    header {
+        Strict-Transport-Security "max-age=63072000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        # Caddy adds its version to Server by default; drop it — a version
+        # string is free reconnaissance for an attacker.
+        -Server
+    }
+}

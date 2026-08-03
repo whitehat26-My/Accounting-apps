@@ -1,0 +1,129 @@
+@import 'tailwindcss';
+
+body {
+  @apply bg-slate-100/70 text-slate-900 antialiased;
+  /* Ringgit columns must line up: every digit the same width, everywhere. */
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  @apply bg-emerald-200;
+}
+
+/* A row under the finger says so. Scoped to data tables inside cards. */
+tbody tr {
+  transition: background-color 120ms;
+}
+tbody tr:hover {
+  background-color: rgb(248 250 252 / 0.9);
+}
+
+/* ---------------------------------------------------------------------------
+ * Sign-in motion.
+ *
+ * A slow drift across the photo of the shop, and content that arrives rather
+ * than appearing. Both are decoration: nothing here moves a figure, gates a
+ * control, or delays a form the user could otherwise be typing into — the
+ * card is interactive from the first frame and the animation only affects
+ * how it looks getting there.
+ *
+ * Every rule is switched off wholesale under prefers-reduced-motion below.
+ * Vestibular disorders make a 24-second pan genuinely unpleasant, and a
+ * sign-in page is not a thing anyone chose to watch.
+ * ------------------------------------------------------------------------ */
+
+@keyframes emil-drift {
+  /* Starts already inside the frame so no edge is ever exposed mid-pan. */
+  0% {
+    transform: scale(1.08) translate3d(0, 0, 0);
+  }
+  50% {
+    transform: scale(1.14) translate3d(-1.5%, -1%, 0);
+  }
+  100% {
+    transform: scale(1.08) translate3d(0, 0, 0);
+  }
+}
+
+@keyframes emil-rise {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 12px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.emil-drift {
+  animation: emil-drift 38s ease-in-out infinite;
+  will-change: transform;
+}
+
+.emil-rise {
+  animation: emil-rise 620ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+/* ---------------------------------------------------------------------------
+ * Chart entrances.
+ *
+ * Bars grow from the baseline they are measured against, and horizontal bars
+ * from the axis they start at — the motion traces the encoding rather than
+ * decorating it. Short and once: 420ms with at most 300ms of stagger, so the
+ * chart is settled before anyone has finished reading its title.
+ *
+ * `transform-box: fill-box` makes transform-origin resolve against the mark's
+ * own box rather than the SVG's user space, which is what lets a single class
+ * scale every bar from its own foot.
+ * ------------------------------------------------------------------------ */
+
+@keyframes emil-grow {
+  from {
+    transform: scaleY(0);
+  }
+  to {
+    transform: scaleY(1);
+  }
+}
+
+@keyframes emil-widen {
+  from {
+    transform: scaleX(0);
+  }
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.emil-grow {
+  transform-box: fill-box;
+  transform-origin: bottom;
+  animation: emil-grow 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.emil-widen {
+  transform-box: fill-box;
+  transform-origin: left;
+  animation: emil-widen 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .emil-drift,
+  .emil-rise,
+  .emil-grow,
+  .emil-widen {
+    animation: none;
+  }
+  /* Without the animation these classes would leave their marks at zero —
+     `both` holds the from-state, so the fallback has to undo it explicitly or
+     the chart renders blank for exactly the people who cannot see it move. */
+  .emil-rise {
+    opacity: 1;
+    transform: none;
+  }
+  .emil-grow,
+  .emil-widen {
+    transform: none;
+  }
+}

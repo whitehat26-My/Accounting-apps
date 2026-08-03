@@ -130,6 +130,7 @@ not), OAuth2 clients, invitation email delivery, and Redis-backed rate limiting.
 
 **Key features**
 - **Quotes** → **Sales Orders** (optional) → **Invoices** → **Credit Notes**; each conversion carries lines forward
+- **Crediting an invoice reads every figure off the invoice** — price, revenue account, tax code, classification code — rather than asking a user to retype them. Two dates, deliberately, because there are two questions: the TAX RATE follows the ORIGINAL SUPPLY's tax point, and the RETURN PERIOD follows the credit note's own date. Collapsing them made every invoice issued before Malaysia's 2024 6%→8% service-tax change **impossible to credit at all** — the credit computed at today's rate exceeded the invoice total and the over-credit guard refused the document, blaming the amount rather than the rate. Over-crediting is checked per LINE: crediting one line twice and another not at all nets to the right document total and is two wrong lines.
 - **Recurring invoices**: schedule (daily/weekly/monthly/quarterly/annual), end condition, auto-issue or draft-for-review, placeholder substitution (period, month name), auto-send on issue
 - **Payment reminders**: configurable cadence (e.g. 3 days before due, on due date, +7, +14, +30), per-customer opt-out, escalating templates, batch statement-of-account send
 - **Online payment links** on invoice PDFs and emails — FPX, DuitNow QR, DuitNow Transfer, cards; public tokenised pay page with no login
@@ -203,11 +204,26 @@ before extending this module:
   LHDN. A payment that asks to withhold with no configured rate fails loudly rather than
   withholding zero, because the payer carries the liability for under-withholding.
 
+**Bill approval is now built** (`0013_bill_approval.sql`, `packages/domain/src/approval.ts`,
+`packages/db/src/approval.ts`), having waited for M0 as planned. Two decisions define it:
+
+- **Approval gates PAYMENT, not recognition.** The tempting design holds a bill out of the ledger
+  until approved, and it produces a misstatement rather than an inconvenience: if the goods arrived
+  and the supplier has invoiced, the obligation EXISTS, and accrual accounting recognises it when
+  incurred. A bill held back understates payables and expenses — worst at period end, when
+  unapproved bills pile up. So a bill posts on entry and `paySupplier()` refuses to release cash.
+- **Separation of duties is enforced in the database as well as the domain.** The requester can
+  never approve their own bill (a trigger), and one person can never fill two steps (a UNIQUE on
+  `(request, decided_by)`). "Over RM 10,000 needs a second approver" means a second PERSON — at a
+  small company one user often holds both roles, and allowing it defeats the threshold entirely. A
+  control that lives only in application code is one a script or a bulk import walks around.
+
+The routing rules in force are **snapshot into the request**, not referenced. Raising a threshold
+later must not make a past approval look unnecessary, nor lowering one make it look insufficient.
+
 **Deferred within M3**, stated rather than implied: purchase orders and three-way match, OCR
-document capture, expense claims, the approval workflow (needs M0 — threshold routing without users
-or roles would point at bare UUIDs, and separation of duties cannot be enforced by a system with no
-concept of two people), batch payment file export, self-billed e-invoice generation, and the WHT
-rates plus CP37 filing artefacts.
+document capture, expense claims, batch payment file export, self-billed e-invoice generation, and
+the WHT rates plus CP37 filing artefacts.
 
 ---
 
@@ -341,14 +357,15 @@ reconciliation workspace UI.
 **Key features**
 - **Statement of Profit or Loss (SOPL)** — period vs comparative period, YTD, budget column later; by tracking category; classified by nature or by function
 - **Statement of Financial Position (SOFP)** — current/non-current classification, comparative column, with a built-in assertion that Assets = Liabilities + Equity and a loud error if the ledger ever disagrees
-- **Statement of Cash Flows** (indirect method) with a reconciliation to the movement in cash accounts
-- **Statement of Changes in Equity**
+- **Statement of Cash Flows** — **built by the DIRECT method, deliberately, where this document originally said indirect.** The indirect method reconstructs cash from profit through a chain of adjustments (depreciation, movements in receivables and payables, accruals, revaluation), and every adjustment is a separate chance to be subtly wrong with no way to tell which one. The direct method reads the cash accounts themselves and asks what the other side of each entry was — and because every journal entry balances, an entry's cash movement is *exactly* the negated sum of its non-cash lines. The decomposition is an identity rather than an estimate, so `opening cash + net cash flow = closing cash` holds by construction and a failure means a real defect. An indirect *presentation* can be derived from this later; the reverse cannot. See `packages/domain/src/cash-flow.ts`.
+  Whether a given asset or liability account is operating, investing or financing is a judgement `account.type` cannot supply, so it is per-account configuration (`cash_flow_classification`); anything undecided lands in a visible UNCLASSIFIED section that still counts toward the total, never silently defaulted into operating.
+- **Statement of Changes in Equity** — treats equity as *equity accounts plus unclosed profit*, so it agrees with the balance sheet whether or not a year-end close has been posted. For an SME product the books are usually not closed, and a SOCE built from equity account balances alone disagrees with the SOFP by exactly the current year's profit.
 - Trial balance (with movement and closing columns), general ledger detail, journal report
 - Aged receivables/payables (summary + detail), customer/supplier statements
 - SST return support schedules; a **management pack** (dashboard: cash position, AR/AP ageing, revenue trend, gross margin, top customers)
 - **Statement layouts are data.** A `ReportDefinition` maps account ranges/tags to statement lines, so MPERS and MFRS presentations, and industry variants, are configuration rather than code.
 - Every figure drills down: statement line → account → journal line → source document → attachment
-- Export: PDF (print-ready, RM formatting, `1,234.56`), XLSX with live formulas, CSV
+- Export: CSV today (trial balance, general ledger, cash flow); PDF and XLSX still to build. **Every exported cell passes through the formula-injection guard in `packages/domain/src/csv.ts`** — a contact name or entry description beginning `=`, `+`, `@` or a control character is executed as a formula by Excel, LibreOffice and Sheets, and an accounting export is opened by an accountant with a client's whole books on the same machine. Negative amounts are deliberately *not* guarded, because turning every credit balance into text breaks the file's reason for existing.
 - Period comparatives handle mid-year chart-of-accounts changes without silently dropping balances
 
 **Data models**
@@ -373,14 +390,17 @@ reconciliation workspace UI.
 - Unified `Contact` that can be customer, supplier, or both; multiple addresses and contact persons; per-contact defaults (currency, payment terms, tax code, revenue/expense account, price tier)
 - Malaysian identity block: TIN, SSM/BRN, NRIC/passport for individuals, SST registration number, MSIC code — validated in format and, where possible, verified against LHDN
 - Credit limit and credit hold; statement delivery preferences; e-invoice requirement flag (drives individual vs consolidated submission)
-- `Item` catalogue: goods/services, sale and purchase pricing, default accounts, default tax codes, **MyInvois classification code**, unit of measure
-- Light stock-on-hand tracking (quantity only) with a clear upgrade path to full costing in v1.1
+- `Item` catalogue: goods/services, sale and purchase pricing, default accounts, default tax codes, **MyInvois classification code**, unit of measure. **An item's values are COPIED onto a document line at issue, never referenced from it** — raising a price in June must leave May's invoice reading what the customer was actually charged, which is the same snapshot discipline versioned tax rates and the stored e-Invoice payload get. `item_id` is retained for reporting and must never be joined to for an amount.
+- **Light stock-on-hand tracking is NOT built, and is not a near-term gap.** Perpetual inventory needs a costing method (weighted average, FIFO, standard), posts to the ledger on movement rather than on invoice, needs stock takes and variance accounts, and under MPERS §13 the measurement basis carries disclosure consequences. A `quantity_on_hand` column maintained by nothing would be a number that looks like stock and ends up on a balance sheet. The catalogue is honest about being a catalogue.
+- **The MyInvois unit-of-measure code is a reference list, not a derivation.** "box", "carton" and "ctn" are one thing to a human and three strings here; inferring a code from free text would put an unverified value on a submission to a tax authority. `einvoice_uom_code` ships EMPTY pending LHDN's published SDK reference data, and an item is refused a code the list does not contain.
+- **An item price is in the base currency and is not converted.** `item.sale_unit_price` is NUMERIC with no currency column, so defaulting RM 1,000 onto a USD invoice would produce a line reading $1,000 — arithmetically consistent all the way through the ledger and therefore invisible to every check. A foreign-currency line must carry its own price until a per-currency price list exists.
 - Import/export via CSV with a dry-run validation pass and a row-level error report
 - Merge duplicates with full history retention
 
 **Data models**
 
-`Contact` · `ContactAddress` · `ContactPerson` · `ContactTaxProfile` · `ContactDefaults` · `Item` · `ItemPrice` · `PriceList` · `UnitOfMeasure` · `StockLevel`
+`Contact` · `ContactAddress` · `ContactPerson` · `ContactTaxProfile` · `ContactDefaults` · `Item` · `EInvoiceUomCode`
+(`ItemPrice`, `PriceList` and `StockLevel` are not built — see the notes above on per-currency pricing and inventory.)
 
 ---
 

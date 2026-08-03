@@ -1,5 +1,5 @@
-import type { ValidatedJournalEntry } from '@emil/domain';
-import { Money } from '@emil/domain';
+import type { JournalEntryDraft, SourceModule, ValidatedJournalEntry } from '@emil/domain';
+import { isErr, Money, validateJournalEntry } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { toIsoDate } from './internal.js';
 
@@ -28,6 +28,17 @@ export interface PostOptions {
   readonly idempotencyKey: string;
   /** Emitted to the outbox after commit, e.g. 'invoice.issued'. */
   readonly emitEvent?: { readonly type: string; readonly payload: unknown };
+  /**
+   * The entry this one reverses.
+   *
+   * CLAUDE.md rule 1 says corrections are "reversing entries that reference the
+   * original", and `journal_entry.reversal_of_id` has existed with its foreign
+   * key since 0001 — but nothing has ever WRITTEN it. `general-ledger.ts` reads
+   * it back and has therefore reported `reversalOfId: null` for every entry in
+   * the system, including the FX revaluation reversals that are unambiguously
+   * reversals. The link was declared and never made.
+   */
+  readonly reversalOfId?: string;
 }
 
 export async function postJournalEntry(
@@ -113,12 +124,13 @@ export async function postJournalEntry(
       INSERT INTO journal_entry (
           tenant_id, entry_no, entry_date, fiscal_period_id, description,
           source_module, source_document_type, source_document_id,
-          status, idempotency_key, posted_by, posted_at
+          status, idempotency_key, posted_by, posted_at, reversal_of_id
       ) VALUES (
           ${ctx.tenantId}, ${entryNo}, ${entry.entryDate}, ${period.id},
           ${entry.description ?? null}, ${entry.sourceModule},
           ${entry.sourceDocumentType ?? null}, ${entry.sourceDocumentId ?? null},
-          'POSTED', ${options.idempotencyKey}, ${ctx.userId ?? null}, now()
+          'POSTED', ${options.idempotencyKey}, ${ctx.userId ?? null}, now(),
+          ${options.reversalOfId ?? null}
       )
       RETURNING id
   `;
@@ -177,22 +189,20 @@ export async function postJournalEntry(
   }
 
   // ---- 7. Audit ------------------------------------------------------------
-  await tx`
-      INSERT INTO audit_log (
-          tenant_id, actor_user_id, action, entity_type, entity_id, after_json, row_hash
-      ) VALUES (
-          ${ctx.tenantId}, ${ctx.userId ?? null}, 'JOURNAL_POSTED', 'journal_entry',
-          ${entryId},
-          ${tx.json({
-            entryNo,
-            entryDate: entry.entryDate,
-            totalDebit: entry.totalDebit.toDecimalString(),
-            totalCredit: entry.totalCredit.toDecimalString(),
-            lineCount: entry.lines.length,
-          })},
-          ''::bytea
-      )
-  `;
+  //
+  // Nothing to do here any more, and that is the improvement.
+  //
+  // This function used to hand-write the single `audit_log` row that existed
+  // anywhere in the system: action 'JOURNAL_POSTED', a summary payload, no
+  // before image, and no IP, user agent or request id because `TenantContext`
+  // could not carry them. Migration 0016 replaced it with a trigger on every
+  // audited table, so the journal entry and its lines are now recorded the same
+  // way every other mutation is — with a before image, the actor's origin, and
+  // no chance of a future write path forgetting to call anything.
+  //
+  // The semantic name is not lost. "Somebody posted to a locked period" is
+  // written to `financial_event_log` a few lines above, which is the log that
+  // exists for acts rather than for row changes.
 
   // ---- 8. Outbox -----------------------------------------------------------
   // Written in the SAME transaction as the ledger effect. If the commit fails
@@ -219,12 +229,173 @@ export async function postJournalEntry(
 
 export class LedgerError extends Error {
   constructor(
-    readonly code: 'NO_FISCAL_PERIOD' | 'PERIOD_LOCKED' | 'UNBALANCED',
+    readonly code: 'NO_FISCAL_PERIOD' | 'PERIOD_LOCKED' | 'UNBALANCED' | 'ENTRY_NOT_FOUND',
     message: string,
   ) {
     super(message);
     this.name = 'LedgerError';
   }
+}
+
+export interface ReversePostedEntryOptions {
+  readonly entryId: string;
+  /** Defaults to the original entry's own date. */
+  readonly entryDate?: string;
+  readonly reason: string;
+  readonly idempotencyKey: string;
+}
+
+/**
+ * Reverse an entry that is already in the ledger.
+ *
+ * ---------------------------------------------------------------------------
+ * THE ONLY WAY TO UNDO A POSTING — AND UNTIL NOW THERE WAS NO WAY TO DO IT
+ * FROM A STORED ENTRY.
+ *
+ * `reverseEntry()` in the domain flips the sides of a draft the caller already
+ * holds in memory, which is all `revaluation.ts` needed: it builds an
+ * adjustment and its reversal in the same breath. Nothing could reverse an
+ * entry it had only read back from the database — so "post a reversing entry
+ * instead", which is what the immutability trigger tells every caller to do,
+ * was advice with no implementation behind it.
+ *
+ * The lines are re-read from `journal_line` rather than rebuilt from the source
+ * document. A document can be regenerated differently — a tax rate version
+ * changes, a rounding policy is corrected — and a reversal that does not
+ * exactly mirror what was posted leaves a residue in the accounts it claimed to
+ * clear.
+ * ---------------------------------------------------------------------------
+ */
+export async function reversePostedEntry(
+  tx: Tx,
+  ctx: TenantContext,
+  options: ReversePostedEntryOptions,
+): Promise<PostedEntry> {
+  const [original] = await tx<
+    {
+      id: string;
+      entry_no: string;
+      entry_date: Date;
+      description: string | null;
+      source_module: SourceModule;
+      source_document_type: string | null;
+      source_document_id: string | null;
+      status: string;
+    }[]
+  >`
+      SELECT id, entry_no, entry_date, description, source_module,
+             source_document_type, source_document_id, status
+        FROM journal_entry
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${options.entryId}
+  `;
+
+  // Another tenant's entry is indistinguishable from one that does not exist.
+  if (!original) {
+    throw new LedgerError('ENTRY_NOT_FOUND', `Journal entry ${options.entryId} not found`);
+  }
+
+  const lines = await tx<
+    {
+      account_id: string;
+      debit: string;
+      credit: string;
+      currency: string;
+      base_debit: string;
+      base_credit: string;
+      description: string | null;
+      contact_id: string | null;
+      tax_code_id: string | null;
+      tracking_option_id: string | null;
+    }[]
+  >`
+      SELECT account_id, debit, credit, currency, base_debit, base_credit,
+             description, contact_id, tax_code_id, tracking_option_id
+        FROM journal_line
+       WHERE tenant_id = ${ctx.tenantId} AND journal_entry_id = ${original.id}
+       ORDER BY line_no
+  `;
+
+  const baseCurrency = await loadBaseCurrencyForLedger(tx, ctx);
+
+  const draft: JournalEntryDraft = {
+    entryDate: options.entryDate ?? toIsoDate(original.entry_date),
+    description: `Reversal of ${original.entry_no}: ${options.reason}`,
+    sourceModule: original.source_module,
+    ...(original.source_document_type !== null
+      ? { sourceDocumentType: original.source_document_type }
+      : {}),
+    ...(original.source_document_id !== null
+      ? { sourceDocumentId: original.source_document_id }
+      : {}),
+    lines: lines.map((line) => {
+      // The stored row has separate debit and credit columns; exactly one is
+      // non-zero by CHECK. Reversing means taking the other side.
+      const wasDebit = line.debit !== '0' && Number(line.debit) !== 0;
+
+      return {
+        accountId: line.account_id,
+        side: wasDebit ? ('CREDIT' as const) : ('DEBIT' as const),
+        amount: Money.fromDecimal(wasDebit ? line.debit : line.credit, line.currency),
+        baseAmount: Money.fromDecimal(
+          wasDebit ? line.base_debit : line.base_credit,
+          baseCurrency,
+        ),
+        ...(line.description !== null ? { description: line.description } : {}),
+        ...(line.contact_id !== null ? { contactId: line.contact_id } : {}),
+        ...(line.tax_code_id !== null ? { taxCodeId: line.tax_code_id } : {}),
+        ...(line.tracking_option_id !== null
+          ? { trackingOptionId: line.tracking_option_id }
+          : {}),
+      };
+    }),
+  };
+
+  const validated = validateJournalEntry(draft, baseCurrency);
+  if (isErr(validated)) {
+    // The original balanced, so its mirror image balances. Reaching here means
+    // the stored lines themselves are inconsistent, which is a ledger fault and
+    // must not be papered over by posting something almost right.
+    throw new LedgerError(
+      'UNBALANCED',
+      `The reversal of ${original.entry_no} is not a valid entry: ` +
+        JSON.stringify(validated.error),
+    );
+  }
+
+  const posted = await postJournalEntry(tx, ctx, validated.value, {
+    idempotencyKey: options.idempotencyKey,
+    reversalOfId: original.id,
+  });
+
+  /*
+   * The original is marked REVERSED, which the immutability trigger explicitly
+   * permits (POSTED → REVERSED) and every report already accounts for: each
+   * reporting query filters `status IN ('POSTED', 'REVERSED')`, because a
+   * reversed entry's lines still stand — they are cancelled by the reversal's
+   * lines, not erased. The status says "this was undone", not "ignore this".
+   */
+  if (original.status === 'POSTED' && !posted.replayed) {
+    await tx`
+        UPDATE journal_entry
+           SET status = 'REVERSED'
+         WHERE tenant_id = ${ctx.tenantId} AND id = ${original.id}
+    `;
+  }
+
+  return posted;
+}
+
+/**
+ * The base currency, read here rather than imported from `invoice.ts`.
+ *
+ * `ledger.ts` is the bottom of the dependency graph — `invoice.ts` imports it,
+ * so importing back would be a cycle.
+ */
+async function loadBaseCurrencyForLedger(tx: Tx, ctx: TenantContext): Promise<string> {
+  const [row] = await tx<{ base_currency: string }[]>`
+      SELECT base_currency FROM organisation WHERE id = ${ctx.tenantId}
+  `;
+  return row?.base_currency ?? 'MYR';
 }
 
 /**

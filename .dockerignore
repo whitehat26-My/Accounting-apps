@@ -1,0 +1,23 @@
+node_modules
+**/node_modules
+**/.next
+**/out
+**/test-results
+**/playwright-report
+.git
+docs
+*.md
+
+# Secrets never enter the build context. Nothing in the Dockerfiles copies an
+# env file, but a stray `.env` in the tree would otherwise be readable to any
+# `COPY . .` a future edit introduces — exclude them here and keep only the
+# committed *.example templates.
+**/.env
+**/.env.*
+!**/.env*.example
+
+# Test code and local backups are not runtime artefacts — keep them out of the
+# image so it ships less surface and no fixture data.
+**/test/
+**/*.test.ts
+backups/

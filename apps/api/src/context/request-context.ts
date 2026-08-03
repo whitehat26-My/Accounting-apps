@@ -1,5 +1,6 @@
 import type { FastifyRequest } from 'fastify';
 import type { Principal } from '@emil/domain';
+import type { ActorContext, TenantContext } from '@emil/db';
 
 /**
  * What the middleware chain has established about a request.
@@ -50,4 +51,54 @@ export function principalOf(request: FastifyRequest): Principal {
     throw new Error('No principal on this request: the auth guard did not run');
   }
   return principal;
+}
+
+/**
+ * The database context for an authenticated request — assembled in ONE place.
+ *
+ * ---------------------------------------------------------------------------
+ * EVERY CONTROLLER USED TO BUILD THIS BY HAND, AND THAT IS WHY THE AUDIT LOG
+ * WAS BLIND.
+ *
+ * Each controller had a private `ctx()` returning `{ tenantId, userId }` and,
+ * in some, the locked-period flag. None of them carried the request id, the IP
+ * or the user agent — not because anyone decided not to, but because
+ * `TenantContext` had nowhere to put them and five copies of a helper drift
+ * quietly. The audit log's `actor_ip`, `user_agent` and `request_id` columns
+ * were NULL on every row as a direct result.
+ *
+ * One function now, so a field added here reaches every route at once.
+ * ---------------------------------------------------------------------------
+ */
+export function tenantContextOf(request: FastifyRequest): TenantContext {
+  const principal = principalOf(request);
+  return { ...actorContextOf(request), ...tenantFor(principal) };
+}
+
+/**
+ * The actor half alone, for the routes with no principal.
+ *
+ * The public pay page and the gateway webhook are unauthenticated by necessity,
+ * so they have no user — but they do have a request, an origin and a request
+ * id, and a webhook that silently settles an invoice with no record of where it
+ * came from is precisely the write worth being able to trace. An unattributed
+ * USER is correct there; an unattributed REQUEST is not.
+ */
+export function actorContextOf(request: FastifyRequest): ActorContext {
+  const context = contextOf(request);
+  return {
+    requestId: context.requestId,
+    ...(context.ip !== undefined ? { actorIp: context.ip } : {}),
+    ...(context.userAgent !== undefined ? { userAgent: context.userAgent } : {}),
+  };
+}
+
+function tenantFor(principal: Principal): { tenantId: string; userId: string; allowLockedPeriod?: true } {
+  return {
+    tenantId: principal.tenantId,
+    userId: principal.userId,
+    // Only set when the role actually carries it. `withTenant` turns this into
+    // `app.allow_locked_period`, which is what the database checks.
+    ...(principal.permissions.has('period.override') ? { allowLockedPeriod: true as const } : {}),
+  };
 }

@@ -23,7 +23,7 @@
  * a hot request path.
  */
 
-/** The fixed role set. Mirrors `app_role` in migration 0012. */
+/** The fixed role set. Mirrors `app_role` in migrations 0012 and 0033. */
 export type RoleCode =
   | 'OWNER'
   | 'ADMIN'
@@ -31,6 +31,7 @@ export type RoleCode =
   | 'APPROVER'
   | 'BOOKKEEPER'
   | 'SALES'
+  | 'TECHNICIAN'
   | 'READ_ONLY'
   | 'EXTERNAL_AUDITOR';
 
@@ -67,6 +68,16 @@ export type Permission =
   | 'user.read'
   | 'user.manage'
   | 'apikey.manage'
+  | 'audit.read'
+  | 'system.read'
+  | 'item.read'
+  | 'item.write'
+  | 'stock.read'
+  | 'stock.adjust'
+  | 'pos.sale'
+  | 'repair.read'
+  | 'repair.write'
+  | 'collections.chase'
   | 'org.manage'
   | 'org.delete';
 
@@ -101,6 +112,44 @@ export function can(principal: Principal, permission: Permission): boolean {
   return true;
 }
 
+/**
+ * The permissions a principal ACTUALLY holds — the role's set narrowed by an
+ * API key's scopes.
+ *
+ * ---------------------------------------------------------------------------
+ * USE THIS, NOT `principal.permissions`, ANYWHERE A ROUTE HAS NO `@Requires`.
+ *
+ * The `AuthGuard` only intersects scopes against a route's REQUIRED permission,
+ * so a route that carries no `@Requires` (the assistant, `/auth/me`) and then
+ * reads `principal.permissions` directly sees the un-narrowed ROLE set. That is
+ * how a key scoped to "read invoices" could read the whole financial snapshot
+ * through the assistant. This collapses the intersection into one set so a
+ * consumer cannot forget to apply it.
+ * ---------------------------------------------------------------------------
+ */
+export function effectivePermissions(principal: Principal): ReadonlySet<Permission> {
+  if (principal.scopes === undefined) return principal.permissions;
+  const narrowed = new Set<Permission>();
+  for (const permission of principal.permissions) {
+    if (principal.scopes.has(permission)) narrowed.add(permission);
+  }
+  return narrowed;
+}
+
+/**
+ * Whether an actor may act ON a member who currently holds `subject`.
+ *
+ * `canGrantRole` guards the role being GRANTED; this guards the person being
+ * ACTED ON. Without it an Admin can demote the Owner — the grant of READ_ONLY
+ * is permitted (it is below the Admin's rank), but the target outranks the
+ * Admin, so the Admin ends up stripping the one member senior to them and
+ * leaving the organisation ownerless. An actor may only act on a member at or
+ * below their own rank.
+ */
+export function mayActOnRole(actor: RoleCode, subject: RoleCode): boolean {
+  return ROLE_RANK[actor] <= ROLE_RANK[subject];
+}
+
 export function canAll(
   principal: Principal,
   permissions: readonly Permission[],
@@ -123,8 +172,9 @@ export const ROLE_RANK: Readonly<Record<RoleCode, number>> = {
   APPROVER: 3,
   BOOKKEEPER: 4,
   SALES: 5,
-  READ_ONLY: 6,
-  EXTERNAL_AUDITOR: 7,
+  TECHNICIAN: 6,
+  READ_ONLY: 7,
+  EXTERNAL_AUDITOR: 8,
 };
 
 /**
@@ -211,6 +261,21 @@ export const EVENT_LOGGED_PERMISSIONS: Readonly<Record<string, string>> = {
   'apikey.manage': 'API_KEY_ISSUED',
   'user.manage': 'ROLE_CHANGED',
 };
+
+/**
+ * Why `BANK_DETAILS_CHANGED` and `RECONCILIATION_COMPLETED` are NOT in the map
+ * above, despite being event types this system now writes.
+ *
+ * The map is keyed by PERMISSION, and its meaning is "every use of this
+ * permission logs an event". That holds for `period.override` — there is no way
+ * to exercise it quietly. It does not hold for banking: `bank.reconcile`
+ * authorises both `completeReconciliation`, which must log, and
+ * `suggestForAccount`, which must not. A permission cannot express "this
+ * permission, in this operation".
+ *
+ * So those two are written at their call sites, naming the permission that
+ * authorised them, and this map keeps the narrower claim it can actually make.
+ */
 
 export function requiresFinancialEvent(permission: Permission): string | undefined {
   return EVENT_LOGGED_PERMISSIONS[permission];

@@ -19,11 +19,29 @@ export const ADMIN_URL =
  */
 const APP_LOGIN_ROLE = 'emil_app_login';
 
+/**
+ * The role the WORKER connects as.
+ *
+ * Separate from the application role on purpose, and the separation is the
+ * thing worth testing. `emil_worker` holds EXECUTE on the SECURITY DEFINER
+ * functions that read the outbox across every tenant; `emil_app`, which is what
+ * the internet-facing API connects as, does not. A suite that drove the relay
+ * through the app connection would prove the relay works and prove nothing
+ * about the boundary — and would quietly pass if the GRANT were widened.
+ */
+const WORKER_LOGIN_ROLE = 'emil_worker_login';
+
 export interface TestDatabase {
   /** Connected as the unprivileged application role. Subject to RLS. */
   readonly sql: Sql;
   /** Connected as the owner. Used for provisioning only. */
   readonly admin: Sql;
+  /**
+   * Connected as the worker role: `emil_app` plus EXECUTE on the outbox and
+   * scheduler claim functions. Still unprivileged, still subject to RLS for
+   * every ordinary query.
+   */
+  readonly worker: Sql;
   readonly drop: () => Promise<void>;
 }
 
@@ -36,6 +54,9 @@ export async function createTestDatabase(name: string): Promise<TestDatabase> {
       BEGIN
           IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${APP_LOGIN_ROLE}') THEN
               CREATE ROLE ${APP_LOGIN_ROLE} LOGIN NOBYPASSRLS;
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${WORKER_LOGIN_ROLE}') THEN
+              CREATE ROLE ${WORKER_LOGIN_ROLE} LOGIN NOBYPASSRLS;
           END IF;
       END $$;
   `);
@@ -50,10 +71,14 @@ export async function createTestDatabase(name: string): Promise<TestDatabase> {
       GRANT emil_app TO ${APP_LOGIN_ROLE};
       GRANT CONNECT ON DATABASE ${dbName} TO ${APP_LOGIN_ROLE};
       GRANT USAGE ON SCHEMA public TO ${APP_LOGIN_ROLE};
+      GRANT emil_worker TO ${WORKER_LOGIN_ROLE};
+      GRANT CONNECT ON DATABASE ${dbName} TO ${WORKER_LOGIN_ROLE};
+      GRANT USAGE ON SCHEMA public TO ${WORKER_LOGIN_ROLE};
   `);
 
   const appUrl = adminUrl.replace('//postgres@', `//${APP_LOGIN_ROLE}@`);
   const sql = createClient(appUrl);
+  const worker = createClient(adminUrl.replace('//postgres@', `//${WORKER_LOGIN_ROLE}@`));
 
   // Guard the guard: if this ever connects with RLS-bypassing privileges, every
   // isolation test below becomes meaningless. Fail loudly instead.
@@ -71,8 +96,10 @@ export async function createTestDatabase(name: string): Promise<TestDatabase> {
   return {
     sql,
     admin,
+    worker,
     drop: async () => {
       await sql.end();
+      await worker.end();
       await admin.end();
       const cleanup = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
       await cleanup.unsafe(`DROP DATABASE IF EXISTS ${dbName} WITH (FORCE)`);
@@ -132,6 +159,21 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
       ['1150', 'SST Claimable', 'ASSET'],
       // Withholding retained from a payment and owed to LHDN until remitted.
       ['2200', 'Withholding Tax Payable', 'LIABILITY'],
+      // Money a customer has paid and the gateway has not yet settled to the
+      // bank. Deliberately NOT tagged 'cash_and_bank': whether funds in transit
+      // from a payment provider present as a cash equivalent or as other
+      // receivables under MPERS is a presentation question for the reporting
+      // framework, and the ACCOUNT_TYPE catch-all keeps it on the SOFP either
+      // way. Flagged rather than decided here.
+      ['1200', 'Undeposited Funds', 'ASSET'],
+      // What the gateway keeps. An expense in its own right — see
+      // buildGatewayFeeJournal on why it is never netted into revenue.
+      ['6100', 'Payment Gateway Fees', 'EXPENSE'],
+      // Perpetual inventory: the shelf as an asset, its relief on sale, and
+      // the line shrinkage posts to so it stays visible (0026).
+      ['1300', 'Inventory on Hand', 'ASSET'],
+      ['5100', 'Cost of Goods Sold', 'EXPENSE'],
+      ['5900', 'Stock Shrinkage', 'EXPENSE'],
     ];
 
     const accounts: Record<string, string> = {};
@@ -191,7 +233,15 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, 'UNREALISED_FX',  ${accounts['6910']!}),
                (${tenantId}, 'AP_REVALUATION', ${accounts['2090']!}),
                (${tenantId}, 'SST_CLAIMABLE',  ${accounts['1150']!}),
-               (${tenantId}, 'WHT_PAYABLE',    ${accounts['2200']!})
+               (${tenantId}, 'WHT_PAYABLE',    ${accounts['2200']!}),
+               (${tenantId}, 'UNDEPOSITED_FUNDS', ${accounts['1200']!}),
+               (${tenantId}, 'GATEWAY_FEE',       ${accounts['6100']!}),
+               -- Where a closed year's profit is carried. In the CHECK since
+               -- 0002 and mapped by nothing until the year-end close existed.
+               (${tenantId}, 'RETAINED_EARNINGS', ${accounts['3000']!}),
+               (${tenantId}, 'INVENTORY',       ${accounts['1300']!}),
+               (${tenantId}, 'COGS',            ${accounts['5100']!}),
+               (${tenantId}, 'STOCK_SHRINKAGE', ${accounts['5900']!})
     `;
 
     // Tags let the GLOBAL statement templates address this chart without

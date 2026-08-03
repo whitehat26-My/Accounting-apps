@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { DEFAULT_SESSION_POLICY, type Permission } from '@emil/domain';
 import {
   addMember,
+  listMembers,
+  userIdForEmail,
   authenticate,
   createSession,
   issueApiKey,
@@ -12,7 +14,7 @@ import {
   principalFor,
   refreshSession,
   registerUser,
-  revokeSession,
+  revokeByRefreshToken,
   withTenant,
   withUser,
   type Sql,
@@ -20,6 +22,7 @@ import {
 import { CONFIG, SQL } from '../tokens.js';
 import type { ApiConfig } from '../config.js';
 import { Public, Requires } from '../guards/decorators.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { principalOf } from '../context/request-context.js';
 import { NotFoundError, UnauthenticatedError, ValidationError } from '../errors.js';
 import { parse } from '../validation.js';
@@ -45,6 +48,7 @@ export class AuthController {
    * membership does, which is what makes one login work across N clients.
    */
   @Public()
+  @Doc({ request: () => registration })
   @Post('register')
   async register(@Body() body: unknown) {
     const input = parse(registration, body);
@@ -64,6 +68,7 @@ export class AuthController {
    * credential the user never asked for.
    */
   @Public()
+  @Doc({ request: () => credentials })
   @Post('login')
   async login(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(credentials, body);
@@ -95,6 +100,7 @@ export class AuthController {
    * COMMITS its family revocation. Turning it into a 401 is this layer's job.
    */
   @Public()
+  @Doc({ request: () => refreshBody })
   @Post('refresh')
   async refresh(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(refreshBody, body);
@@ -119,9 +125,10 @@ export class AuthController {
    * the guard can assert it against the header.
    */
   @Public()
+  @Doc({ request: () => switchOrganisationSchema })
   @Post('switch')
   async switchOrganisation(@Body() body: unknown) {
-    const input = parse(switchBody.extend({ refreshToken: z.string().min(1) }), body);
+    const input = parse(switchOrganisationSchema, body);
 
     const session = await withUser(this.sql, null, (tx) =>
       refreshSession(tx, input.refreshToken),
@@ -160,10 +167,13 @@ export class AuthController {
   }
 
   @Public()
+  @Doc({ request: () => logoutSchema })
   @Post('logout')
   async logout(@Body() body: unknown) {
-    const input = parse(z.object({ sessionId: z.string().uuid() }), body);
-    await withUser(this.sql, null, (tx) => revokeSession(tx, input.sessionId));
+    const input = parse(logoutSchema, body);
+    // By refresh token, not session id: the token is a secret only its holder
+    // has, so this cannot be used to sign out someone else. See the service.
+    await withUser(this.sql, null, (tx) => revokeByRefreshToken(tx, input.refreshToken));
     return { revoked: true };
   }
 
@@ -182,25 +192,28 @@ export class AuthController {
     };
   }
 
+  /** The team page: everyone with access, with the role they hold. */
+  @Requires('user.read')
+  @Get('members')
+  async members(@Req() request: FastifyRequest) {
+    const principal = principalOf(request);
+    const ctx = { tenantId: principal.tenantId, userId: principal.userId };
+    const members = await withTenant(this.sql, ctx, (tx) => listMembers(tx));
+    return { members };
+  }
+
+  /**
+   * Add a member by user id — or by EMAIL, which is how a shop actually does
+   * it: the cashier registers themselves, tells the boss their email, the
+   * boss picks a role. Only `user.manage` holders can resolve an email to an
+   * account, so the lookup is not an enumeration oracle for outsiders.
+   */
   @Requires('user.manage')
+  @Doc({ request: () => addMemberSchema })
   @Post('members')
   async addMember(@Body() body: unknown, @Req() request: FastifyRequest) {
     const principal = principalOf(request);
-    const input = parse(
-      z.object({
-        userId: z.string().uuid(),
-        role: z.enum([
-          'OWNER',
-          'ADMIN',
-          'ACCOUNTANT',
-          'APPROVER',
-          'BOOKKEEPER',
-          'SALES',
-          'READ_ONLY',
-          'EXTERNAL_AUDITOR',
-        ]),
-        expiresAt: z.string().datetime().optional(),
-      }),
+    const input = parse(addMemberSchema,
       body,
     );
 
@@ -213,26 +226,49 @@ export class AuthController {
       );
     }
 
+    const { mayActOnRole } = await import('@emil/domain');
     const ctx = { tenantId: principal.tenantId, userId: principal.userId };
-    return withTenant(this.sql, ctx, (tx) =>
-      addMember(tx, ctx, {
-        userId: input.userId,
+    return withTenant(this.sql, ctx, async (tx) => {
+      let userId = input.userId;
+      if (userId === undefined) {
+        userId = await userIdForEmail(tx, input.email!);
+        if (userId === undefined) {
+          throw new ValidationError(
+            `No registered account holds ${input.email} — ask them to register first, then add them`,
+          );
+        }
+      }
+
+      // You may not act on a member who OUTRANKS you, whatever role you are
+      // granting. `canGrantRole` above guards the role being granted; without
+      // this an Admin could grant READ_ONLY (allowed, it is below them) to the
+      // OWNER and strip the one person senior to them — leaving the org
+      // ownerless. `addMember` upserts, so this is the only guard on the
+      // target's current standing.
+      const [existing] = await tx<{ role_code: string }[]>`
+          SELECT role_code FROM membership
+           WHERE tenant_id = ${ctx.tenantId} AND user_id = ${userId}
+      `;
+      if (existing && !mayActOnRole(principal.role, existing.role_code as typeof principal.role)) {
+        throw new ValidationError(
+          `A ${principal.role} cannot change the ${existing.role_code} — they outrank you`,
+        );
+      }
+
+      return addMember(tx, ctx, {
+        userId,
         role: input.role,
         ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-      }),
-    );
+      });
+    });
   }
 
   @Requires('apikey.manage')
+  @Doc({ request: () => createApiKeySchema })
   @Post('api-keys')
   async createApiKey(@Body() body: unknown, @Req() request: FastifyRequest) {
     const principal = principalOf(request);
-    const input = parse(
-      z.object({
-        name: z.string().min(1),
-        scopes: z.array(z.string()).min(1),
-        expiresAt: z.string().datetime().optional(),
-      }),
+    const input = parse(createApiKeySchema,
       body,
     );
 
@@ -268,3 +304,34 @@ function sessionContext(request: FastifyRequest): { ip?: string; userAgent?: str
     ...(userAgent !== undefined ? { userAgent } : {}),
   };
 }
+
+const switchOrganisationSchema = switchBody.extend({ refreshToken: z.string().min(1) });
+
+const logoutSchema = z.object({ refreshToken: z.string().min(1) });
+
+const addMemberSchema = z
+  .object({
+    userId: z.string().uuid().optional(),
+    email: z.string().email().optional(),
+    role: z.enum([
+      'OWNER',
+      'ADMIN',
+      'ACCOUNTANT',
+      'APPROVER',
+      'BOOKKEEPER',
+      'SALES',
+      'TECHNICIAN',
+      'READ_ONLY',
+      'EXTERNAL_AUDITOR',
+    ]),
+    expiresAt: z.string().datetime().optional(),
+  })
+  .refine((v) => (v.userId !== undefined) !== (v.email !== undefined), {
+    message: 'Provide exactly one of userId or email',
+  });
+
+const createApiKeySchema = z.object({
+  name: z.string().min(1),
+  scopes: z.array(z.string()).min(1),
+  expiresAt: z.string().datetime().optional(),
+});

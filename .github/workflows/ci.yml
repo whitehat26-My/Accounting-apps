@@ -24,6 +24,9 @@ jobs:
 
     env:
       DATABASE_URL: postgres://postgres@127.0.0.1:5432/postgres
+      # The API refuses to start without this, by design — a development
+      # fallback is the value that reaches production. CI supplies a throwaway.
+      JWT_SECRET: ci-only-secret-at-least-thirty-two-characters
 
     steps:
       - uses: actions/checkout@v4
@@ -42,6 +45,12 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      # The contracts package is pure schema and schema-to-OpenAPI. No
+      # infrastructure, and it runs first because a break here means every
+      # request shape in the system is in question.
+      - name: Contract tests
+        run: pnpm test:contracts
+
       # The domain layer is pure, so these run without any infrastructure.
       # Property-based tests over the ledger invariants live here.
       - name: Domain tests (unit + property-based)
@@ -52,3 +61,20 @@ jobs:
       # actually work — none of it can be verified against a mock.
       - name: Database tests (integration)
         run: pnpm test:db
+
+      # End-to-end through the real HTTP application — the same guards in the
+      # same order, the same exception filter. This is where the tenant
+      # boundary is proven at the edge: a cross-tenant request answering 404
+      # rather than 403, and a token minted for one organisation being refused
+      # for another.
+      #
+      # These were absent from CI when apps/api landed, so 27 tests sat unrun.
+      - name: API tests (end-to-end)
+        run: pnpm test:api
+
+      # The background worker, against the same real PostgreSQL. Everything
+      # interesting here — the SKIP LOCKED claim, the lease, the exponential
+      # backoff, and the fact that `emil_app` CANNOT reach the cross-tenant
+      # claim functions — is database behaviour that no mock can stand in for.
+      - name: Worker tests (integration)
+        run: pnpm test:worker

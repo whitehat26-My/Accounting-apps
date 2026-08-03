@@ -219,7 +219,54 @@ async function loadCandidates(
          AND b.amount_due > 0
   `;
 
+  /*
+   * Posted gateway settlements.
+   *
+   * -------------------------------------------------------------------------
+   * A SETTLEMENT LINE MUST NOT MATCH THE PAYMENTS IT COVERS.
+   *
+   * Twelve FPX collections arrive on Monday and land in the CLEARING account,
+   * not the bank. On Wednesday the provider pays one figure into the bank, net
+   * of fees. Without this query the only candidates near that line are the
+   * twelve payments — which sum to the GROSS, never equal the line, and were
+   * already deposited somewhere else. Matching them would double-count the
+   * receipts and leave the clearing account permanently out.
+   *
+   * The settlement's own journal entry is the correct counterpart: one entry,
+   * one amount, exactly what the bank shows. It is offered as a JOURNAL
+   * candidate because that is what it is, and `matched_type` already permits
+   * it. The provider's batch id is the document number, so the reference
+   * extraction in text.ts can find it in a narrative like
+   * "FPX SETTLEMENT FPX-20260805-001".
+   * -------------------------------------------------------------------------
+   */
+  const settlements = await tx<
+    { journal_entry_id: string; provider_batch_id: string | null; provider: string;
+      settlement_date: Date; net_amount: string }[]
+  >`
+      SELECT s.journal_entry_id, s.provider_batch_id, s.provider,
+             s.settlement_date, s.net_amount
+        FROM gateway_settlement s
+       WHERE s.tenant_id = ${ctx.tenantId}
+         AND s.journal_entry_id IS NOT NULL
+         AND NOT EXISTS (
+               SELECT 1 FROM active_reconciliation_match m
+                WHERE m.tenant_id = s.tenant_id
+                  AND m.matched_type = 'JOURNAL' AND m.matched_id = s.journal_entry_id
+             )
+  `;
+
   return [
+    ...settlements.map(
+      (s): MatchCandidate => ({
+        id: s.journal_entry_id,
+        kind: 'JOURNAL',
+        documentNo: s.provider_batch_id ?? s.provider,
+        documentDate: toIsoDate(s.settlement_date),
+        amount: Money.fromDecimal(s.net_amount, baseCurrency),
+        direction: 'INFLOW',
+      }),
+    ),
     ...payments.map(
       (p): MatchCandidate => ({
         id: p.id,
@@ -475,6 +522,9 @@ export interface CreateFromLineInput {
   readonly description?: string;
   readonly contactId?: string;
   readonly idempotencyKey: string;
+  /** Who decided: a person (default) or a bank rule. Recorded on the match. */
+  readonly method?: 'RULE' | 'MANUAL';
+  readonly reason?: string;
 }
 
 /**
@@ -574,8 +624,8 @@ export async function createEntryFromBankLine(
     matchedType: 'JOURNAL',
     matchedId: posted.id,
     amount: signed.toDecimalString(),
-    method: 'MANUAL',
-    reason: 'Entry created directly from the bank line',
+    method: input.method ?? 'MANUAL',
+    reason: input.reason ?? 'Entry created directly from the bank line',
   });
 
   return { journalEntryId: posted.id, matchId: match.id };
@@ -805,6 +855,32 @@ export async function completeReconciliation(
           'COMPLETED', ${ctx.userId ?? null}, now()
       )
       RETURNING id
+  `;
+
+  /*
+   * Signing off a reconciliation is an act, not just a row.
+   *
+   * The audit trigger already records the `reconciliation_session` INSERT. This
+   * is the second log — the small set an auditor asks about by name (0012:200).
+   * "The bank was reconciled to zero at this date, by this person" is close to
+   * the top of that list, and `RECONCILIATION_COMPLETED` has been declared in
+   * the event enum since 0012 without anything ever writing it.
+   *
+   * Same transaction as the session row, so a completed reconciliation cannot
+   * exist without its event.
+   */
+  await tx`
+      INSERT INTO financial_event_log (
+          tenant_id, event_type, actor_user_id, permission, entity_type, entity_id, detail
+      ) VALUES (
+          ${ctx.tenantId}, 'RECONCILIATION_COMPLETED', ${ctx.userId ?? null},
+          'bank.reconcile', 'reconciliation_session', ${row!.id},
+          ${tx.json({
+            bankAccountId: input.bankAccountId,
+            periodEnd: input.periodEnd,
+            variance: result.variance.toDecimalString(),
+          })}
+      )
   `;
 
   return { id: row!.id, variance: result.variance.toDecimalString() };

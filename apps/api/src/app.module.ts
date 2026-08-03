@@ -9,6 +9,65 @@ import { IdempotencyInterceptor } from './interceptors/idempotency.interceptor.j
 import { DomainExceptionFilter } from './filters/domain-exception.filter.js';
 import { AuthController } from './modules/auth.controller.js';
 import { AccountingController } from './modules/accounting.controller.js';
+import { CollectionsController } from './modules/collections.controller.js';
+import { ContactsController } from './modules/contacts.controller.js';
+import { AuditController } from './modules/audit.controller.js';
+import { LedgerController } from './modules/ledger.controller.js';
+import { BankingController } from './modules/banking.controller.js';
+import { ConfigurationController } from './modules/configuration.controller.js';
+import { EInvoiceController } from './modules/einvoice.controller.js';
+import { ReportsController } from './modules/reports.controller.js';
+import { SystemController } from './modules/system.controller.js';
+import { ItemsController } from './modules/items.controller.js';
+import { StockController } from './modules/stock.controller.js';
+import { PosController } from './modules/pos.controller.js';
+import { RepairsController } from './modules/repairs.controller.js';
+import { OnboardingController } from './modules/onboarding.controller.js';
+import { DocumentsController } from './modules/documents.controller.js';
+import { PublicPayController } from './modules/public-pay.controller.js';
+import { GatewayRegistry } from './gateways/registry.js';
+import { FakeGateway } from '@emil/db';
+import { ASSISTANT, GATEWAYS } from './tokens.js';
+import { AssistantController } from './modules/assistant.controller.js';
+import {
+  FakeAssistantProvider,
+  UnconfiguredAssistantProvider,
+  type AssistantProvider,
+} from './assistant/provider.js';
+import { AnthropicAssistantProvider } from './assistant/anthropic.provider.js';
+import { OpenApiController } from './modules/openapi.controller.js';
+import { DatabaseLifecycle } from './database.lifecycle.js';
+
+/**
+ * Every controller the application serves.
+ *
+ * Exported so `openapi/document.ts` can enumerate exactly what is mounted. A
+ * separate list for documentation would be a second source of truth and would
+ * drift the first time somebody adds a controller — which is the whole failure
+ * the generated spec exists to avoid.
+ */
+export const API_CONTROLLERS = [
+  AuthController,
+  AccountingController,
+  ContactsController,
+  CollectionsController,
+  AuditController,
+  LedgerController,
+  BankingController,
+  ConfigurationController,
+  EInvoiceController,
+  ReportsController,
+  SystemController,
+  ItemsController,
+  StockController,
+  PosController,
+  RepairsController,
+  OnboardingController,
+  DocumentsController,
+  PublicPayController,
+  AssistantController,
+  OpenApiController,
+] as const;
 
 /**
  * The middleware chain from docs/architecture/01-system-architecture.md §1.3.
@@ -34,7 +93,7 @@ import { AccountingController } from './modules/accounting.controller.js';
  * ---------------------------------------------------------------------------
  */
 @Module({
-  controllers: [AuthController, AccountingController],
+  controllers: [...API_CONTROLLERS],
   providers: [
     {
       provide: CONFIG,
@@ -55,6 +114,53 @@ import { AccountingController } from './modules/accounting.controller.js';
         new FixedWindowRateLimiter(config.rateLimit, config.rateLimitWindowMs),
       inject: [CONFIG],
     },
+    {
+      // A separate budget for /public/*, so a flood of pay-token guesses
+      // cannot exhaust an authenticated tenant's allowance or vice versa.
+      provide: Symbol.for('PUBLIC_RATE_LIMITER'),
+      useFactory: (config: ApiConfig) =>
+        new FixedWindowRateLimiter(config.publicRateLimit, config.rateLimitWindowMs),
+      inject: [CONFIG],
+    },
+    {
+      // A per-tenant budget for the assistant, whose cost is a paid LLM call
+      // rather than a query. Injected into the controller, which keys it on the
+      // tenant — the pre-auth IP limiter cannot, and IP is the wrong key anyway.
+      provide: Symbol.for('ASSISTANT_RATE_LIMITER'),
+      useFactory: (config: ApiConfig) =>
+        new FixedWindowRateLimiter(config.assistantRateLimit, config.rateLimitWindowMs),
+      inject: [CONFIG],
+    },
+    {
+      provide: GATEWAYS,
+      useFactory: (config: ApiConfig): GatewayRegistry => {
+        const registry = new GatewayRegistry();
+        // Empty in production, and that is correct: no concrete adapter exists
+        // yet, so the routes that need one answer 503 rather than pretending.
+        // `loadConfig` refuses this flag when NODE_ENV is production, because
+        // the fake gateway accepts any signature.
+        if (config.enableFakeGateway) registry.register(new FakeGateway());
+        return registry;
+      },
+      inject: [CONFIG],
+    },
+    {
+      provide: ASSISTANT,
+      // Fake wins when its flag is set (tests; loadConfig refuses it in
+      // production), then the real provider if a key exists, then the honest
+      // "not configured" one. Never a silent nothing.
+      useFactory: (config: ApiConfig): AssistantProvider => {
+        if (config.enableFakeAssistant) return new FakeAssistantProvider();
+        if (config.anthropicApiKey !== undefined) {
+          return new AnthropicAssistantProvider(config.anthropicApiKey);
+        }
+        return new UnconfiguredAssistantProvider();
+      },
+      inject: [CONFIG],
+    },
+    // Ends the pool on shutdown. A `useFactory` value gets no lifecycle hooks,
+    // so the closing has to live on a class Nest can call.
+    DatabaseLifecycle,
     { provide: APP_GUARD, useClass: RateLimitGuard },
     { provide: APP_GUARD, useClass: AuthGuard },
     { provide: APP_INTERCEPTOR, useClass: IdempotencyInterceptor },

@@ -35,7 +35,6 @@ afterAll(async () => {
   await drop?.();
 });
 
-const ctx = () => ({ tenantId: tenant.tenantId, userId: tenant.userId });
 const rm = (v: string) => Money.fromDecimal(v, 'MYR');
 
 async function accountBase(code: string, t: Tenant = tenant): Promise<string> {

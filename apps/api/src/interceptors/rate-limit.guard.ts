@@ -1,7 +1,5 @@
 import { Inject, Injectable, type CanActivate, type ExecutionContext } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
-import { CONFIG } from '../tokens.js';
-import type { ApiConfig } from '../config.js';
 import { RateLimitedError } from '../errors.js';
 
 /**
@@ -75,17 +73,45 @@ export class FixedWindowRateLimiter implements RateLimiter {
 @Injectable()
 export class RateLimitGuard implements CanActivate {
   constructor(
-    @Inject(CONFIG) private readonly config: ApiConfig,
+    // No CONFIG here: the budgets are baked into the two limiters by their
+    // factories in `app.module.ts`, so injecting the config as well would be a
+    // dependency this class does not have and a second place to look for the
+    // numbers.
     @Inject(Symbol.for('RATE_LIMITER')) private readonly limiter: RateLimiter,
+    @Inject(Symbol.for('PUBLIC_RATE_LIMITER')) private readonly publicLimiter: RateLimiter,
   ) {}
 
   canActivate(execution: ExecutionContext): boolean {
     const request = execution.switchToHttp().getRequest<FastifyRequest>();
 
-    // Keyed on the tenant AND the caller. Keying on the source address alone
-    // would let one busy tenant behind a corporate NAT throttle another.
-    const tenant = request.headers['x-tenant-id'];
-    const key = `${Array.isArray(tenant) ? tenant[0] : (tenant ?? 'anon')}:${request.ip}`;
+    // Keyed on the source address ALONE.
+    //
+    // The key deliberately no longer includes `X-Tenant-Id`: this guard runs
+    // before authentication, so that header is unvalidated attacker input, and
+    // rotating it per request minted a fresh bucket every time — the limiter
+    // enforced nothing. `request.ip` is the socket address (or a trusted-proxy
+    // client address; never a client-forged `X-Forwarded-For` unless
+    // TRUST_PROXY says so — see config.ts). The fairness nicety the tenant key
+    // bought (one NAT'd tenant not throttling another) is not worth a limiter
+    // that any client can walk past.
+    const key = request.ip;
+
+    /*
+     * The pay routes get their own, much tighter budget.
+     *
+     * They are the only unauthenticated read of tenant data, and their key is a
+     * random token — so the rate limit is not a fairness measure here, it is
+     * what makes guessing a token impractical rather than merely slow. It is
+     * also keyed separately so a flood of token guesses cannot exhaust an
+     * authenticated tenant's allowance, and a busy tenant cannot exhaust the
+     * pay page's.
+     */
+    if (request.url.startsWith('/public/')) {
+      const publicKey = `public:${request.ip}`;
+      const result = this.publicLimiter.check(publicKey, Date.now());
+      if (!result.allowed) throw new RateLimitedError(result.retryAfterSeconds);
+      return true;
+    }
 
     const { allowed, retryAfterSeconds } = this.limiter.check(key, Date.now());
     if (!allowed) throw new RateLimitedError(retryAfterSeconds);

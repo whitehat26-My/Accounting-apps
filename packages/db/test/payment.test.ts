@@ -25,7 +25,6 @@ afterAll(async () => {
 });
 
 const ctx = () => ({ tenantId: tenant.tenantId, userId: tenant.userId });
-const rm = (v: string) => Money.fromDecimal(v, 'MYR');
 
 async function issue(unitPrice: string, issueDate = '2026-08-05') {
   return withTenant(sql, ctx(), (tx) =>

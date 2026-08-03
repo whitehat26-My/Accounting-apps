@@ -162,6 +162,57 @@ describe('statement import', () => {
     expect(second.duplicates).toBe(2);
   });
 
+  it('imports a Maybank payment advice — the photographed format — and dedupes on re-import', async () => {
+    const { ctx, bankAccountId } = await bankTenant('Advice Import Sdn Bhd');
+    const advice = [
+      'Our Reference             : 202605183294290',
+      'Payment Reference         : DEPOSIT',
+      'Branch                    : IBS BANGSAR BARU',
+      'Details Of Payment        : PAYMENT DESCRIPTIONS : MAKAN',
+      'Remiting Bank             : BANK SIMPANAN',
+      'Remittance Amount         : 10.00',
+      'Total Charges             : 0.00',
+      'Total Amount              : 10.00',
+    ].join('\n');
+
+    const first = await withTenant(sql, ctx, (tx) =>
+      importStatement(tx, ctx, {
+        bankAccountId,
+        content: advice,
+        format: 'ADVICE',
+        statementDate: '2026-05-18',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    expect(first.imported).toBe(1);
+    // The advice carries no date label: dated by the statement date, and the
+    // response SAYS so rather than substituting silently.
+    expect(first.violations).toEqual([
+      { code: 'ADVICE_NO_DATE', reference: '202605183294290' },
+    ]);
+
+    const [line] = await admin<{ description: string; amount: string; reference: string }[]>`
+        SELECT description, amount::text, reference FROM bank_transaction
+         WHERE tenant_id = ${ctx.tenantId} AND bank_account_id = ${bankAccountId}
+    `;
+    expect(line!.description).toBe('DEPOSIT MAKAN FR BANK SIMPANAN');
+    expect(line!.amount).toBe('10.0000');
+    expect(line!.reference).toBe('202605183294290');
+
+    const again = await withTenant(sql, ctx, (tx) =>
+      importStatement(tx, ctx, {
+        bankAccountId,
+        content: advice,
+        format: 'ADVICE',
+        statementDate: '2026-05-18',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+    expect(again.imported).toBe(0);
+    expect(again.duplicates).toBe(1);
+  });
+
   it('keeps two genuinely identical transactions on the same day', async () => {
     // Two RM 50 ATM withdrawals, same day, same narrative. A naive hash drops
     // the second and understates the bank by RM 50, with no error anywhere.

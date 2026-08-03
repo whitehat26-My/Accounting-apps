@@ -116,6 +116,11 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     // refreshed from LHDN, contains nothing tenant-specific. Read-only to the
     // application role.
     einvoice_classification_code: 'global LHDN reference data, read-only',
+    // Same shape, same reasoning: the MyInvois unit-of-measure code list is
+    // identical for every tenant. Ships EMPTY pending LHDN's published
+    // reference data, because a plausible-looking wrong code on a submission to
+    // a tax authority is worse than an explicit gap.
+    einvoice_uom_code: 'global LHDN reference data, read-only',
     // Statement layouts are the same for every tenant and contain no tenant
     // data. Read-only to the application role; tenant-specific overrides,
     // when they exist, will live in separate tenant-scoped tables.
@@ -136,6 +141,13 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     // through a narrow SECURITY DEFINER function. Asserted below.
     app_user: 'global identity; app role has no grant, access via SECURITY DEFINER only',
     user_session: 'global session; app role has no grant, access via SECURITY DEFINER only',
+    // Scheduled jobs run ACROSS tenants — the rollup-drift canary asks "has
+    // any tenant's cache diverged from its journal", and a per-tenant schedule
+    // would make the answer depend on whether that tenant happened to have a
+    // row. It holds job names, intervals and run outcomes; no tenant data. The
+    // assertion below that an exempt table really has no tenant_id is what
+    // stops it quietly becoming tenant data later.
+    scheduled_job: 'global background schedule; job names and timings only',
     // The role→permission matrix is the same for every tenant.
     app_role: 'global role definitions, read-only',
     app_permission: 'global permission definitions, read-only',
@@ -175,6 +187,36 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
       expect(row.rowsecurity, `${row.tablename}: RLS not enabled`).toBe(true);
       expect(row.forced, `${row.tablename}: RLS not FORCED`).toBe(true);
       expect(row.policies, `${row.tablename}: no policy attached`).toBeGreaterThan(0);
+    }
+  });
+
+  it('every tenant policy carries an explicit WITH CHECK, not USING alone', async () => {
+    // The behavioural tests below prove a cross-tenant write is refused. This
+    // proves it structurally, at the catalog: a policy with `polwithcheck` NULL
+    // is USING-only. Postgres would silently reuse USING as the write check
+    // today, so such a policy is not a leak now — but it couples the write rule
+    // to the read rule, so the day USING is widened for reads the writes widen
+    // with it. Requiring an explicit WITH CHECK keeps the two independent, and
+    // catches a hand-written policy that forgot it.
+    const policies = await sql<{ tablename: string; polname: string; has_check: boolean }[]>`
+        SELECT c.relname                     AS tablename,
+               p.polname                     AS polname,
+               p.polwithcheck IS NOT NULL    AS has_check
+          FROM pg_policy p
+          JOIN pg_class c     ON c.oid = p.polrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND EXISTS (SELECT 1 FROM pg_attribute a
+                        WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
+                          AND NOT a.attisdropped)
+    `;
+
+    expect(policies.length).toBeGreaterThan(0);
+    for (const p of policies) {
+      expect(
+        p.has_check,
+        `policy ${p.polname} on ${p.tablename} is USING-only — add an explicit WITH CHECK`,
+      ).toBe(true);
     }
   });
 

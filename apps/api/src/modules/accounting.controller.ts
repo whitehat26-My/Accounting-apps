@@ -1,30 +1,37 @@
 import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import type { AgeingReport, RenderedReport } from '@emil/domain';
+import { decimal, isoDate, quantity } from '@emil/contracts';
+import type { AgeingReport } from '@emil/domain';
 import {
+  approvalFor,
+  createApprovalRule,
+  decideApproval,
+  pendingApprovals,
   agedPayables,
   agedReceivables,
   checkBankInvariant,
   enterBill,
+  applyBankRules,
   importStatement,
+  creditFromInvoice,
   issueCreditNote,
   issueInvoice,
+  listOpenBills,
+  listOpenInvoices,
   outstandingPayables,
   outstandingReceivables,
   paySupplier,
   recordReceipt,
   reconcileAccount,
-  statementOfFinancialPosition,
-  statementOfProfitOrLoss,
   suggestForAccount,
-  trialBalanceReport,
   withTenant,
   type Sql,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
+import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
-import { principalOf } from '../context/request-context.js';
+import { principalOf, tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
 import { NotFoundError } from '../errors.js';
 
@@ -50,20 +57,16 @@ import { NotFoundError } from '../errors.js';
 export class AccountingController {
   constructor(@Inject(SQL) private readonly sql: Sql) {}
 
+  // Assembled in `tenantContextOf`, not here. Five copies of this helper is
+  // how the audit log ended up with no IP, user agent or request id on any row.
   private ctx(request: FastifyRequest) {
-    const principal = principalOf(request);
-    return {
-      tenantId: principal.tenantId,
-      userId: principal.userId,
-      // Only set when the role actually carries it. `withTenant` turns this
-      // into `app.allow_locked_period`, which is what the database checks.
-      ...(principal.permissions.has('period.override') ? { allowLockedPeriod: true } : {}),
-    };
+    return tenantContextOf(request);
   }
 
   // ---- Sales --------------------------------------------------------------
 
   @Requires('invoice.create')
+  @Doc({ request: () => invoiceSchema })
   @Post('invoices')
   async issueInvoice(
     @Body() body: unknown,
@@ -75,6 +78,14 @@ export class AccountingController {
     return withTenant(this.sql, ctx, (tx) =>
       issueInvoice(tx, ctx, { ...input, idempotencyKey }),
     );
+  }
+
+  /** The open items behind the receivables total — the Sales screen's list. */
+  @Requires('invoice.read')
+  @Get('invoices')
+  async listInvoices(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { invoices: await withTenant(this.sql, ctx, (tx) => listOpenInvoices(tx, ctx)) };
   }
 
   @Requires('invoice.read')
@@ -94,6 +105,7 @@ export class AccountingController {
   }
 
   @Requires('receipt.create')
+  @Doc({ request: () => receiptSchema })
   @Post('receipts')
   async recordReceipt(
     @Body() body: unknown,
@@ -105,7 +117,37 @@ export class AccountingController {
     return withTenant(this.sql, ctx, (tx) => recordReceipt(tx, ctx, { ...input, idempotencyKey }));
   }
 
+  /**
+   * Credit an invoice from the invoice itself.
+   *
+   * The route a user should always take when there IS an invoice: every figure
+   * is read off the original, over-crediting is refused per line, and the tax
+   * rate is the one that was charged rather than today's. `POST /v1/credit-notes`
+   * remains for a standalone customer credit, which corrects no particular
+   * supply and therefore has no original to read.
+   */
   @Requires('creditnote.create')
+  @Doc({ request: () => creditFromInvoiceSchema })
+  @Post('invoices/:id/credit-note')
+  async creditInvoice(
+    @Param('id') id: string,
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = parse(creditFromInvoiceSchema, body);
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      creditFromInvoice(tx, ctx, {
+        ...input,
+        invoiceId: parse(uuidParam, id),
+        idempotencyKey,
+      }),
+    );
+  }
+
+  @Requires('creditnote.create')
+  @Doc({ request: () => creditNoteSchema })
   @Post('credit-notes')
   async issueCreditNote(
     @Body() body: unknown,
@@ -122,6 +164,7 @@ export class AccountingController {
   // ---- Purchases ----------------------------------------------------------
 
   @Requires('bill.create')
+  @Doc({ request: () => billSchema })
   @Post('bills')
   async enterBill(
     @Body() body: unknown,
@@ -131,6 +174,14 @@ export class AccountingController {
     const input = parse(billSchema, body);
     const ctx = this.ctx(request);
     return withTenant(this.sql, ctx, (tx) => enterBill(tx, ctx, { ...input, idempotencyKey }));
+  }
+
+  /** The open items behind the payables total — the Purchases screen's list. */
+  @Requires('bill.read')
+  @Get('bills')
+  async listBills(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { bills: await withTenant(this.sql, ctx, (tx) => listOpenBills(tx, ctx)) };
   }
 
   @Requires('bill.read')
@@ -150,6 +201,7 @@ export class AccountingController {
   }
 
   @Requires('payment.create')
+  @Doc({ request: () => supplierPaymentSchema })
   @Post('supplier-payments')
   async paySupplier(
     @Body() body: unknown,
@@ -161,9 +213,95 @@ export class AccountingController {
     return withTenant(this.sql, ctx, (tx) => paySupplier(tx, ctx, { ...input, idempotencyKey }));
   }
 
+  // ---- Bill approval ------------------------------------------------------
+
+  @Requires('bill.approve')
+  @Get('approvals')
+  async pendingApprovals(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { pending: await withTenant(this.sql, ctx, (tx) => pendingApprovals(tx, ctx)) };
+  }
+
+  @Requires('bill.read')
+  @Get('bills/:id/approval')
+  async billApproval(@Param('id') billId: string, @Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    const approval = await withTenant(this.sql, ctx, (tx) => approvalFor(tx, ctx, billId));
+
+    if (approval === null) {
+      // No routing rule matched, so nothing is waiting. Reported as a state
+      // rather than a 404: "this bill needs no approval" is the answer, and a
+      // 404 would read as "no such bill".
+      return { billId, status: 'NOT_REQUIRED', outstanding: [], decisions: [] };
+    }
+
+    return {
+      billId,
+      status: approval.state.status,
+      amount: approval.amount,
+      outstanding: approval.state.outstanding,
+      decisions: approval.decisions,
+      violations: approval.state.violations,
+    };
+  }
+
+  @Requires('bill.approve')
+  @Doc({ request: () => decideApprovalSchema })
+  @Post('bills/:id/approval')
+  async decideApproval(
+    @Param('id') billId: string,
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+  ) {
+    const principal = principalOf(request);
+    const input = parse(decideApprovalSchema,
+      body,
+    );
+
+    const ctx = this.ctx(request);
+    // The actor's role comes from the resolved principal, never from the body.
+    // A client-supplied role would make the whole separation of duties
+    // advisory.
+    const result = await withTenant(this.sql, ctx, (tx) =>
+      decideApproval(tx, ctx, { ...input, billId, actorRole: principal.role }),
+    );
+
+    return {
+      billId,
+      status: result.state.status,
+      outstanding: result.state.outstanding,
+    };
+  }
+
+  @Requires('org.manage')
+  @Doc({ request: () => statementSchema })
+  @Post('approval-rules')
+  async createApprovalRule(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = parse(createApprovalRuleSchema,
+      body,
+    );
+
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) => createApprovalRule(tx, ctx, input));
+  }
+
   // ---- Banking ------------------------------------------------------------
 
+  /**
+   * Import, then run the bank rules over the account — one transaction.
+   *
+   * The importer holds `bank.import`, not `journal.post`, and the auto-apply
+   * postings happen anyway. That is deliberate, not an escalation: the
+   * standing authorisation was granted when someone with `bank.reconcile`
+   * flipped `autoApply` on the rule. The importer merely delivers the
+   * statement the rule was waiting for — the same shape as a POS cashier
+   * whose sale posts COGS without holding `journal.post`. Every posting is
+   * an ordinary RULE-method match, named after its rule, reversible with
+   * `unmatch`, and reported in the response so the importer sees what was
+   * coded the moment it happens.
+   */
   @Requires('bank.import')
+  @Doc({ request: () => statementSchema })
   @Post('bank-accounts/:id/statements')
   async importStatement(
     @Param('id') bankAccountId: string,
@@ -173,9 +311,11 @@ export class AccountingController {
   ) {
     const input = parse(statementSchema, body);
     const ctx = this.ctx(request);
-    return withTenant(this.sql, ctx, (tx) =>
-      importStatement(tx, ctx, { ...input, bankAccountId, idempotencyKey }),
-    );
+    return withTenant(this.sql, ctx, async (tx) => {
+      const imported = await importStatement(tx, ctx, { ...input, bankAccountId, idempotencyKey });
+      const rules = await applyBankRules(tx, ctx, { bankAccountId });
+      return { ...imported, autoCategorised: rules.applied, ruleSuggestions: rules.suggestedOnly };
+    });
   }
 
   @Requires('bank.reconcile')
@@ -239,44 +379,9 @@ export class AccountingController {
     };
   }
 
-  // ---- Reporting ----------------------------------------------------------
-
-  @Requires('report.read')
-  @Get('reports/trial-balance')
-  async trialBalance(
-    @Query('from') from: string,
-    @Query('to') to: string,
-    @Req() request: FastifyRequest,
-  ) {
-    const ctx = this.ctx(request);
-    return withTenant(this.sql, ctx, (tx) =>
-      trialBalanceReport(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
-    );
-  }
-
-  @Requires('report.read')
-  @Get('reports/sopl')
-  async sopl(
-    @Query('from') from: string,
-    @Query('to') to: string,
-    @Req() request: FastifyRequest,
-  ) {
-    const ctx = this.ctx(request);
-    const report = await withTenant(this.sql, ctx, (tx) =>
-      statementOfProfitOrLoss(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
-    );
-    return renderReport(report);
-  }
-
-  @Requires('report.read')
-  @Get('reports/sofp')
-  async sofp(@Query('asOf') asOf: string, @Req() request: FastifyRequest) {
-    const ctx = this.ctx(request);
-    const report = await withTenant(this.sql, ctx, (tx) =>
-      statementOfFinancialPosition(tx, ctx, { asOfDate: parse(isoDate, asOf) }),
-    );
-    return renderReport(report);
-  }
+  // Reporting lives in `reports.controller.ts` — trial balance, SOPL, SOFP,
+  // cash flow, changes in equity, the general ledger and the CSV exports are
+  // one surface and belong in one file.
 
   @Get('organisation')
   async organisation(@Req() request: FastifyRequest) {
@@ -305,15 +410,59 @@ export class AccountingController {
 // float in the one place this system has been careful to keep them out of.
 // ---------------------------------------------------------------------------
 
-const decimal = z
-  .string()
-  .regex(/^-?\d+(\.\d{1,4})?$/, 'Money must be a decimal string with at most 4 decimal places');
-
-const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD');
-
-const quantity = z.string().regex(/^\d+(\.\d{1,4})?$/, 'Quantity must be a decimal string');
-
+/**
+ * One document line.
+ *
+ * `description`, `unitPrice`, `accountId` and `taxCodeId` became OPTIONAL when
+ * the item catalogue landed: a line carrying an `itemId` takes them from the
+ * item, and anything supplied overrides. The service refuses a line that has
+ * neither an item nor the fields, naming what is missing — Zod cannot express
+ * "required unless a sibling field is present" without a refinement that would
+ * report the failure less clearly than the service does.
+ *
+ * `quantity` stays required. An item has no inherent quantity, and a line that
+ * silently became "1" is a wrong invoice.
+ */
 const documentLine = z.object({
+  quantity,
+  itemId: z.string().uuid().optional(),
+  description: z.string().min(1).optional(),
+  unitPrice: decimal.optional(),
+  accountId: z.string().uuid().optional(),
+  taxCodeId: z.string().uuid().optional(),
+  unitOfMeasure: z.string().min(1).max(50).optional(),
+  discountBasisPoints: z.number().int().min(0).max(10_000).optional(),
+  /** For a serialised item: one serial per unit on this line. */
+  serialNumbers: z.array(z.string().min(1).max(120)).max(1000).optional(),
+  /**
+   * LHDN item classification, per line.
+   *
+   * Accepted at issue time rather than asked for at submission, because by then
+   * the invoice has been sent to the customer and correcting it means a credit
+   * note. `issueInvoice` has stored it since M6; the route simply never let a
+   * caller supply one.
+   */
+  classificationCode: z.string().max(20).optional(),
+});
+
+/**
+ * A credit-note line.
+ *
+ * ---------------------------------------------------------------------------
+ * DELIBERATELY NOT ITEM-AWARE, WHERE INVOICES AND BILLS ARE.
+ *
+ * A credit note reverses something that was already charged, so its price must
+ * come from what the customer was ACTUALLY billed — not from the catalogue as
+ * it stands today. Defaulting an item's current price onto a credit note
+ * against a six-month-old invoice would credit RM 95 against a sale of RM 80,
+ * and the difference lands in revenue with nothing flagging it.
+ *
+ * Crediting from the original document is the right feature and is not built.
+ * Until it is, the line carries its own figures, which is at least honest about
+ * where they came from.
+ * ---------------------------------------------------------------------------
+ */
+const reversalLine = z.object({
   description: z.string().min(1),
   quantity,
   unitPrice: decimal,
@@ -321,6 +470,7 @@ const documentLine = z.object({
   taxCodeId: z.string().uuid(),
   itemId: z.string().uuid().optional(),
   discountBasisPoints: z.number().int().min(0).max(10_000).optional(),
+  classificationCode: z.string().min(1).max(20).optional(),
 });
 
 const invoiceSchema = z.object({
@@ -386,13 +536,16 @@ const creditNoteSchema = z.object({
   reasonDetail: z.string().optional(),
   currency: z.string().length(3).optional(),
   amountsAreTaxInclusive: z.boolean().optional(),
-  lines: z.array(documentLine).min(1),
+  lines: z.array(reversalLine).min(1),
   allocations: z.array(z.object({ invoiceId: z.string().uuid(), amount: decimal })).optional(),
 });
 
 const statementSchema = z.object({
   content: z.string().min(1),
   statementDate: isoDate,
+  // ADVICE: Maybank-style `Label : value` payment-advice documents, parsed
+  // from a real sample — no column profile involved.
+  format: z.enum(['CSV', 'ADVICE']).optional(),
   profileId: z.string().uuid().optional(),
   fileName: z.string().optional(),
   profile: z
@@ -432,14 +585,38 @@ function renderAgeing(report: AgeingReport) {
   };
 }
 
-function renderReport(report: RenderedReport) {
-  return {
-    lines: report.lines.map((l) => ({
-      label: l.label,
-      level: l.level,
-      lineType: l.lineType,
-      amount: l.amount.toDecimalString(),
-      ...(l.comparative !== undefined ? { comparative: l.comparative.toDecimalString() } : {}),
-    })),
-  };
-}
+const decideApprovalSchema = z.object({
+  sequence: z.number().int().min(1),
+  decision: z.enum(['APPROVE', 'REJECT']),
+  comment: z.string().optional(),
+});
+
+const createApprovalRuleSchema = z.object({
+  name: z.string().min(1),
+  minAmount: decimal,
+  maxAmount: decimal.optional(),
+  requiredRole: z.enum([
+    'OWNER', 'ADMIN', 'ACCOUNTANT', 'APPROVER',
+    'BOOKKEEPER', 'SALES', 'READ_ONLY', 'EXTERNAL_AUDITOR',
+  ]),
+  sequence: z.number().int().min(1),
+});
+
+const uuidParam = z.string().uuid();
+
+const creditFromInvoiceSchema = z.object({
+  creditDate: isoDate,
+  reason: z.enum(['RETURN', 'OVERCHARGE', 'DISCOUNT', 'CANCELLATION', 'BAD_DEBT', 'OTHER']),
+  reasonDetail: z.string().max(500).optional(),
+  /*
+   * Omit to credit everything not already credited. Per-line quantities are
+   * how a partial return is expressed — and the quantity is the ONLY thing a
+   * caller may choose. Price, account, tax code and classification all come
+   * from the original, because a credit that differs from the sale in any of
+   * them is not a reversal of that sale.
+   */
+  lines: z
+    .array(z.object({ invoiceLineId: uuidParam, quantity: quantity.optional() }))
+    .min(1)
+    .optional(),
+});

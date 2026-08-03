@@ -4,7 +4,16 @@ dist/
 .env
 .env.*
 !.env.example
+!.env.prod.example
+backups/
 coverage/
 .pgdata/
 *.log
 .DS_Store
+
+# Next.js and Playwright artifacts
+.next/
+next-env.d.ts
+test-results/
+playwright-report/
+out/

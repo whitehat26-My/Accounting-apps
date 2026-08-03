@@ -14,6 +14,8 @@ import {
 import type { TenantContext, Tx } from './client.js';
 import { postJournalEntry } from './ledger.js';
 import { addDays, decimalToScaled, toIsoDate } from './internal.js';
+import { resolveLineFromItem } from './item.js';
+import { issueTrackedStockForInvoice, trackedItems } from './inventory.js';
 
 /**
  * InvoiceService.issue() — the DRAFT -> ISSUED transition (M2).
@@ -46,17 +48,52 @@ export interface IssueInvoiceInput {
   readonly idempotencyKey: string;
 }
 
+/**
+ * One line.
+ *
+ * ---------------------------------------------------------------------------
+ * EVERYTHING BUT `quantity` IS OPTIONAL WHEN `itemId` IS SUPPLIED.
+ *
+ * `itemId` has been accepted on this interface since M2 and stored and ignored
+ * ever since, so a caller had to type a description, a price, an account, a tax
+ * code and a MyInvois classification code on every line — including the one
+ * field, `classificationCode`, whose absence dead-letters the e-Invoice
+ * submission days later rather than failing here.
+ *
+ * With an item the defaults come from the catalogue and anything supplied
+ * overrides them. Quantity is never defaulted: an item has no inherent
+ * quantity, and a line that silently became "1" is a wrong invoice.
+ * ---------------------------------------------------------------------------
+ */
 export interface IssueInvoiceLine {
-  readonly description: string;
-  /** Decimal string, e.g. "2.5". Never a float. */
+  /** Decimal string, e.g. "2.5". Never a float. Never defaulted. */
   readonly quantity: string;
-  /** Decimal string, e.g. "1000.00". */
+  readonly itemId?: string;
+  /** Required unless `itemId` supplies it. */
+  readonly description?: string;
+  /** Decimal string, e.g. "1000.00". Required unless `itemId` supplies it. */
+  readonly unitPrice?: string;
+  readonly accountId?: string;
+  readonly taxCodeId?: string;
+  readonly discountBasisPoints?: number;
+  readonly classificationCode?: string;
+  readonly unitOfMeasure?: string;
+  /** For a serialised item: WHICH units are being sold. */
+  readonly serialNumbers?: readonly string[];
+}
+
+/** A line with every field settled — from the item, the caller, or both. */
+interface SettledLine {
+  readonly description: string;
+  readonly quantity: string;
   readonly unitPrice: string;
   readonly accountId: string;
   readonly taxCodeId: string;
   readonly itemId?: string;
   readonly discountBasisPoints?: number;
   readonly classificationCode?: string;
+  readonly unitOfMeasure?: string;
+  readonly uomCode?: string;
 }
 
 export interface IssuedInvoice {
@@ -77,7 +114,8 @@ export class InvoiceError extends Error {
       | 'NO_POSTING_ACCOUNTS'
       | 'DOCUMENT_INVALID'
       | 'NO_EXCHANGE_RATE'
-      | 'JOURNAL_INVALID',
+      | 'JOURNAL_INVALID'
+      | 'LINE_INCOMPLETE',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -139,8 +177,12 @@ export async function issueInvoice(
       SELECT sst_registered FROM organisation WHERE id = ${ctx.tenantId}
   `;
 
+  // ---- Settle each line against the catalogue ------------------------------
+  const baseCurrency = await loadBaseCurrency(tx, ctx);
+  const lines = await settleLines(tx, ctx, input.lines, currency, baseCurrency);
+
   // ---- Compute (pure domain) ----------------------------------------------
-  const documentLines: DocumentLine[] = input.lines.map((line, index) => ({
+  const documentLines: DocumentLine[] = lines.map((line, index) => ({
     lineId: `L${index + 1}`,
     description: line.description,
     quantity: decimalToScaled(line.quantity, QUANTITY_SCALE),
@@ -194,13 +236,17 @@ export async function issueInvoice(
   `;
   const invoiceId = invoiceRow!.id;
 
-  for (const [index, line] of input.lines.entries()) {
+  for (const [index, line] of lines.entries()) {
     const computedLine = doc.lines[index]!;
+    // The SETTLED values, not the input. This copy is what makes a May invoice
+    // still say RM 80 after the item's price rises in June — `item_id` is kept
+    // for reporting and must never be joined to for an amount.
     await tx`
         INSERT INTO invoice_line (
             tenant_id, invoice_id, line_no, item_id, description, quantity,
             unit_price, discount_basis_points, account_id, tax_code_id,
-            taxable_amount, tax_amount, line_total, classification_code
+            taxable_amount, tax_amount, line_total, classification_code,
+            unit_of_measure, uom_code
         ) VALUES (
             ${ctx.tenantId}, ${invoiceId}, ${index + 1}, ${line.itemId ?? null},
             ${line.description}, ${line.quantity}, ${line.unitPrice},
@@ -208,7 +254,8 @@ export async function issueInvoice(
             ${computedLine.netAmount.toDecimalString()},
             ${computedLine.taxAmount.toDecimalString()},
             ${computedLine.lineTotal.toDecimalString()},
-            ${line.classificationCode ?? null}
+            ${line.classificationCode ?? null},
+            ${line.unitOfMeasure ?? null}, ${line.uomCode ?? null}
         )
     `;
   }
@@ -236,7 +283,6 @@ export async function issueInvoice(
   // ---- Post to the ledger --------------------------------------------------
   // The rate is resolved and STORED on the invoice, because AR must later be
   // relieved at this exact rate — see ledger invariant #13.
-  const baseCurrency = await loadBaseCurrency(tx, ctx);
   const rate = await resolveRate(tx, ctx, currency, baseCurrency, input.issueDate, input.fxRate);
 
   if (!rate.isOne()) {
@@ -291,6 +337,46 @@ export async function issueInvoice(
          SET status = 'ISSUED', journal_entry_id = ${journalEntryId}
        WHERE tenant_id = ${ctx.tenantId} AND id = ${invoiceId}
   `;
+
+  /*
+   * ---- Perpetual inventory: the cost of what just sold ---------------------
+   *
+   * For every line carrying a tracked item, stock is relieved at weighted
+   * average and ONE further entry posts — Dr COGS / Cr Inventory — in the same
+   * transaction as the sale. This is what makes gross profit per sale a real
+   * number instead of a year-end estimate.
+   *
+   * It also means an invoice for stock the system says is not there is
+   * REFUSED, before anything commits. The message tells the user the two
+   * honest fixes: enter the purchase bill, or post a counted adjustment.
+   */
+  const trackedSet = await trackedItems(
+    tx,
+    ctx,
+    input.lines.flatMap((l) => (l.itemId !== undefined ? [l.itemId] : [])),
+  );
+
+  if (trackedSet.size > 0) {
+    await issueTrackedStockForInvoice(tx, ctx, {
+      invoiceId,
+      invoiceNo,
+      entryDate: input.issueDate,
+      idempotencyKey: input.idempotencyKey,
+      lines: input.lines.flatMap((line) =>
+        line.itemId !== undefined && trackedSet.has(line.itemId)
+          ? [
+              {
+                itemId: line.itemId,
+                quantity: line.quantity,
+                ...(line.serialNumbers !== undefined
+                  ? { serialNumbers: line.serialNumbers }
+                  : {}),
+              },
+            ]
+          : [],
+      ),
+    });
+  }
 
   return {
     id: invoiceId,
@@ -433,6 +519,48 @@ export async function outstandingReceivables(
   return { total: row!.total, count: Number(row!.count) };
 }
 
+export interface OpenInvoiceRow {
+  readonly id: string;
+  readonly invoiceNo: string;
+  readonly contactId: string;
+  readonly contactName: string;
+  readonly issueDate: string;
+  readonly dueDate: string;
+  readonly currency: string;
+  readonly total: string;
+  readonly amountDue: string;
+  readonly status: string;
+}
+
+/** The open items behind the receivables total — the screen's working list. */
+export async function listOpenInvoices(tx: Tx, ctx: TenantContext): Promise<OpenInvoiceRow[]> {
+  const rows = await tx<
+    { id: string; invoice_no: string; contact_id: string; contact_name: string;
+      issue_date: Date; due_date: Date; currency: string; total: string;
+      amount_due: string; status: string }[]
+  >`
+      SELECT i.id, i.invoice_no, i.contact_id, c.name AS contact_name, i.issue_date,
+             i.due_date, i.currency, i.total::text, i.amount_due::text, i.status
+        FROM invoice i
+        JOIN contact c ON c.tenant_id = i.tenant_id AND c.id = i.contact_id
+       WHERE i.tenant_id = ${ctx.tenantId}
+         AND i.status IN ('ISSUED', 'PART_PAID')
+       ORDER BY i.due_date, i.invoice_no
+  `;
+  return rows.map((r) => ({
+    id: r.id,
+    invoiceNo: r.invoice_no,
+    contactId: r.contact_id,
+    contactName: r.contact_name,
+    issueDate: toIsoDate(r.issue_date),
+    dueDate: toIsoDate(r.due_date),
+    currency: r.currency,
+    total: r.total,
+    amountDue: r.amount_due,
+    status: r.status,
+  }));
+}
+
 /** Outstanding receivables broken down by transaction currency. */
 export async function outstandingByCurrency(
   tx: Tx,
@@ -469,7 +597,17 @@ export async function loadBaseCurrency(tx: Tx, ctx: TenantContext): Promise<stri
  */
 export async function resolveRate(
   tx: Tx,
-  ctx: TenantContext,
+  /*
+   * Unused, and kept anyway.
+   *
+   * The tenant filter comes from the session: `rate_on_or_before` reads
+   * `current_tenant_id()` itself, which `withTenant` has already set. Dropping
+   * the parameter would give this function a signature suggesting it is
+   * tenant-agnostic, which it is not — every other service here takes
+   * `(tx, ctx, …)` and a reader should not have to check whether this one is
+   * special.
+   */
+  _ctx: TenantContext,
   currency: string,
   baseCurrency: string,
   date: string,
@@ -493,3 +631,110 @@ export async function resolveRate(
   return Rate.fromDecimal(row.rate);
 }
 
+/**
+ * Fill in whatever the caller left out, from the item catalogue.
+ *
+ * ---------------------------------------------------------------------------
+ * AN ITEM'S PRICE IS IN THE BASE CURRENCY, AND IS NOT DEFAULTED ONTO A
+ * FOREIGN-CURRENCY INVOICE.
+ *
+ * `item.sale_unit_price` is NUMERIC with no currency column, and every other
+ * amount stored without one in this system is MYR. Defaulting RM 1,000 onto a
+ * USD invoice would produce a line reading $1,000 — a four-fold overstatement
+ * that is arithmetically consistent all the way through the ledger, the tax
+ * computation and the statements, and therefore invisible to every check.
+ *
+ * A per-currency price list is the real answer and is not built. Until it is,
+ * a foreign-currency line must carry its own price, and the refusal says why
+ * rather than failing somewhere further downstream.
+ * ---------------------------------------------------------------------------
+ */
+async function settleLines(
+  tx: Tx,
+  ctx: TenantContext,
+  lines: readonly IssueInvoiceLine[],
+  currency: string,
+  baseCurrency: string,
+): Promise<SettledLine[]> {
+  const settled: SettledLine[] = [];
+
+  for (const [index, line] of lines.entries()) {
+    const where = `line ${index + 1}`;
+
+    if (line.itemId === undefined) {
+      // No item: every field the document needs must be present. Checked here
+      // rather than by the type system because the fields became optional to
+      // support the item path, and a missing one would otherwise reach
+      // `Money.fromDecimal(undefined)`.
+      const missing = (['description', 'unitPrice', 'accountId', 'taxCodeId'] as const).filter(
+        (field) => line[field] === undefined,
+      );
+
+      if (missing.length > 0) {
+        throw new InvoiceError(
+          'LINE_INCOMPLETE',
+          `${where} has no itemId, so it must supply ${missing.join(', ')}`,
+        );
+      }
+
+      settled.push({
+        description: line.description!,
+        quantity: line.quantity,
+        unitPrice: line.unitPrice!,
+        accountId: line.accountId!,
+        taxCodeId: line.taxCodeId!,
+        ...(line.discountBasisPoints !== undefined
+          ? { discountBasisPoints: line.discountBasisPoints }
+          : {}),
+        ...(line.classificationCode !== undefined
+          ? { classificationCode: line.classificationCode }
+          : {}),
+        ...(line.unitOfMeasure !== undefined ? { unitOfMeasure: line.unitOfMeasure } : {}),
+      });
+      continue;
+    }
+
+    if (currency !== baseCurrency && line.unitPrice === undefined) {
+      throw new InvoiceError(
+        'LINE_INCOMPLETE',
+        `${where} uses an item on a ${currency} invoice. Item prices are held in ` +
+          `${baseCurrency} and are not converted, so this line must supply its own unit price.`,
+      );
+    }
+
+    const resolved = await resolveLineFromItem(tx, ctx, line.itemId, 'SALE', {
+      quantity: line.quantity,
+      ...(line.description !== undefined ? { description: line.description } : {}),
+      ...(line.unitPrice !== undefined
+        ? { unitPrice: Money.fromDecimal(line.unitPrice, baseCurrency) }
+        : {}),
+      ...(line.accountId !== undefined ? { accountId: line.accountId } : {}),
+      ...(line.taxCodeId !== undefined ? { taxCodeId: line.taxCodeId } : {}),
+      ...(line.classificationCode !== undefined
+        ? { classificationCode: line.classificationCode }
+        : {}),
+      ...(line.unitOfMeasure !== undefined ? { unitOfMeasure: line.unitOfMeasure } : {}),
+    });
+
+    settled.push({
+      description: resolved.description,
+      quantity: resolved.quantity,
+      unitPrice: resolved.unitPrice.toDecimalString(),
+      accountId: resolved.accountId,
+      taxCodeId: resolved.taxCodeId,
+      itemId: line.itemId,
+      ...(line.discountBasisPoints !== undefined
+        ? { discountBasisPoints: line.discountBasisPoints }
+        : {}),
+      ...(resolved.classificationCode !== undefined
+        ? { classificationCode: resolved.classificationCode }
+        : {}),
+      ...(resolved.unitOfMeasure !== undefined
+        ? { unitOfMeasure: resolved.unitOfMeasure }
+        : {}),
+      ...(resolved.uomCode !== undefined ? { uomCode: resolved.uomCode } : {}),
+    });
+  }
+
+  return settled;
+}
