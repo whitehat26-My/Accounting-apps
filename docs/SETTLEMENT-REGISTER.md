@@ -427,6 +427,30 @@ dependency; `Number()` appears there for pixel geometry only, every readable fig
 formatted from the server's decimal string. `GET /v1/reports/daily-takings` (report.read)
 serves the series with zero days included — the gap is the information.
 
+**The charts were rebuilt against the dataviz method (2026-08-03).** The old ones drew
+into a `preserveAspectRatio="none"` viewBox, which scaled x and y by different factors
+and turned every rounded corner into an ellipse — the main reason they read as
+homemade. They now measure their container and draw at true pixels, so the mark specs
+mean what they say: bars capped at 24px with a 4px cap and a square foot on the
+baseline, 2px lines with round joins, 8px endpoint dots ringed in the surface colour,
+area fills as a 10% wash, hairline solid gridlines one step off white, separation by
+surface gaps rather than strokes.
+
+Two rules of this repo shaped the axis. Because no client arithmetic may produce a
+displayed figure, the y-axis labels **only** the baseline and the peak, and the peak is
+the real maximum data point's own server string — never a "nice" round number this app
+invented. Intermediate gridlines are drawn and deliberately left unlabelled. And
+because a tooltip must never be the only way to reach a value, every chart carries a
+**table view** disclosure listing every figure, and each mark answers keyboard focus
+with the same readout as hover (verified in a browser, not assumed).
+
+The emerald/red pair carrying money-in against money-out was run through the method's
+CVD validator against the white card surface rather than eyeballed: worst adjacent
+deuteranopia ΔE 8.6 and normal-vision ΔE 32.0, both clear of the floors — and the sign
+is carried by the minus and the label regardless. Dark mode is deliberately NOT
+attempted: the app has none, and an automatic flip of a validated light palette is
+exactly what the method says not to ship.
+
 ### 5.7 The in-app assistant — BUILT; live replies BLOCKED ON `ANTHROPIC_API_KEY`
 
 One assistant on every signed-in screen (`apps/web/src/components/assistant.tsx`,
