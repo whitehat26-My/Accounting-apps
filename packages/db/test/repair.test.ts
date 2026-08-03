@@ -4,8 +4,14 @@ import { withTenant, type Sql } from '../src/client.js';
 import { enterBill } from '../src/bill.js';
 import { createItem } from '../src/item.js';
 import {
+  addRepairPhoto,
   collectRepairJob,
   createRepairJob,
+  deleteRepairPhoto,
+  getRepairPhoto,
+  listRepairPhotos,
+  REPAIR_PHOTO_LIMIT,
+  REPAIR_PHOTO_MAX_BYTES,
   getRepairJob,
   listRepairJobs,
   quoteRepairJob,
@@ -331,5 +337,192 @@ describe('the books after the workshop', () => {
   it('rollup drift stays empty', async () => {
     const drift = await withTenant(sql, ctx, (tx) => detectRollupDrift(tx, ctx));
     expect(drift).toEqual([]);
+  });
+});
+
+/**
+ * Photographs — the evidence side of a job.
+ *
+ * A one-pixel PNG stands in for a phone photograph: what is being tested is the
+ * record around the bytes, not the bytes themselves.
+ */
+describe('repair job photographs', () => {
+  // A real 1x1 PNG. Its IHDR is what `measureImage` reads.
+  const PNG_1PX = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+
+  let photoJobId: string;
+
+  beforeAll(async () => {
+    const job = await withTenant(sql, ctx, (tx) =>
+      createRepairJob(tx, ctx, {
+        contactId: tenant.customerId,
+        deviceDescription: 'Acer Nitro 5, scratched lid',
+        reportedFault: 'Will not power on',
+        receivedOn: '2026-08-03',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+    photoJobId = job.id;
+  });
+
+  it('stores a photograph and reads its dimensions from the file itself', async () => {
+    const photo = await withTenant(sql, ctx, (tx) =>
+      addRepairPhoto(tx, ctx, {
+        repairJobId: photoJobId,
+        stage: 'RECEIVED',
+        caption: 'Scratch on lid, as received',
+        contentType: 'image/png',
+        image: PNG_1PX,
+      }),
+    );
+
+    expect(photo.stage).toBe('RECEIVED');
+    expect(photo.byteSize).toBe(PNG_1PX.byteLength);
+    // Read from the PNG header, not taken on trust from the caller.
+    expect(photo.width).toBe(1);
+    expect(photo.height).toBe(1);
+    expect(photo.digest).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it('returns the exact bytes that went in', async () => {
+    const [photo] = await withTenant(sql, ctx, (tx) => listRepairPhotos(tx, ctx, photoJobId));
+    const fetched = await withTenant(sql, ctx, (tx) =>
+      getRepairPhoto(tx, ctx, photoJobId, photo!.id),
+    );
+    expect(Buffer.compare(fetched.image, PNG_1PX)).toBe(0);
+    expect(fetched.contentType).toBe('image/png');
+  });
+
+  it('the stored digest really is the hash of the stored bytes', async () => {
+    // The property the whole split-table design rests on: the audited metadata
+    // row can prove the un-audited bytes were not swapped.
+    const { createHash } = await import('node:crypto');
+    const [photo] = await withTenant(sql, ctx, (tx) => listRepairPhotos(tx, ctx, photoJobId));
+    const fetched = await withTenant(sql, ctx, (tx) =>
+      getRepairPhoto(tx, ctx, photoJobId, photo!.id),
+    );
+    expect(createHash('sha256').update(fetched.image).digest('hex')).toBe(photo!.digest);
+  });
+
+  it('refuses a photograph fetched through the wrong job', async () => {
+    // The photo id alone is not authority — the (job, photo) pair is.
+    const other = await withTenant(sql, ctx, (tx) =>
+      createRepairJob(tx, ctx, {
+        contactId: tenant.customerId,
+        deviceDescription: 'Another machine',
+        reportedFault: 'Fan noise',
+        receivedOn: '2026-08-03',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+    const [photo] = await withTenant(sql, ctx, (tx) => listRepairPhotos(tx, ctx, photoJobId));
+
+    await expect(
+      withTenant(sql, ctx, (tx) => getRepairPhoto(tx, ctx, other.id, photo!.id)),
+    ).rejects.toThrow(/not found/i);
+  });
+
+  it('refuses an image over the size ceiling', async () => {
+    await expect(
+      withTenant(sql, ctx, (tx) =>
+        addRepairPhoto(tx, ctx, {
+          repairJobId: photoJobId,
+          stage: 'DIAGNOSIS',
+          contentType: 'image/jpeg',
+          image: Buffer.alloc(REPAIR_PHOTO_MAX_BYTES + 1, 1),
+        }),
+      ),
+    ).rejects.toThrow(/between 1 byte/i);
+  });
+
+  it('caps the number of photographs on one job', async () => {
+    const fill = async () => {
+      const current = await withTenant(sql, ctx, (tx) => listRepairPhotos(tx, ctx, photoJobId));
+      for (let i = current.length; i < REPAIR_PHOTO_LIMIT; i++) {
+        await withTenant(sql, ctx, (tx) =>
+          addRepairPhoto(tx, ctx, {
+            repairJobId: photoJobId,
+            stage: 'IN_PROGRESS',
+            contentType: 'image/png',
+            image: PNG_1PX,
+          }),
+        );
+      }
+    };
+    await fill();
+
+    await expect(
+      withTenant(sql, ctx, (tx) =>
+        addRepairPhoto(tx, ctx, {
+          repairJobId: photoJobId,
+          stage: 'IN_PROGRESS',
+          contentType: 'image/png',
+          image: PNG_1PX,
+        }),
+      ),
+    ).rejects.toThrow(/already has/i);
+  });
+
+  it('deleting a photograph takes its bytes with it', async () => {
+    const before = await withTenant(sql, ctx, (tx) => listRepairPhotos(tx, ctx, photoJobId));
+    const victim = before[0]!;
+
+    await withTenant(sql, ctx, (tx) => deleteRepairPhoto(tx, ctx, photoJobId, victim.id));
+
+    const after = await withTenant(sql, ctx, (tx) => listRepairPhotos(tx, ctx, photoJobId));
+    expect(after).toHaveLength(before.length - 1);
+
+    // The CASCADE in 0035 removed the data row too — no orphan bytes.
+    const orphans = await withTenant(sql, ctx, (tx) =>
+      tx<{ count: string }[]>`
+          SELECT COUNT(*)::text AS count FROM repair_job_photo_data
+           WHERE tenant_id = ${ctx.tenantId} AND photo_id = ${victim.id}
+      `,
+    );
+    expect(orphans[0]!['count']).toBe('0');
+  });
+
+  it('freezes the evidence once the machine has gone back', async () => {
+    // A closed job's photographs describe something nobody can re-examine.
+    // Adding to that record is assertion, not evidence.
+    const closed = await withTenant(sql, ctx, (tx) =>
+      createRepairJob(tx, ctx, {
+        contactId: tenant.customerId,
+        deviceDescription: 'Cancelled intake',
+        reportedFault: 'Customer changed their mind',
+        receivedOn: '2026-08-03',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+    await withTenant(sql, ctx, (tx) =>
+      transitionRepairJob(tx, ctx, closed.id, { to: 'CANCELLED', reason: 'Withdrawn' }),
+    );
+
+    await expect(
+      withTenant(sql, ctx, (tx) =>
+        addRepairPhoto(tx, ctx, {
+          repairJobId: closed.id,
+          stage: 'RECEIVED',
+          contentType: 'image/png',
+          image: PNG_1PX,
+        }),
+      ),
+    ).rejects.toThrow(/closed|cannot be added/i);
+  });
+
+  it('writes an audit row naming who added the photograph', async () => {
+    const rows = await withTenant(sql, ctx, (tx) =>
+      tx<{ action: string; actor_user_id: string | null }[]>`
+          SELECT action, actor_user_id FROM audit_log
+           WHERE tenant_id = ${ctx.tenantId} AND entity_type = 'repair_job_photo'
+           ORDER BY id
+      `,
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    expect(rows.some((r) => r.action === 'CREATE')).toBe(true);
+    expect(rows.some((r) => r.action === 'DELETE')).toBe(true);
   });
 });

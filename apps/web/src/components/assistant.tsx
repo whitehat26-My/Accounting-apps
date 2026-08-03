@@ -256,8 +256,16 @@ export function Assistant() {
     );
   }
 
+  // The drawer floats over the page, which is exactly the case glass is for —
+  // the content it covers shows through as a blur, so it reads as sitting on
+  // top rather than replacing what is underneath. Solid white stays the
+  // fallback where backdrop-filter is unavailable.
   return (
-    <div className="fixed bottom-5 right-5 z-40 flex max-h-[78vh] w-[min(26rem,calc(100vw-2.5rem))] flex-col overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10">
+    <div
+      className="fixed bottom-5 right-5 z-40 flex max-h-[78vh] w-[min(26rem,calc(100vw-2.5rem))] flex-col
+                 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10
+                 supports-[backdrop-filter]:bg-white/80 supports-[backdrop-filter]:backdrop-blur-xl"
+    >
       <div className="flex items-center justify-between gap-3 bg-slate-950 px-4 py-3 text-white">
         <div className="flex items-center gap-2.5">
           <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 p-1.5 text-slate-950">

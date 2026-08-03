@@ -29,7 +29,11 @@ export class RepairError extends Error {
       | 'ILLEGAL_TRANSITION'
       | 'JOB_NOT_EDITABLE'
       | 'JOB_NOT_COLLECTABLE'
-      | 'QUOTE_INVALID',
+      | 'QUOTE_INVALID'
+      | 'PHOTO_NOT_FOUND'
+      | 'PHOTO_LIMIT_REACHED'
+      | 'PHOTO_TOO_LARGE'
+      | 'EVIDENCE_FROZEN',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -544,4 +548,272 @@ function toView(
       serialNumbers: l.serial_numbers,
     })),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Photographs — the evidence side of a repair job
+//
+// A workshop takes a customer's machine apart and returns it days later. What
+// settles a dispute about a mark on the lid is a photograph taken at the
+// counter with the customer standing there, not anyone's memory. See migration
+// 0035 for why the bytes live in PostgreSQL rather than in a folder.
+// ---------------------------------------------------------------------------
+
+/** How many photographs one job may carry. */
+export const REPAIR_PHOTO_LIMIT = 12;
+
+/** Two megabytes, matching the CHECK in 0035. */
+export const REPAIR_PHOTO_MAX_BYTES = 2 * 1024 * 1024;
+
+export type RepairPhotoStage =
+  | 'RECEIVED' | 'DIAGNOSIS' | 'IN_PROGRESS' | 'READY' | 'COLLECTED';
+
+export interface RepairPhotoView {
+  readonly id: string;
+  readonly stage: RepairPhotoStage;
+  readonly caption: string | null;
+  readonly contentType: string;
+  readonly byteSize: number;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly digest: string;
+  readonly takenAt: string;
+}
+
+export interface AddRepairPhotoInput {
+  readonly repairJobId: string;
+  readonly stage: RepairPhotoStage;
+  readonly caption?: string;
+  readonly contentType: 'image/jpeg' | 'image/png' | 'image/webp';
+  readonly image: Buffer;
+}
+
+/**
+ * Attach a photograph.
+ *
+ * The digest is computed HERE rather than accepted from the caller: it is what
+ * makes the un-audited data table safe (0035), so a client-supplied value would
+ * defeat the point — it would be the attacker's hash of the attacker's image.
+ */
+export async function addRepairPhoto(
+  tx: Tx,
+  ctx: TenantContext,
+  input: AddRepairPhotoInput,
+): Promise<RepairPhotoView> {
+  if (input.image.byteLength === 0 || input.image.byteLength > REPAIR_PHOTO_MAX_BYTES) {
+    throw new RepairError(
+      'PHOTO_TOO_LARGE',
+      `A photograph must be between 1 byte and ${REPAIR_PHOTO_MAX_BYTES} bytes; ` +
+        `this one is ${input.image.byteLength}. The web app downscales before ` +
+        'uploading, so a file this size did not come through it.',
+    );
+  }
+
+  const [job] = await tx<{ job_no: string; status: string }[]>`
+      SELECT job_no, status FROM repair_job
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${input.repairJobId}
+  `;
+  if (!job) {
+    throw new RepairError('JOB_NOT_FOUND', `Repair job ${input.repairJobId} not found`);
+  }
+
+  // Evidence freezes when the machine goes back to the customer. After that the
+  // photographs describe a job nobody can re-examine, so adding to the record
+  // is no longer evidence — it is assertion.
+  if (job.status === 'COLLECTED' || job.status === 'CANCELLED') {
+    throw new RepairError(
+      'EVIDENCE_FROZEN',
+      `Job ${job.job_no} is ${job.status}; its photographs are the record of a ` +
+        'job that has closed and cannot be added to.',
+    );
+  }
+
+  const [tally] = await tx<{ count: string }[]>`
+      SELECT COUNT(*)::text AS count FROM repair_job_photo
+       WHERE tenant_id = ${ctx.tenantId} AND repair_job_id = ${input.repairJobId}
+  `;
+  if (Number(tally!.count) >= REPAIR_PHOTO_LIMIT) {
+    throw new RepairError(
+      'PHOTO_LIMIT_REACHED',
+      `Job ${job.job_no} already has ${REPAIR_PHOTO_LIMIT} photographs. Remove one ` +
+        'before adding another.',
+    );
+  }
+
+  const { createHash } = await import('node:crypto');
+  const digest = createHash('sha256').update(input.image).digest('hex');
+  const size = measureImage(input.image, input.contentType);
+
+  const [row] = await tx<PhotoRow[]>`
+      INSERT INTO repair_job_photo (
+          tenant_id, repair_job_id, stage, caption, content_type,
+          byte_size, width, height, digest, taken_by
+      ) VALUES (
+          ${ctx.tenantId}, ${input.repairJobId}, ${input.stage},
+          ${input.caption ?? null}, ${input.contentType},
+          ${input.image.byteLength}, ${size?.width ?? null}, ${size?.height ?? null},
+          ${digest}, ${ctx.userId ?? null}
+      )
+      RETURNING id, stage, caption, content_type, byte_size, width, height, digest, created_at
+  `;
+
+  await tx`
+      INSERT INTO repair_job_photo_data (tenant_id, photo_id, image)
+      VALUES (${ctx.tenantId}, ${row!.id}, ${input.image})
+  `;
+
+  return toPhotoView(row!);
+}
+
+/** The photographs on a job, metadata only — never the bytes. */
+export async function listRepairPhotos(
+  tx: Tx,
+  ctx: TenantContext,
+  repairJobId: string,
+): Promise<RepairPhotoView[]> {
+  const rows = await tx<PhotoRow[]>`
+      SELECT id, stage, caption, content_type, byte_size, width, height, digest, created_at
+        FROM repair_job_photo
+       WHERE tenant_id = ${ctx.tenantId} AND repair_job_id = ${repairJobId}
+       ORDER BY created_at
+  `;
+  return rows.map(toPhotoView);
+}
+
+export interface RepairPhotoBytes {
+  readonly contentType: string;
+  readonly image: Buffer;
+  readonly digest: string;
+}
+
+/**
+ * One photograph's bytes, for serving.
+ *
+ * Joined back to `repair_job_photo` on the job id so a photograph cannot be
+ * fetched through the wrong job's URL — the id alone is not authority, the
+ * (job, photo) pair is.
+ */
+export async function getRepairPhoto(
+  tx: Tx,
+  ctx: TenantContext,
+  repairJobId: string,
+  photoId: string,
+): Promise<RepairPhotoBytes> {
+  const [row] = await tx<{ content_type: string; image: Buffer; digest: string }[]>`
+      SELECT p.content_type, d.image, p.digest
+        FROM repair_job_photo p
+        JOIN repair_job_photo_data d
+          ON d.tenant_id = p.tenant_id AND d.photo_id = p.id
+       WHERE p.tenant_id = ${ctx.tenantId}
+         AND p.repair_job_id = ${repairJobId}
+         AND p.id = ${photoId}
+  `;
+  if (!row) throw new RepairError('PHOTO_NOT_FOUND', `Photograph ${photoId} not found`);
+  return { contentType: row.content_type, image: row.image, digest: row.digest };
+}
+
+/**
+ * Remove a photograph — a blurred shot, or one taken against the wrong job.
+ *
+ * Permitted only while the job is open, for the same reason adding is: once the
+ * machine has gone back, the photographs are the record. The deletion itself is
+ * in the audit log with the digest of what was removed, so a photograph cannot
+ * be made to disappear without trace.
+ */
+export async function deleteRepairPhoto(
+  tx: Tx,
+  ctx: TenantContext,
+  repairJobId: string,
+  photoId: string,
+): Promise<void> {
+  const [job] = await tx<{ job_no: string; status: string }[]>`
+      SELECT job_no, status FROM repair_job
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${repairJobId}
+  `;
+  if (!job) throw new RepairError('JOB_NOT_FOUND', `Repair job ${repairJobId} not found`);
+  if (job.status === 'COLLECTED' || job.status === 'CANCELLED') {
+    throw new RepairError(
+      'EVIDENCE_FROZEN',
+      `Job ${job.job_no} is ${job.status}; its photographs are a closed record.`,
+    );
+  }
+
+  const rows = await tx<{ id: string }[]>`
+      DELETE FROM repair_job_photo
+       WHERE tenant_id = ${ctx.tenantId}
+         AND repair_job_id = ${repairJobId}
+         AND id = ${photoId}
+      RETURNING id
+  `;
+  if (rows.length === 0) {
+    throw new RepairError('PHOTO_NOT_FOUND', `Photograph ${photoId} not found`);
+  }
+  // The data row goes with it: ON DELETE CASCADE in 0035.
+}
+
+interface PhotoRow {
+  id: string;
+  stage: RepairPhotoStage;
+  caption: string | null;
+  content_type: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+  digest: string;
+  created_at: Date;
+}
+
+function toPhotoView(r: PhotoRow): RepairPhotoView {
+  return {
+    id: r.id,
+    stage: r.stage,
+    caption: r.caption,
+    contentType: r.content_type,
+    byteSize: r.byte_size,
+    width: r.width,
+    height: r.height,
+    digest: r.digest,
+    takenAt: r.created_at.toISOString(),
+  };
+}
+
+/**
+ * Pixel dimensions, read from the file's own header.
+ *
+ * Recorded so a gallery can lay out without downloading every image, and taken
+ * from the bytes rather than from the client because a caller that lies about
+ * its dimensions would only be lying to us. Unknown shapes return undefined
+ * rather than throwing — the dimensions are a convenience, not a constraint,
+ * and refusing a valid photograph because its header is unusual would be the
+ * wrong trade.
+ */
+function measureImage(
+  buf: Buffer,
+  contentType: string,
+): { width: number; height: number } | undefined {
+  try {
+    if (contentType === 'image/png' && buf.length >= 24) {
+      // PNG: IHDR is the first chunk, width and height at bytes 16 and 20.
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+    if (contentType === 'image/jpeg') {
+      // JPEG: walk the segment chain to a Start-Of-Frame marker, which carries
+      // the dimensions. Every other segment declares its own length, so this is
+      // a hop rather than a scan.
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xff) break;
+        const marker = buf[i + 1]!;
+        const len = buf.readUInt16BE(i + 2);
+        // SOF0..SOF15, excluding the non-frame markers DHT/JPG/DAC.
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+        }
+        i += 2 + len;
+      }
+    }
+  } catch {
+    // A truncated or unusual header is not a reason to reject the photograph.
+  }
+  return undefined;
 }

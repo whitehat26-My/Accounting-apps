@@ -91,7 +91,19 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-16 flex-col bg-slate-950 text-slate-300 md:w-60">
+      {/*
+        The frosted rail.
+        `supports-[backdrop-filter]` keeps the solid colour as the fallback: a
+        browser without backdrop-filter would otherwise render a see-through
+        rail with nothing blurring behind it, which is worse than no effect at
+        all. The tint stays dark and heavy (85%) because the icons and labels on
+        it are white — a lighter panel here would cost contrast, which is the
+        one thing the glass is not allowed to do.
+      */}
+      <aside
+        className="flex w-16 flex-col bg-slate-950 text-slate-300 ring-1 ring-white/5 md:w-60
+                   supports-[backdrop-filter]:bg-slate-950/85 supports-[backdrop-filter]:backdrop-blur-xl"
+      >
         <div className="flex items-center justify-center gap-3 px-2 pb-5 pt-6 md:justify-start md:px-5">
           {/* The shop's actual hexagon mark, on a white tile so the blue
               reads against the dark rail. */}
@@ -160,7 +172,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 bg-slate-100/70 p-4 md:p-6 lg:p-8">
+      {/*
+        A soft tinted wash rather than flat grey. Glass only reads as glass when
+        there is something behind it to pick up — with a uniform background the
+        blur is invisible and the translucency just looks like a lighter colour.
+        Kept very low contrast so it never competes with the cards on top.
+      */}
+      <main className="min-w-0 flex-1 bg-slate-100/70 bg-gradient-to-br from-sky-50 via-slate-100/70 to-emerald-50/40 p-4 md:p-6 lg:p-8">
         <div className="mx-auto max-w-5xl">{children}</div>
       </main>
 

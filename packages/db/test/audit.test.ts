@@ -67,6 +67,12 @@ const AUDIT_EXEMPT: Record<string, string> = {
   outbox_event: 'delivery-mechanism state; the business fact was audited at its source',
   account_period_balance: 'a derived cache of journal_line, which is itself audited',
   number_sequence: 'an allocation counter; the number it issued is on the audited document',
+  repair_job_photo_data:
+    'image bytes only. `audit_row_change` serialises the whole row with to_jsonb, ' +
+    'so auditing this would store every photograph a second time as a hex string ' +
+    'in a log that can never be pruned. The metadata row in repair_job_photo IS ' +
+    'audited and carries the SHA-256 of these bytes, so substituting an image is ' +
+    'still detectable — which is the property worth having.',
 };
 
 describe('audit coverage', () => {

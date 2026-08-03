@@ -55,7 +55,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions {
-  readonly method?: 'GET' | 'POST' | 'PATCH';
+  readonly method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   readonly body?: unknown;
   /** Skip the session entirely — login, register, onboarding. */
   readonly anonymous?: boolean;
@@ -90,7 +90,10 @@ export async function api<T = Record<string, unknown>>(
       headers['authorization'] = `Bearer ${session.accessToken}`;
       headers['x-tenant-id'] = session.tenantId;
     }
-    if (options.method === 'POST' || options.method === 'PATCH') {
+    // Every mutating method, DELETE included — the API's idempotency
+    // interceptor treats POST, PUT, PATCH and DELETE alike and refuses any of
+    // them without a key.
+    if (options.method === 'POST' || options.method === 'PATCH' || options.method === 'DELETE') {
       headers['idempotency-key'] = crypto.randomUUID();
     }
 

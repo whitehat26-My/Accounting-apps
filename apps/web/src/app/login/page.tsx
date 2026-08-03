@@ -145,7 +145,16 @@ export default function LoginPage() {
         }
       />
 
-      <div className="rounded-2xl bg-white p-6 shadow-2xl shadow-black/25 ring-1 ring-slate-900/5">
+      {/*
+        The best surface in the app for this: the shop photograph sits directly
+        behind, so the frosting has something real to pick up. Held at 88% —
+        enough to read the glass, opaque enough that the labels and the password
+        field never fight the photograph behind them.
+      */}
+      <div
+        className="rounded-2xl bg-white p-6 shadow-2xl shadow-black/25 ring-1 ring-white/40
+                   supports-[backdrop-filter]:bg-white/88 supports-[backdrop-filter]:backdrop-blur-2xl"
+      >
         <form
           className="space-y-4"
           onSubmit={(e) => {

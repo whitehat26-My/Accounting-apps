@@ -6,6 +6,7 @@ import { Suspense, useState } from 'react';
 import { api, apiBlobUrl } from '@/lib/api';
 import { qty, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { RepairPhotos } from '@/components/repair-photos';
 
 /**
  * One job, driven through its life: quote it, record the approval, mark it
@@ -138,6 +139,10 @@ function RepairDetail() {
           {j.approvalNote ? <Row label="Approval" value={j.approvalNote} /> : null}
         </dl>
       </Card>
+
+      {/* Directly under the device, because the photograph of the machine as it
+          arrived belongs with the description of the machine as it arrived. */}
+      <RepairPhotos jobId={j.id} jobStatus={j.status} />
 
       {j.lines.length > 0 ? (
         <Card title="Quote — agreed prices">

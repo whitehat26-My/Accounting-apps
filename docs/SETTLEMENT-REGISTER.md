@@ -261,10 +261,36 @@ code at 0% (zero is the definition, not a rate). Real SST codes arrive via the n
 `POST /v1/tax-codes`, each rate citing its instrument — the 0018 provenance rule applied to
 SST exactly as to withholding.
 
-### 4.3 Attachments
+### 4.3 Attachments — REPAIR PHOTOS BUILT (`0035`); documents still outstanding
 
-No table, no object storage, no route. A bill without its scanned invoice is half a record.
-Needs an object store decision (S3-compatible) before the schema is worth writing.
+**The object-store blocker this entry recorded is resolved, and the answer turned out to be
+"no object store".** The deployment target is a PC in the shop, so S3 was the wrong shape;
+worse, a folder of files beside the database is a folder the nightly `pg_dump` does not
+cover, which would be discovered on the day a disk fails. Repair-job photographs therefore
+live in PostgreSQL as `BYTEA`, downscaled in the browser to roughly 250 KB before upload
+(`apps/web/src/lib/image.ts`), which puts them inside the same backup, the same restore
+procedure and the same RLS policy as every other tenant row. About half a gigabyte a year
+at this shop's volume.
+
+Two tables, deliberately: `repair_job_photo` holds the metadata and is audited;
+`repair_job_photo_data` holds the bytes and is NOT, because `audit_row_change` serialises
+the whole row with `to_jsonb` and would store every photograph a second time as hex in a
+log that can never be pruned. The metadata row carries the SHA-256 of the bytes, so
+substituting an image is still detectable — which is the property worth having. The
+exemption is recorded in `AUDIT_EXEMPT` with that reasoning.
+
+Also enforced: twelve photographs per job, a 2 MB ceiling per image checked at both the
+schema and the service, a stage label (`RECEIVED`/`DIAGNOSIS`/`IN_PROGRESS`/`READY`), and
+evidence that FREEZES once the job is `COLLECTED` or `CANCELLED` — a closed job's
+photographs describe something nobody can re-examine, so adding to them is assertion rather
+than evidence. Bytes are served `Cache-Control: no-store` behind `repair.read`, and a photo
+cannot be fetched through another job's URL.
+
+**Still outstanding:** attachments on BILLS — a supplier bill without its scanned invoice is
+half a record. Same storage decision now applies (in-database, downscaled), so this is
+schema and routes rather than an unresolved question. A scanned A4 invoice is also a
+different problem from a phone snapshot: it needs to stay legible, so it wants a higher
+pixel ceiling and probably PDF support.
 
 ### 4.4 Outbound notification
 

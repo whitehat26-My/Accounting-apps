@@ -1230,6 +1230,12 @@ export function demoApi(
 
     if (action === '' && method === 'GET') return job as unknown as Record<string, unknown>;
 
+    // Photographs are answered as an empty set rather than a 404. The static
+    // demo has no way to store image bytes, and an error banner on a tour is
+    // worse than a card that honestly shows nothing — the card's own empty
+    // state already explains what the feature is for.
+    if (action === '/photos' && method === 'GET') return { photos: [] };
+
     if (action === '/quote') {
       const input = b as { diagnosis: string; lines: { description: string; quantity: string; unitPrice: string }[] };
       job.diagnosis = input.diagnosis;
