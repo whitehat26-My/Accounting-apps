@@ -1182,6 +1182,53 @@ export function demoApi(
     }
   }
 
+  // ---- assistant -----------------------------------------------------------
+  //
+  // Canned and CLEARLY LABELLED as such. The real assistant is a model on the
+  // server with tools scoped to the caller's permissions; a static page has
+  // neither, and a demo that faked open-ended intelligence would be a lie.
+
+  if (p === '/v1/assistant/status') {
+    return { configured: true, provider: 'demo' };
+  }
+
+  if (p === '/v1/assistant/chat' && method === 'POST') {
+    const { messages } = b as { messages: { role: string; content: string }[] };
+    const last = messages.at(-1)?.content ?? '';
+    const t = today();
+    const daySales = store.sales.filter((s) => s.date === t);
+    const takings = daySales.reduce((sum, s) => sum + s.totalCents, 0);
+    const overdueRows = (store.openInvoices ?? seedOpenInvoices())
+      .filter((i) => i.amountDueCents > 0 && i.dueDate < t);
+    const owed = overdueRows.reduce((sum, i) => sum + i.amountDueCents, 0);
+
+    // Two decimals with thousands grouping — chat text, same rules as rm().
+    const fmt = (c: number) => {
+      const [whole = '0', fraction = ''] = dec(c).split('.');
+      return `${whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}.${fraction.padEnd(2, '0').slice(0, 2)}`;
+    };
+
+    const evaluation =
+      `Today so far: ${daySales.length} sale(s) for RM ${fmt(takings)}. ` +
+      (overdueRows.length > 0
+        ? `RM ${fmt(owed)} is overdue across ${overdueRows.length} invoice(s) — ` +
+          `${overdueRows.map((i) => i.contactName).join(' and ')}. ` +
+          'Worth a WhatsApp from the Collections screen. '
+        : 'Nothing is overdue. ') +
+      'The bank holds RM 18,540.00 and the 30-day forecast stays positive.';
+
+    const message = /how do i|how to|macam ?mana|guna/i.test(last)
+      ? 'The "How to use" guide at the top of this panel covers the open screen, step by step. ' +
+        'Ask me about your numbers, or try "add item…" once the real server is connected.\n\n' +
+        '(Sample reply — the live assistant runs on the real server with ANTHROPIC_API_KEY set.)'
+      : evaluation +
+        '\n\n(Sample reply from demo data — the live assistant runs on the real server ' +
+        'with ANTHROPIC_API_KEY set, and can also record items and draft sales from ' +
+        'plain words.)';
+
+    return { configured: true, message, actions: [], drafts: [] };
+  }
+
   throw demoError(404, `The static demo does not implement ${method} ${p}`);
 }
 

@@ -27,7 +27,14 @@ import { DocumentsController } from './modules/documents.controller.js';
 import { PublicPayController } from './modules/public-pay.controller.js';
 import { GatewayRegistry } from './gateways/registry.js';
 import { FakeGateway } from '@emil/db';
-import { GATEWAYS } from './tokens.js';
+import { ASSISTANT, GATEWAYS } from './tokens.js';
+import { AssistantController } from './modules/assistant.controller.js';
+import {
+  FakeAssistantProvider,
+  UnconfiguredAssistantProvider,
+  type AssistantProvider,
+} from './assistant/provider.js';
+import { AnthropicAssistantProvider } from './assistant/anthropic.provider.js';
 import { OpenApiController } from './modules/openapi.controller.js';
 import { DatabaseLifecycle } from './database.lifecycle.js';
 
@@ -58,6 +65,7 @@ export const API_CONTROLLERS = [
   OnboardingController,
   DocumentsController,
   PublicPayController,
+  AssistantController,
   OpenApiController,
 ] as const;
 
@@ -124,6 +132,20 @@ export const API_CONTROLLERS = [
         // the fake gateway accepts any signature.
         if (config.enableFakeGateway) registry.register(new FakeGateway());
         return registry;
+      },
+      inject: [CONFIG],
+    },
+    {
+      provide: ASSISTANT,
+      // Fake wins when its flag is set (tests; loadConfig refuses it in
+      // production), then the real provider if a key exists, then the honest
+      // "not configured" one. Never a silent nothing.
+      useFactory: (config: ApiConfig): AssistantProvider => {
+        if (config.enableFakeAssistant) return new FakeAssistantProvider();
+        if (config.anthropicApiKey !== undefined) {
+          return new AnthropicAssistantProvider(config.anthropicApiKey);
+        }
+        return new UnconfiguredAssistantProvider();
       },
       inject: [CONFIG],
     },

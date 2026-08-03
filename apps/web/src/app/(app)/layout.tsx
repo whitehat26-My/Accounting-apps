@@ -6,6 +6,7 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { clearSession, loadSession, type Session } from '@/lib/api';
 import { can, ROLE_LABELS, useMe } from '@/lib/me';
 import { Icon } from '@/components/icons';
+import { Assistant } from '@/components/assistant';
 
 /**
  * The signed-in shell: dark rail on the left, work on the right.
@@ -156,6 +157,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
       <main className="min-w-0 flex-1 bg-slate-100/70 p-4 md:p-6 lg:p-8">
         <div className="mx-auto max-w-5xl">{children}</div>
       </main>
+
+      <Assistant />
     </div>
   );
 }

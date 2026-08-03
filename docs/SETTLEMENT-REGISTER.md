@@ -14,9 +14,9 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0033`, 142 HTTP routes (operations in the
-generated OpenAPI document — the measured figure, not a hand count), 1,343 tests
-(610 domain · 506 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0033`, 144 HTTP routes (operations in the
+generated OpenAPI document — the measured figure, not a hand count), 1,352 tests
+(633 domain · 516 db · 165 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
 **The AUTOMATION track (started 2026-08-02):** the target is the full
@@ -393,6 +393,36 @@ Charts are three hand-rolled SVG components (`src/components/charts.tsx`), no ch
 dependency; `Number()` appears there for pixel geometry only, every readable figure still
 formatted from the server's decimal string. `GET /v1/reports/daily-takings` (report.read)
 serves the series with zero days included — the gap is the information.
+
+### 5.7 The in-app assistant — BUILT; live replies BLOCKED ON `ANTHROPIC_API_KEY`
+
+One assistant on every signed-in screen (`apps/web/src/components/assistant.tsx`,
+`apps/api/src/assistant/`), with three jobs in rising order of trust:
+
+- **Teach.** Per-screen "how to use" content is STATIC — it works in the demo, offline,
+  and with no key, because knowing how your own software works must not require a model.
+- **Evaluate.** `POST /v1/assistant/chat` builds a business snapshot server-side from
+  ONLY what the caller's permissions reach (`assistant/context.ts`): till figures need
+  `pos.sale`, forecast and digest need `report.read`, receivables `invoice.read`,
+  payables `bill.read`. The permission filter — re-checked inside every tool — is the
+  security boundary; a cashier's assistant genuinely does not know what the boss's knows.
+- **Record.** Items and contacts are created directly through the same services the
+  forms call. **Money is never posted by the model**: an invoice or a cash sale comes
+  back as a DRAFT the panel renders as a card, and only the human's Confirm click —
+  POSTing the server-assembled payload to the NORMAL endpoint with the user's own token
+  and idempotency key — rings it. Enforced by construction (there is no posting tool)
+  and asserted by e2e test: a draft leaves the day's takings untouched.
+
+Provider is a port with three implementations, the gateway-registry posture exactly:
+`AnthropicAssistantProvider` (Claude on the official SDK, tool-runner loop, adaptive
+thinking), `FakeAssistantProvider` (deterministic `TOOL name {json}` grammar driving the
+REAL execution path in tests; refused in production by `loadConfig`), and
+`UnconfiguredAssistantProvider`, which answers honestly with what is missing.
+`GET /v1/assistant/status` says which is live. The static demo ships canned replies
+computed from demo data and LABELLED as samples.
+
+**Unblocker, owner-side:** set `ANTHROPIC_API_KEY` in `.env.prod` when deploying
+(already plumbed through `docker-compose.prod.yml`); everything else works without it.
 
 ### 5.4 Credit-note restocking — DEFERRED, BY DECISION
 

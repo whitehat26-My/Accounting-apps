@@ -44,6 +44,19 @@ const schema = z.object({
    * neither may ever reach a real payment or a real payer.
    */
   enableSandboxValues: z.boolean(),
+  /**
+   * Connects the in-app assistant to the Claude API. Optional, deliberately:
+   * the whole product works without it, the assistant's status route says
+   * honestly that it is not configured, and the how-to-use content in the web
+   * panel is static and needs no key at all.
+   */
+  anthropicApiKey: z.string().min(1).optional(),
+  /**
+   * Register the deterministic `FakeAssistantProvider` instead of a model.
+   * Test-only, same posture as the fake gateway: its replies are canned, and
+   * a canned assistant presented as real is a lie to the person reading it.
+   */
+  enableFakeAssistant: z.boolean(),
   nodeEnv: z.string(),
 })
   .refine((c) => !(c.enableFakeGateway && c.nodeEnv === 'production'), {
@@ -58,6 +71,13 @@ const schema = z.object({
       'withholding rate, which on a real supplier payment retains almost the whole ' +
       'invoice and remits it to LHDN.',
     path: ['enableSandboxValues'],
+  })
+  .refine((c) => !(c.enableFakeAssistant && c.nodeEnv === 'production'), {
+    message:
+      'EMIL_ENABLE_FAKE_ASSISTANT must never be set in production: it replaces the ' +
+      'model with canned test replies while still reporting the assistant as ' +
+      'configured, which misleads every person who asks it a question.',
+    path: ['enableFakeAssistant'],
   });
 
 export type ApiConfig = z.infer<typeof schema>;
@@ -72,6 +92,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     publicRateLimit: Number(env['PUBLIC_RATE_LIMIT'] ?? 30),
     enableFakeGateway: env['EMIL_ENABLE_FAKE_GATEWAY'] === '1',
     enableSandboxValues: env['EMIL_ENABLE_SANDBOX_VALUES'] === '1',
+    ...(env['ANTHROPIC_API_KEY'] ? { anthropicApiKey: env['ANTHROPIC_API_KEY'] } : {}),
+    enableFakeAssistant: env['EMIL_ENABLE_FAKE_ASSISTANT'] === '1',
     nodeEnv: env['NODE_ENV'] ?? 'development',
   });
 
