@@ -74,17 +74,17 @@ export default function RepairsPage() {
   return (
     <div className="grid grid-cols-2 gap-4">
       <div className="space-y-3">
-        <h1 className="text-xl font-bold">Repairs</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Repairs</h1>
         <Card title="On the bench">
           {open.length === 0 ? (
-            <p className="text-sm text-neutral-500">Nothing in the workshop.</p>
+            <p className="text-sm text-slate-500">Nothing in the workshop.</p>
           ) : (
             <div className="space-y-2">
               {open.map((job) => (
                 <Link
                   key={job.id}
                   href={`/repairs/job?id=${job.id}`}
-                  className="block rounded-md border border-neutral-100 p-3 hover:border-emerald-500"
+                  className="block rounded-md border border-slate-100 p-3 hover:border-emerald-500"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">
@@ -92,7 +92,7 @@ export default function RepairsPage() {
                     </span>
                     <Badge status={job.status} />
                   </div>
-                  <div className="mt-1 text-xs text-neutral-500">
+                  <div className="mt-1 text-xs text-slate-500">
                     {displayDate(job.receivedOn)} · {job.reportedFault}
                   </div>
                 </Link>
@@ -107,9 +107,9 @@ export default function RepairsPage() {
                 <Link
                   key={job.id}
                   href={`/repairs/job?id=${job.id}`}
-                  className="flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-neutral-50"
+                  className="flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-slate-50"
                 >
-                  <span className="text-neutral-600">
+                  <span className="text-slate-600">
                     {job.jobNo} — {job.deviceDescription}
                   </span>
                   <Badge status={job.status} />
@@ -121,7 +121,7 @@ export default function RepairsPage() {
       </div>
 
       <div className="space-y-3">
-        <h1 className="text-xl font-bold">&nbsp;</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">&nbsp;</h1>
         <Card title="Take a device in">
           <form
             className="space-y-3"

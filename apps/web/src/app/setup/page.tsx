@@ -93,7 +93,7 @@ export default function SetupPage() {
               required
             />
           </Field>
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-slate-500">
             This creates your chart of accounts, twelve monthly periods and document numbering.
             Tax codes are added afterwards, each citing the regulation its rate comes from.
           </p>

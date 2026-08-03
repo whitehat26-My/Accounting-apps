@@ -1,5 +1,11 @@
 @import 'tailwindcss';
 
 body {
-  @apply bg-neutral-50 text-neutral-900 antialiased;
+  @apply bg-slate-100/70 text-slate-900 antialiased;
+  /* Ringgit columns must line up: every digit the same width, everywhere. */
+  font-variant-numeric: tabular-nums;
+}
+
+::selection {
+  @apply bg-emerald-200;
 }

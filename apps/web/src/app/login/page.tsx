@@ -92,7 +92,7 @@ export default function LoginPage() {
                 className="w-full text-left"
                 onClick={() => void enter(org.tenantId, org.name, refreshToken)}
               >
-                {org.name} <span className="text-xs text-neutral-500">({org.role})</span>
+                {org.name} <span className="text-xs text-slate-500">({org.role})</span>
               </Button>
             ))}
           </div>
@@ -142,7 +142,7 @@ export default function LoginPage() {
           </Button>
         </form>
         <button
-          className="mt-3 w-full text-center text-xs text-neutral-500 hover:text-neutral-800"
+          className="mt-3 w-full text-center text-xs text-slate-500 hover:text-slate-800"
           onClick={() => setMode(mode === 'login' ? 'register' : 'login')}
         >
           {mode === 'login' ? 'New here? Create an account' : 'Already registered? Sign in'}

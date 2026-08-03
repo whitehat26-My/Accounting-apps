@@ -35,7 +35,7 @@ export default function ApprovalsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Approvals</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Approvals</h1>
 
       <Card title="Waiting for a decision">
         {pending.data ? (
@@ -46,12 +46,12 @@ export default function ApprovalsPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-neutral-500">
+            <p className="text-sm text-slate-500">
               Nothing waiting. Bills appear here when an approval rule catches them.
             </p>
           )
         ) : (
-          <p className="text-sm text-neutral-500">Loading…</p>
+          <p className="text-sm text-slate-500">Loading…</p>
         )}
       </Card>
     </div>
@@ -76,18 +76,18 @@ function ApprovalRow({ bill, onDecided }: { bill: PendingBill; onDecided: () => 
   });
 
   return (
-    <div className="rounded-md border border-neutral-200 p-3">
+    <div className="rounded-md border border-slate-200 p-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <span className="font-medium">{bill.supplierName}</span>
-          <span className="ml-2 text-sm text-neutral-500">
+          <span className="ml-2 text-sm text-slate-500">
             {bill.billNo} · {bill.internalRef}
           </span>
         </div>
         <span className="font-semibold">{rm(bill.amount)}</span>
       </div>
       {nextStep ? (
-        <p className="mt-1 text-xs text-neutral-500">
+        <p className="mt-1 text-xs text-slate-500">
           Step {nextStep.sequence}: needs a {nextStep.requiredRole.toLowerCase().replace('_', ' ')}
           {bill.outstanding.length > 1 ? ` (then ${bill.outstanding.length - 1} more)` : ''}
         </p>

@@ -50,26 +50,26 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Settings</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
 
       <Card title="Organisation">
         {org.data ? (
           <div className="grid grid-cols-2 gap-2 text-sm lg:grid-cols-3">
             <div>
-              <div className="text-xs text-neutral-500">Name</div>
+              <div className="text-xs text-slate-500">Name</div>
               <div className="font-medium">{org.data.name}</div>
             </div>
             <div>
-              <div className="text-xs text-neutral-500">Base currency</div>
+              <div className="text-xs text-slate-500">Base currency</div>
               <div className="font-medium">{org.data.baseCurrency}</div>
             </div>
             <div>
-              <div className="text-xs text-neutral-500">Reporting framework</div>
+              <div className="text-xs text-slate-500">Reporting framework</div>
               <div className="font-medium">{org.data.reportingFramework}</div>
             </div>
           </div>
         ) : (
-          <p className="text-sm text-neutral-500">Loading…</p>
+          <p className="text-sm text-slate-500">Loading…</p>
         )}
       </Card>
 
@@ -113,13 +113,13 @@ function ChartCard({ canAdd }: { canAdd: boolean }) {
         <div className="space-y-3">
           {grouped.map((group) => (
             <div key={group.type}>
-              <div className="mb-1 text-xs font-semibold uppercase text-neutral-400">
+              <div className="mb-1 text-xs font-semibold uppercase text-slate-400">
                 {group.type}
               </div>
               <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2">
                 {group.accounts.map((a) => (
-                  <div key={a.id} className="flex justify-between border-t border-neutral-100 py-1 text-sm">
-                    <span className="font-mono text-xs text-neutral-500">{a.code}</span>
+                  <div key={a.id} className="flex justify-between border-t border-slate-100 py-1 text-sm">
+                    <span className="font-mono text-xs text-slate-500">{a.code}</span>
                     <span className="flex-1 px-3">{a.name}</span>
                   </div>
                 ))}
@@ -128,7 +128,7 @@ function ChartCard({ canAdd }: { canAdd: boolean }) {
           ))}
 
           {canAdd ? (
-            <div className="flex flex-wrap items-end gap-2 border-t border-neutral-100 pt-3">
+            <div className="flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3">
               <Field label="Code">
                 <Input value={code} onChange={(e) => setCode(e.target.value)} className="w-24" placeholder="6300" />
               </Field>
@@ -137,7 +137,7 @@ function ChartCard({ canAdd }: { canAdd: boolean }) {
               </Field>
               <Field label="Type">
                 <select
-                  className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+                  className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
                   value={type}
                   onChange={(e) => setType(e.target.value)}
                 >
@@ -157,7 +157,7 @@ function ChartCard({ canAdd }: { canAdd: boolean }) {
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-neutral-500">Loading…</p>
+        <p className="text-sm text-slate-500">Loading…</p>
       )}
     </Card>
   );
@@ -211,7 +211,7 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
         <div className="space-y-3">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-neutral-500">
+              <tr className="text-left text-xs text-slate-500">
                 <th className="pb-1">Code</th>
                 <th className="pb-1">Name</th>
                 <th className="pb-1 text-right">Rate</th>
@@ -222,12 +222,12 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
             <tbody>
               {taxCodes.data.taxCodes.flatMap((t) =>
                 t.rates.map((r, i) => (
-                  <tr key={`${t.id}-${i}`} className="border-t border-neutral-100">
+                  <tr key={`${t.id}-${i}`} className="border-t border-slate-100">
                     <td className="py-1.5 font-mono text-xs">{t.code}</td>
                     <td className="py-1.5">{t.name}</td>
                     <td className="py-1.5 text-right">{r.rateBasisPoints / 100}%</td>
-                    <td className="py-1.5 text-xs text-neutral-500">{displayDate(r.validFrom)}</td>
-                    <td className="py-1.5 text-xs text-neutral-500">{r.legislationRef ?? '—'}</td>
+                    <td className="py-1.5 text-xs text-slate-500">{displayDate(r.validFrom)}</td>
+                    <td className="py-1.5 text-xs text-slate-500">{r.legislationRef ?? '—'}</td>
                   </tr>
                 )),
               )}
@@ -235,8 +235,8 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
           </table>
 
           {canAdd ? (
-            <div className="space-y-2 border-t border-neutral-100 pt-3">
-              <p className="text-xs text-neutral-500">
+            <div className="space-y-2 border-t border-slate-100 pt-3">
+              <p className="text-xs text-slate-500">
                 A new rate must cite the legal instrument it came from (e.g. a gazette
                 order). If you are unsure of a rate, ask your tax agent — do not guess.
               </p>
@@ -249,7 +249,7 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
                 </Field>
                 <Field label="Regime">
                   <select
-                    className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+                    className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
                     value={regime}
                     onChange={(e) => setRegime(e.target.value)}
                   >
@@ -259,7 +259,7 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
                 </Field>
                 <Field label="Rate %">
                   <select
-                    className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+                    className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
                     value={ratePercent}
                     onChange={(e) => setRatePercent(e.target.value)}
                   >
@@ -294,7 +294,7 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-neutral-500">Loading…</p>
+        <p className="text-sm text-slate-500">Loading…</p>
       )}
     </Card>
   );

@@ -56,13 +56,13 @@ export default function TeamPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Team</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Team</h1>
 
       <Card title="Who has access">
         {members.data ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-neutral-500">
+              <tr className="text-left text-xs text-slate-500">
                 <th className="pb-2">Name</th>
                 <th className="pb-2">Email</th>
                 <th className="pb-2">Role</th>
@@ -71,28 +71,28 @@ export default function TeamPage() {
             </thead>
             <tbody>
               {members.data.members.map((m) => (
-                <tr key={m.membershipId} className="border-t border-neutral-100">
+                <tr key={m.membershipId} className="border-t border-slate-100">
                   <td className="py-2 font-medium">{m.fullName}</td>
-                  <td className="py-2 text-neutral-500">{m.email}</td>
+                  <td className="py-2 text-slate-500">{m.email}</td>
                   <td className="py-2">
-                    <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium">
+                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium">
                       {ROLE_LABELS[m.role] ?? m.role}
                     </span>
                   </td>
-                  <td className="py-2 text-xs text-neutral-500">{m.status}</td>
+                  <td className="py-2 text-xs text-slate-500">{m.status}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
-          <p className="text-sm text-neutral-500">Loading…</p>
+          <p className="text-sm text-slate-500">Loading…</p>
         )}
       </Card>
 
       {manages ? (
         <Card title="Add someone">
           <div className="space-y-3">
-            <p className="text-xs text-neutral-500">
+            <p className="text-xs text-slate-500">
               They register their own account first (the normal sign-up page), then you add
               their email here and choose what they can see.
             </p>
@@ -117,7 +117,7 @@ export default function TeamPage() {
                     />
                     <span>
                       <span className="text-sm font-medium">{ROLE_LABELS[r.code]}</span>
-                      <span className="block text-xs text-neutral-500">{r.hint}</span>
+                      <span className="block text-xs text-slate-500">{r.hint}</span>
                     </span>
                   </label>
                 ))}

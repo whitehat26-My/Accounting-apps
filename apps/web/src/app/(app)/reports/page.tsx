@@ -51,7 +51,7 @@ export default function ReportsPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <h1 className="text-xl font-bold">Reports</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Reports</h1>
         <div className="flex gap-3">
           <Field label="From">
             <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -76,7 +76,7 @@ export default function ReportsPage() {
           <div>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-neutral-500">
+                <tr className="text-left text-xs text-slate-500">
                   <th className="pb-1">Code</th>
                   <th className="pb-1">Account</th>
                   <th className="pb-1 text-right">Debit</th>
@@ -85,14 +85,14 @@ export default function ReportsPage() {
               </thead>
               <tbody>
                 {tb.data.rows.map((r) => (
-                  <tr key={r.code} className="border-t border-neutral-100">
-                    <td className="py-1 font-mono text-xs text-neutral-500">{r.code}</td>
+                  <tr key={r.code} className="border-t border-slate-100">
+                    <td className="py-1 font-mono text-xs text-slate-500">{r.code}</td>
                     <td className="py-1">{r.name}</td>
                     <td className="py-1 text-right">{r.debit === '0.0000' ? '' : rm(r.debit)}</td>
                     <td className="py-1 text-right">{r.credit === '0.0000' ? '' : rm(r.credit)}</td>
                   </tr>
                 ))}
-                <tr className="border-t-2 border-neutral-300 font-semibold">
+                <tr className="border-t-2 border-slate-300 font-semibold">
                   <td className="py-1.5" colSpan={2}>Totals</td>
                   <td className="py-1.5 text-right">{rm(tb.data.totalDebit)}</td>
                   <td className="py-1.5 text-right">{rm(tb.data.totalCredit)}</td>
@@ -119,11 +119,11 @@ function Statement({ lines }: { lines: StatementLine[] }) {
       {lines.map((line, i) => (
         <div
           key={`${line.label}-${i}`}
-          className={`flex justify-between border-t border-neutral-50 py-1 ${
+          className={`flex justify-between border-t border-slate-50 py-1 ${
             line.lineType === 'TOTAL' || line.lineType === 'SUBTOTAL'
               ? 'font-semibold'
               : line.lineType === 'HEADER'
-                ? 'pt-3 text-xs font-semibold uppercase text-neutral-400'
+                ? 'pt-3 text-xs font-semibold uppercase text-slate-400'
                 : ''
           }`}
           style={{ paddingLeft: `${line.level * 16}px` }}
@@ -141,5 +141,5 @@ function Statement({ lines }: { lines: StatementLine[] }) {
 }
 
 function Loading() {
-  return <p className="text-sm text-neutral-500">Loading…</p>;
+  return <p className="text-sm text-slate-500">Loading…</p>;
 }

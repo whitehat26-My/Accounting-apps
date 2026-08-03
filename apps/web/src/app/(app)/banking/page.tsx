@@ -120,7 +120,7 @@ export default function BankingPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Banking</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Banking</h1>
 
       {accounts.data && accounts.data.bankAccounts.length === 0 ? (
         <CreateAccountCard
@@ -138,7 +138,7 @@ export default function BankingPage() {
               className={`rounded-md px-3 py-1.5 text-sm ${
                 selected?.id === a.id
                   ? 'bg-emerald-100 font-medium text-emerald-900'
-                  : 'bg-neutral-100 text-neutral-600'
+                  : 'bg-slate-100 text-slate-600'
               }`}
             >
               {a.name}
@@ -186,7 +186,7 @@ function CreateAccountCard({
   return (
     <Card title="Set up your bank account">
       <div className="space-y-3">
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-slate-500">
           One-time: name the account and pick the ledger account it lives on — usually
           Cash and Bank.
         </p>
@@ -198,7 +198,7 @@ function CreateAccountCard({
         </Field>
         <Field label="Ledger account">
           <select
-            className="w-full rounded-md border border-neutral-300 px-3 py-2 text-sm"
+            className="w-full rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-3 py-2 text-sm"
             value={glAccountId}
             onChange={(e) => setGlAccountId(e.target.value)}
           >
@@ -280,7 +280,7 @@ function ImportCard({
   return (
     <Card title="Import a statement">
       <div className="space-y-3">
-        <p className="text-xs text-neutral-500">
+        <p className="text-xs text-slate-500">
           Export CSV from your online banking, then upload or paste it here. Expected
           columns: date, description, amount (negative = money out). Preview first —
           wrong settings should fail here, not in your books.
@@ -292,7 +292,7 @@ function ImportCard({
           onChange={(e) => readFile(e.target.files?.[0])}
         />
         <textarea
-          className="h-28 w-full rounded-md border border-neutral-300 p-2 font-mono text-xs"
+          className="h-28 w-full rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 p-2 font-mono text-xs"
           placeholder={'Date,Description,Amount\n05/08/2026,TNB BILL PAYMENT,-380.50'}
           value={content}
           onChange={(e) => setContent(e.target.value)}
@@ -300,7 +300,7 @@ function ImportCard({
         <div className="flex flex-wrap gap-3">
           <Field label="File type">
             <select
-              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+              className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-1.5 text-sm"
               value={format}
               onChange={(e) => setFormat(e.target.value as 'CSV' | 'ADVICE')}
             >
@@ -312,7 +312,7 @@ function ImportCard({
             <>
               <Field label="Date format">
                 <select
-                  className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+                  className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-1.5 text-sm"
                   value={dateFormat}
                   onChange={(e) => setDateFormat(e.target.value)}
                 >
@@ -323,7 +323,7 @@ function ImportCard({
               </Field>
               <Field label="Separator">
                 <select
-                  className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+                  className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-1.5 text-sm"
                   value={delimiter}
                   onChange={(e) => setDelimiter(e.target.value)}
                 >
@@ -334,7 +334,7 @@ function ImportCard({
               </Field>
             </>
           ) : (
-            <p className="max-w-sm self-end pb-2 text-xs text-neutral-500">
+            <p className="max-w-sm self-end pb-2 text-xs text-slate-500">
               For Maybank “payment details” exports (Our Reference, Total Amount, …).
               Incoming payments only; an advice without its own date is dated today.
             </p>
@@ -358,7 +358,7 @@ function ImportCard({
         {doImport.isError ? <ErrorNote error={doImport.error} /> : null}
 
         {preview ? (
-          <div className="rounded-md bg-neutral-50 p-3 text-xs">
+          <div className="rounded-md bg-slate-50 p-3 text-xs">
             <p className="mb-2 font-medium">
               {preview.rows.length} rows read
               {preview.violations.length > 0
@@ -366,7 +366,7 @@ function ImportCard({
                 : ' — looks good'}
             </p>
             {preview.rows.slice(0, 5).map((r, i) => (
-              <div key={i} className="flex justify-between border-t border-neutral-200 py-1">
+              <div key={i} className="flex justify-between border-t border-slate-200 py-1">
                 <span>
                   {displayDate(r.txnDate)} · {r.description}
                   {r.duplicate ? ' · already held' : ''}
@@ -454,12 +454,12 @@ function ToSortCard({
             ))}
           </div>
         ) : (
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-slate-500">
             Nothing to sort — every imported line is matched. That is what reconciled means.
           </p>
         )
       ) : (
-        <p className="text-sm text-neutral-500">Loading…</p>
+        <p className="text-sm text-slate-500">Loading…</p>
       )}
     </Card>
   );
@@ -508,14 +508,14 @@ function LineRow({
   const singleCandidate = suggestion !== undefined && suggestion.candidateIds.length === 1;
 
   return (
-    <div className="rounded-md border border-neutral-200 p-3">
+    <div className="rounded-md border border-slate-200 p-3">
       <div className="flex items-baseline justify-between">
         <span className="text-sm font-medium">{line.description}</span>
         <span className={`text-sm font-semibold ${out ? 'text-red-600' : 'text-emerald-700'}`}>
           {rm(line.amount.amount)}
         </span>
       </div>
-      <div className="text-xs text-neutral-500">{displayDate(line.txnDate)}</div>
+      <div className="text-xs text-slate-500">{displayDate(line.txnDate)}</div>
 
       {suggestion ? (
         <div className="mt-2 rounded-md bg-emerald-50 p-2 text-xs text-emerald-900">
@@ -538,7 +538,7 @@ function LineRow({
       ) : (
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <select
-            className="rounded-md border border-neutral-300 px-2 py-1.5 text-xs"
+            className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-1.5 text-xs"
             value={bookAccountId}
             onChange={(e) => setBookAccountId(e.target.value)}
           >
@@ -607,11 +607,11 @@ function ReconcileCard({ account }: { account: BankAccount }) {
         {r ? (
           <div className="space-y-2 text-sm">
             <div className="flex justify-between">
-              <span className="text-neutral-500">Bank says (adjusted)</span>
+              <span className="text-slate-500">Bank says (adjusted)</span>
               <span className="font-medium">{rm(r.adjustedBankBalance)}</span>
             </div>
             <div className="flex justify-between">
-              <span className="text-neutral-500">Books say (adjusted)</span>
+              <span className="text-slate-500">Books say (adjusted)</span>
               <span className="font-medium">{rm(r.adjustedBookBalance)}</span>
             </div>
             <div
@@ -623,7 +623,7 @@ function ReconcileCard({ account }: { account: BankAccount }) {
               <span>{rm(r.variance)}</span>
             </div>
             {!r.reconciles ? (
-              <p className="text-xs text-neutral-500">
+              <p className="text-xs text-slate-500">
                 A non-zero difference means a missing entry, a duplicate, or a wrong
                 amount — work the “to sort” list above until this reads RM 0.00.
                 Sign-off is refused until it does.
@@ -642,7 +642,7 @@ function ReconcileCard({ account }: { account: BankAccount }) {
             {signOff.isError ? <ErrorNote error={signOff.error} /> : null}
           </div>
         ) : (
-          <p className="text-sm text-neutral-500">Loading…</p>
+          <p className="text-sm text-slate-500">Loading…</p>
         )}
       </div>
     </Card>
@@ -706,7 +706,7 @@ function RulesCard({
         {rules.data && rules.data.rules.length > 0 ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-neutral-500">
+              <tr className="text-left text-xs text-slate-500">
                 <th className="pb-1">If it contains</th>
                 <th className="pb-1">Book to</th>
                 <th className="pb-1 text-center">Auto</th>
@@ -716,7 +716,7 @@ function RulesCard({
             </thead>
             <tbody>
               {rules.data.rules.map((r) => (
-                <tr key={r.id} className={`border-t border-neutral-100 ${r.isActive ? '' : 'opacity-40'}`}>
+                <tr key={r.id} className={`border-t border-slate-100 ${r.isActive ? '' : 'opacity-40'}`}>
                   <td className="py-1.5 font-mono text-xs">{r.contains}</td>
                   <td className="py-1.5">{r.accountName}</td>
                   <td className="py-1.5 text-center">
@@ -728,10 +728,10 @@ function RulesCard({
                       }
                     />
                   </td>
-                  <td className="py-1.5 text-right text-neutral-500">{r.hitCount}</td>
+                  <td className="py-1.5 text-right text-slate-500">{r.hitCount}</td>
                   <td className="py-1.5 text-right">
                     <button
-                      className="text-xs text-neutral-400 hover:text-neutral-700"
+                      className="text-xs text-slate-400 hover:text-slate-700"
                       onClick={() =>
                         toggle.mutate({ id: r.id, patch: { isActive: !r.isActive } })
                       }
@@ -744,13 +744,13 @@ function RulesCard({
             </tbody>
           </table>
         ) : (
-          <p className="text-xs text-neutral-500">
+          <p className="text-xs text-slate-500">
             No rules yet. Example: lines containing “TNB” book to Utilities — tick Auto and
             the electricity bill files itself on every import.
           </p>
         )}
 
-        <div className="flex flex-wrap items-end gap-2 border-t border-neutral-100 pt-3">
+        <div className="flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3">
           <Field label="Contains">
             <Input
               value={contains}
@@ -760,7 +760,7 @@ function RulesCard({
           </Field>
           <Field label="Book to">
             <select
-              className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+              className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
               value={ruleAccountId}
               onChange={(e) => setRuleAccountId(e.target.value)}
             >

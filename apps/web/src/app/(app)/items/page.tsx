@@ -91,15 +91,15 @@ export default function ItemsPage() {
   return (
     <div className="grid grid-cols-2 gap-4">
       <div className="space-y-3">
-        <h1 className="text-xl font-bold">Items</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Items</h1>
         <Card>
           <table className="w-full text-sm">
             <tbody>
               {(items.data ?? []).map((item) => (
-                <tr key={item.id} className="border-t border-neutral-100">
-                  <td className="py-2 text-xs text-neutral-500">{item.code}</td>
+                <tr key={item.id} className="border-t border-slate-100">
+                  <td className="py-2 text-xs text-slate-500">{item.code}</td>
                   <td className="py-2">{item.name}</td>
-                  <td className="py-2 text-xs text-neutral-500">
+                  <td className="py-2 text-xs text-slate-500">
                     {item.itemType}
                     {item.isTracked ? ' · tracked' : ''}
                     {item.isSerialised ? ' · serials' : ''}
@@ -115,7 +115,7 @@ export default function ItemsPage() {
       </div>
 
       <div className="space-y-3">
-        <h1 className="text-xl font-bold">&nbsp;</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">&nbsp;</h1>
         <Card title="New item">
           <form
             className="space-y-3"

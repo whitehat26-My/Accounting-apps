@@ -124,7 +124,7 @@ function RepairDetail() {
   return (
     <div className="mx-auto max-w-2xl space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-xl font-bold">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
           {j.jobNo} — {j.deviceDescription}
         </h1>
         <Badge status={j.status} />
@@ -144,7 +144,7 @@ function RepairDetail() {
           <table className="w-full text-sm">
             <tbody>
               {j.lines.map((line) => (
-                <tr key={line.lineNo} className="border-t border-neutral-100">
+                <tr key={line.lineNo} className="border-t border-slate-100">
                   <td className="py-2">{line.description}</td>
                   <td className="py-2 text-right">{qty(line.quantity)}</td>
                   <td className="py-2 text-right font-medium">{rm(line.unitPrice)}</td>
@@ -272,7 +272,7 @@ function RepairDetail() {
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-2">
-      <dt className="w-32 shrink-0 text-neutral-500">{label}</dt>
+      <dt className="w-32 shrink-0 text-slate-500">{label}</dt>
       <dd>{value}</dd>
     </div>
   );

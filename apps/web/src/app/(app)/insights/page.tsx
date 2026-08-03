@@ -58,7 +58,7 @@ export default function InsightsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Insights</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Insights</h1>
 
       <Card title="Daily takings — last 14 days">
         {daily.data ? (
@@ -69,7 +69,7 @@ export default function InsightsPage() {
             }))}
           />
         ) : (
-          <p className="text-sm text-neutral-500">Loading…</p>
+          <p className="text-sm text-slate-500">Loading…</p>
         )}
       </Card>
 
@@ -83,7 +83,7 @@ export default function InsightsPage() {
               }))}
             />
           ) : (
-            <p className="text-sm text-neutral-500">Loading…</p>
+            <p className="text-sm text-slate-500">Loading…</p>
           )}
         </Card>
 
@@ -106,7 +106,7 @@ export default function InsightsPage() {
               ) : null}
             </div>
           ) : (
-            <p className="text-sm text-neutral-500">Loading…</p>
+            <p className="text-sm text-slate-500">Loading…</p>
           )}
         </Card>
       </div>
@@ -122,12 +122,12 @@ export default function InsightsPage() {
               }))}
             />
           ) : (
-            <p className="text-sm text-neutral-500">
+            <p className="text-sm text-slate-500">
               Appears once the first weekly digest is stored.
             </p>
           )
         ) : (
-          <p className="text-sm text-neutral-500">Loading…</p>
+          <p className="text-sm text-slate-500">Loading…</p>
         )}
       </Card>
     </div>

@@ -429,7 +429,7 @@ export function demoApi(
         'stock.read', 'stock.adjust', 'report.read', 'user.read', 'user.manage',
         'invoice.read', 'invoice.create', 'contact.read', 'contact.write',
         'bank.read', 'bank.import', 'bank.reconcile', 'journal.read', 'journal.post',
-        'bill.read', 'bill.create', 'payment.create', 'receipt.create',
+        'bill.read', 'bill.create', 'bill.approve', 'payment.create', 'receipt.create',
         'collections.chase', 'tax.read', 'tax.write', 'org.manage',
       ],
     };

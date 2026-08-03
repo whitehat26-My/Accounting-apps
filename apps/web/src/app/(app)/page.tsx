@@ -79,7 +79,7 @@ export default function TodayPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Today — {displayDate(date)}</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Today — {displayDate(date)}</h1>
 
       {seesTakings ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
@@ -92,7 +92,7 @@ export default function TodayPage() {
 
       {!seesTakings && !seesMoney && me.data ? (
         <Card>
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-slate-500">
             Welcome. Your work lives in the sections on the left.
           </p>
         </Card>
@@ -103,12 +103,12 @@ export default function TodayPage() {
         {f ? (
           <div className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-sm text-neutral-500">In the bank now</span>
+              <span className="text-sm text-slate-500">In the bank now</span>
               <span className="text-lg font-bold">{rm(f.openingCash)}</span>
             </div>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-neutral-500">
+                <tr className="text-left text-xs text-slate-500">
                   <th className="pb-1">Horizon</th>
                   <th className="pb-1 text-right">Coming in</th>
                   <th className="pb-1 text-right">Going out</th>
@@ -117,7 +117,7 @@ export default function TodayPage() {
               </thead>
               <tbody>
                 {f.horizons.map((h) => (
-                  <tr key={h.days} className="border-t border-neutral-100">
+                  <tr key={h.days} className="border-t border-slate-100">
                     <td className="py-1.5">{h.days} days</td>
                     <td className="py-1.5 text-right text-emerald-700">{rm(h.inflows)}</td>
                     <td className="py-1.5 text-right text-red-600">{rm(h.outflows)}</td>
@@ -141,7 +141,7 @@ export default function TodayPage() {
             ) : null}
           </div>
         ) : (
-          <p className="text-sm text-neutral-500">Loading…</p>
+          <p className="text-sm text-slate-500">Loading…</p>
         )}
       </Card>
       ) : null}
@@ -151,7 +151,7 @@ export default function TodayPage() {
         {d ? (
           <div className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-sm text-neutral-500">
+              <span className="text-sm text-slate-500">
                 {displayDate(d.weekStart)} – {displayDate(d.weekEnd)}
               </span>
               <span
@@ -188,7 +188,7 @@ export default function TodayPage() {
             ) : null}
           </div>
         ) : (
-          <p className="text-sm text-neutral-500">
+          <p className="text-sm text-slate-500">
             The first digest appears after a full Monday-to-Sunday week of trading.
           </p>
         )}
@@ -201,17 +201,17 @@ export default function TodayPage() {
           <table className="w-full text-sm">
             <tbody>
               {t.byMethod.map((m) => (
-                <tr key={`${m.method}-${m.depositAccount}`} className="border-t border-neutral-100">
+                <tr key={`${m.method}-${m.depositAccount}`} className="border-t border-slate-100">
                   <td className="py-2 font-medium">{m.method}</td>
-                  <td className="py-2 text-neutral-500">{m.depositAccount}</td>
-                  <td className="py-2 text-right text-neutral-500">{m.count}×</td>
+                  <td className="py-2 text-slate-500">{m.depositAccount}</td>
+                  <td className="py-2 text-right text-slate-500">{m.count}×</td>
                   <td className="py-2 text-right font-medium">{rm(m.total)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
-          <p className="text-sm text-neutral-500">Nothing taken yet today.</p>
+          <p className="text-sm text-slate-500">Nothing taken yet today.</p>
         )}
       </Card>
       ) : null}
@@ -221,8 +221,8 @@ export default function TodayPage() {
 
 function WeekStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md bg-neutral-50 px-3 py-2">
-      <div className="text-xs text-neutral-500">{label}</div>
+    <div className="rounded-md bg-slate-50 px-3 py-2">
+      <div className="text-xs text-slate-500">{label}</div>
       <div className="font-semibold">{value}</div>
     </div>
   );
@@ -230,9 +230,15 @@ function WeekStat({ label, value }: { label: string; value: string }) {
 
 function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className="rounded-lg border border-neutral-200 bg-white p-4 shadow-sm">
-      <div className="text-xs text-neutral-500">{label}</div>
-      <div className={`mt-1 text-xl font-bold ${highlight ? 'text-emerald-700' : ''}`}>{value}</div>
+    <div className="rounded-xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
+      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div
+        className={`mt-1.5 text-2xl font-semibold tracking-tight ${
+          highlight ? 'text-emerald-600' : 'text-slate-900'
+        }`}
+      >
+        {value}
+      </div>
     </div>
   );
 }

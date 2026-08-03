@@ -50,7 +50,7 @@ export function BarChart({
           );
         })}
       </svg>
-      <div className="mt-1 flex justify-between text-[10px] text-neutral-400">
+      <div className="mt-1 flex justify-between text-[10px] text-slate-400">
         <span>{points[0]!.label}</span>
         <span>{points[points.length - 1]!.label}</span>
       </div>
@@ -66,7 +66,7 @@ export function TrendLine({
   height?: number;
 }) {
   if (points.length < 2) {
-    return <p className="text-sm text-neutral-500">Not enough history to draw yet.</p>;
+    return <p className="text-sm text-slate-500">Not enough history to draw yet.</p>;
   }
   const values = points.map((p) => scale(p.value));
   const max = Math.max(...values, 1);
@@ -88,7 +88,7 @@ export function TrendLine({
           </circle>
         ))}
       </svg>
-      <div className="mt-1 flex justify-between text-[10px] text-neutral-400">
+      <div className="mt-1 flex justify-between text-[10px] text-slate-400">
         <span>{points[0]!.label}</span>
         <span>{points[points.length - 1]!.label}</span>
       </div>
@@ -113,12 +113,12 @@ export function HBarChart({
         return (
           <div key={r.label}>
             <div className="mb-0.5 flex justify-between text-xs">
-              <span className="text-neutral-500">{r.label}</span>
+              <span className="text-slate-500">{r.label}</span>
               <span className={`font-semibold ${negative ? 'text-red-700' : ''}`}>
                 {rm(r.value)}
               </span>
             </div>
-            <div className="h-2 rounded bg-neutral-100">
+            <div className="h-2 rounded bg-slate-100">
               <div
                 className={`h-2 rounded ${negative ? 'bg-red-500' : 'bg-emerald-600'}`}
                 style={{ width: `${width}%` }}

@@ -135,7 +135,7 @@ export default function PosPage() {
   return (
     <div className="grid grid-cols-2 gap-4">
       <div className="space-y-3">
-        <h1 className="text-xl font-bold">Point of sale</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Point of sale</h1>
         <Input
           placeholder="Search items…"
           value={search}
@@ -147,9 +147,9 @@ export default function PosPage() {
             <button
               key={item.id}
               onClick={() => add(item)}
-              className="rounded-lg border border-neutral-200 bg-white p-3 text-left shadow-sm hover:border-emerald-500"
+              className="rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm hover:border-emerald-500"
             >
-              <div className="text-xs text-neutral-500">{item.code}</div>
+              <div className="text-xs text-slate-500">{item.code}</div>
               <div className="text-sm font-medium">{item.name}</div>
               <div className="mt-1 text-sm font-semibold text-emerald-700">
                 {item.sale.unitPrice ? rm(item.sale.unitPrice) : 'price at till'}
@@ -162,12 +162,12 @@ export default function PosPage() {
       <div className="space-y-3">
         <Card title="Sale">
           {cart.length === 0 && !result ? (
-            <p className="text-sm text-neutral-500">Tap an item to start.</p>
+            <p className="text-sm text-slate-500">Tap an item to start.</p>
           ) : null}
 
           <div className="space-y-2">
             {cart.map((line, index) => (
-              <div key={line.item.id} className="rounded-md border border-neutral-100 p-2">
+              <div key={line.item.id} className="rounded-md border border-slate-100 p-2">
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-medium">{line.item.name}</span>
                   <span>
@@ -210,9 +210,9 @@ export default function PosPage() {
           </div>
 
           {cart.length > 0 ? (
-            <div className="mt-4 space-y-3 border-t border-neutral-200 pt-3">
+            <div className="mt-4 space-y-3 border-t border-slate-200 pt-3">
               <div className="flex justify-between text-sm">
-                <span className="text-neutral-500">Estimated total (before tax)</span>
+                <span className="text-slate-500">Estimated total (before tax)</span>
                 <span className="font-semibold">{rm(estimate)}</span>
               </div>
 

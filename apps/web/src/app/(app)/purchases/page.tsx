@@ -88,7 +88,7 @@ export default function PurchasesPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-xl font-bold">Bills &amp; expenses</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Bills &amp; expenses</h1>
 
       <Card title="Unpaid bills">
         {bills.data ? (
@@ -105,10 +105,10 @@ export default function PurchasesPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-neutral-500">Nothing owed. Every bill entered is paid.</p>
+            <p className="text-sm text-slate-500">Nothing owed. Every bill entered is paid.</p>
           )
         ) : (
-          <p className="text-sm text-neutral-500">Loading…</p>
+          <p className="text-sm text-slate-500">Loading…</p>
         )}
       </Card>
 
@@ -163,17 +163,17 @@ function BillRow({
   });
 
   return (
-    <div className="rounded-md border border-neutral-200 p-3">
+    <div className="rounded-md border border-slate-200 p-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <span className="font-medium">{bill.supplierName}</span>
-          <span className="ml-2 text-sm text-neutral-500">
+          <span className="ml-2 text-sm text-slate-500">
             {bill.billNo} · {bill.internalRef}
           </span>
         </div>
         <div className="text-right">
           <div className="font-semibold">{rm(bill.amountDue)} due</div>
-          <div className={`text-xs ${overdue ? 'font-medium text-red-600' : 'text-neutral-500'}`}>
+          <div className={`text-xs ${overdue ? 'font-medium text-red-600' : 'text-slate-500'}`}>
             {overdue ? 'overdue since ' : 'due '}
             {displayDate(bill.dueDate)}
           </div>
@@ -185,13 +185,13 @@ function BillRow({
       </div>
 
       {paying ? (
-        <div className="mt-2 flex flex-wrap items-end gap-2 rounded-md bg-neutral-50 p-2">
+        <div className="mt-2 flex flex-wrap items-end gap-2 rounded-md bg-slate-50 p-2">
           <Field label="Amount">
             <Input value={amount} onChange={(e) => setAmount(e.target.value)} className="w-28" />
           </Field>
           <Field label="Method">
             <select
-              className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+              className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
               value={method}
               onChange={(e) => setMethod(e.target.value)}
             >
@@ -202,7 +202,7 @@ function BillRow({
           </Field>
           <Field label="Paid from">
             <select
-              className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+              className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
               value={depositAccountId}
               onChange={(e) => setDepositAccountId(e.target.value)}
             >
@@ -299,7 +299,7 @@ function NewBillCard({
         <div className="flex flex-wrap gap-3">
           <Field label="Supplier">
             <select
-              className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+              className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
               value={supplierId}
               onChange={(e) => setSupplierId(e.target.value)}
             >
@@ -330,7 +330,7 @@ function NewBillCard({
         </div>
 
         {lines.map((line, i) => (
-          <div key={i} className="flex flex-wrap items-end gap-2 rounded-md bg-neutral-50 p-2">
+          <div key={i} className="flex flex-wrap items-end gap-2 rounded-md bg-slate-50 p-2">
             <Field label="Description">
               <Input
                 value={line.description}
@@ -355,7 +355,7 @@ function NewBillCard({
             </Field>
             <Field label="Expense account">
               <select
-                className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+                className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
                 value={line.accountId}
                 onChange={(e) => setLine(i, { accountId: e.target.value })}
               >
@@ -367,7 +367,7 @@ function NewBillCard({
             </Field>
             <Field label="Tax">
               <select
-                className="rounded-md border border-neutral-300 px-2 py-2 text-sm"
+                className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
                 value={line.taxCodeId}
                 onChange={(e) => setLine(i, { taxCodeId: e.target.value })}
               >
