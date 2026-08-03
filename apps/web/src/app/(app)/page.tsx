@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
-import { Card } from '@/components/ui';
+import { Card, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
 
 /**
@@ -141,7 +141,7 @@ export default function TodayPage() {
             ) : null}
           </div>
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
       ) : null}

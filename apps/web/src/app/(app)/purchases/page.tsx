@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
-import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 
 /**
  * Bills: what the shop owes, entered when the paper arrives, paid when due.
@@ -108,7 +108,7 @@ export default function PurchasesPage() {
             <p className="text-sm text-slate-500">Nothing owed. Every bill entered is paid.</p>
           )
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
 

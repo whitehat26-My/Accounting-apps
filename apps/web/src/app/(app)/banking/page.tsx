@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate, rm } from '@/lib/display';
-import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
 
 /**
@@ -459,7 +459,7 @@ function ToSortCard({
           </p>
         )
       ) : (
-        <p className="text-sm text-slate-500">Loading…</p>
+        <Skeleton />
       )}
     </Card>
   );
@@ -642,7 +642,7 @@ function ReconcileCard({ account }: { account: BankAccount }) {
             {signOff.isError ? <ErrorNote error={signOff.error} /> : null}
           </div>
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </div>
     </Card>

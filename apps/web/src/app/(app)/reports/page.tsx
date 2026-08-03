@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { rm, todayIso } from '@/lib/display';
-import { Card, Field, Input } from '@/components/ui';
+import { Card, Field, Input, Skeleton } from '@/components/ui';
 
 /**
  * The statements: profit or loss, financial position, trial balance.
@@ -141,5 +141,5 @@ function Statement({ lines }: { lines: StatementLine[] }) {
 }
 
 function Loading() {
-  return <p className="text-sm text-slate-500">Loading…</p>;
+  return <Skeleton />;
 }

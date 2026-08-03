@@ -3,7 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate, rm } from '@/lib/display';
-import { Card } from '@/components/ui';
+import { Card, Skeleton } from '@/components/ui';
 import { BarChart, HBarChart, TrendLine } from '@/components/charts';
 
 /**
@@ -69,7 +69,7 @@ export default function InsightsPage() {
             }))}
           />
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
 
@@ -83,7 +83,7 @@ export default function InsightsPage() {
               }))}
             />
           ) : (
-            <p className="text-sm text-slate-500">Loading…</p>
+            <Skeleton />
           )}
         </Card>
 
@@ -106,7 +106,7 @@ export default function InsightsPage() {
               ) : null}
             </div>
           ) : (
-            <p className="text-sm text-slate-500">Loading…</p>
+            <Skeleton />
           )}
         </Card>
       </div>
@@ -127,7 +127,7 @@ export default function InsightsPage() {
             </p>
           )
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
     </div>

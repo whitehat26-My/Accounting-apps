@@ -23,9 +23,24 @@ export function Button({
   }[variant];
   return (
     <button
-      className={`rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed ${styles} ${className}`}
+      className={`min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed ${styles} ${className}`}
       {...props}
     />
+  );
+}
+
+/** Loading placeholder: three breathing bars where the content will land. */
+export function Skeleton({ rows = 3 }: { rows?: number }) {
+  return (
+    <div className="animate-pulse space-y-2.5" aria-label="Loading">
+      {Array.from({ length: rows }, (_, i) => (
+        <div
+          key={i}
+          className="h-4 rounded bg-slate-200/80"
+          style={{ width: `${[85, 60, 72, 48, 66][i % 5]}%` }}
+        />
+      ))}
+    </div>
   );
 }
 

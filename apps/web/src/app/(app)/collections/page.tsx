@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { rm } from '@/lib/display';
-import { Button, Card, ErrorNote } from '@/components/ui';
+import { Button, Card, ErrorNote, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
 
 /**
@@ -92,7 +92,7 @@ export default function CollectionsPage() {
             </p>
           )
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
 
@@ -130,7 +130,7 @@ export default function CollectionsPage() {
             </p>
           )
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
     </div>

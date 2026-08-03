@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { rm } from '@/lib/display';
-import { Button, Card, ErrorNote, Input } from '@/components/ui';
+import { Button, Card, ErrorNote, Input, Skeleton } from '@/components/ui';
 
 /**
  * Bill approvals: the queue of spends waiting for a yes.
@@ -51,7 +51,7 @@ export default function ApprovalsPage() {
             </p>
           )
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
     </div>

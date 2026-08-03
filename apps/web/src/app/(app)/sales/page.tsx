@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiBlobUrl } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
-import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 
 /**
  * Sales beyond the till: invoices on terms, and the payments that settle them.
@@ -102,7 +102,7 @@ export default function SalesPage() {
             </p>
           )
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
 

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
+import { GeistSans } from 'geist/font/sans';
 import './globals.css';
 import { Providers } from './providers';
 
@@ -8,9 +9,14 @@ export const metadata: Metadata = {
   description: 'Point of sale, workshop and accounts for Malaysian SMEs',
 };
 
+/**
+ * Geist, self-hosted from the npm package: the font files ship in the bundle,
+ * so the static demo and the real deployment load ZERO font CDNs — no
+ * flash-of-wrong-font, no third-party request carrying the user's IP.
+ */
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" className={GeistSans.className}>
       <body>
         {process.env['NEXT_PUBLIC_DEMO'] === '1' ? (
           <div className="bg-amber-100 px-4 py-2 text-center text-xs text-amber-900">

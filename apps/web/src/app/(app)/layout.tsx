@@ -86,12 +86,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   return (
     <div className="flex min-h-screen">
-      <aside className="flex w-60 flex-col bg-slate-950 text-slate-300">
-        <div className="flex items-center gap-3 px-5 pb-5 pt-6">
+      <aside className="flex w-16 flex-col bg-slate-950 text-slate-300 md:w-60">
+        <div className="flex items-center justify-center gap-3 px-2 pb-5 pt-6 md:justify-start md:px-5">
           <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-emerald-500 text-base font-black text-slate-950">
             E
           </div>
-          <div className="min-w-0">
+          <div className="hidden min-w-0 md:block">
             <div className="text-sm font-semibold text-white">Emil</div>
             <div className="truncate text-xs text-slate-400">{session.organisationName}</div>
           </div>
@@ -101,7 +101,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           {visibleSections.map((section) => (
             <div key={section.label ?? 'root'}>
               {section.label ? (
-                <div className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500">
+                <div className="hidden px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 md:block">
                   {section.label}
                 </div>
               ) : null}
@@ -112,14 +112,15 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                     <Link
                       key={item.href}
                       href={item.href}
-                      className={`flex items-center gap-2.5 rounded-lg px-2.5 py-2 text-[13px] transition-colors ${
+                      title={item.label}
+                      className={`flex items-center justify-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13px] transition-colors md:justify-start ${
                         active
                           ? 'bg-emerald-500/10 font-medium text-emerald-300'
                           : 'text-slate-300 hover:bg-white/5 hover:text-white'
                       }`}
                     >
                       <Icon name={item.icon} className={active ? 'text-emerald-400' : 'text-slate-500'} />
-                      {item.label}
+                      <span className="hidden md:inline">{item.label}</span>
                     </Link>
                   );
                 })}
@@ -128,7 +129,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        <div className="border-t border-white/10 px-5 py-4">
+        <div className="hidden border-t border-white/10 px-5 py-4 md:block">
           {me.data ? (
             <div className="mb-2 text-xs text-slate-400">
               Signed in as{' '}
@@ -149,7 +150,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </div>
       </aside>
 
-      <main className="min-w-0 flex-1 bg-slate-100/70 p-6 lg:p-8">
+      <main className="min-w-0 flex-1 bg-slate-100/70 p-4 md:p-6 lg:p-8">
         <div className="mx-auto max-w-5xl">{children}</div>
       </main>
     </div>

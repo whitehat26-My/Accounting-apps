@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, ROLE_LABELS, useMe } from '@/lib/me';
 
 /**
@@ -85,7 +85,7 @@ export default function TeamPage() {
             </tbody>
           </table>
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
 

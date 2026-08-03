@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate } from '@/lib/display';
-import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
 
 /**
@@ -69,7 +69,7 @@ export default function SettingsPage() {
             </div>
           </div>
         ) : (
-          <p className="text-sm text-slate-500">Loading…</p>
+          <Skeleton />
         )}
       </Card>
 
@@ -157,7 +157,7 @@ function ChartCard({ canAdd }: { canAdd: boolean }) {
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-slate-500">Loading…</p>
+        <Skeleton />
       )}
     </Card>
   );
@@ -294,7 +294,7 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
           ) : null}
         </div>
       ) : (
-        <p className="text-sm text-slate-500">Loading…</p>
+        <Skeleton />
       )}
     </Card>
   );
