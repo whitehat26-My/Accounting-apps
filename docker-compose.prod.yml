@@ -1,0 +1,115 @@
+# The whole system on one machine: PostgreSQL, migrations, the three
+# services, and a nightly backup loop. See docs/DEPLOY.md for the runbook.
+#
+#   cp .env.prod.example .env.prod   # then fill in the four secrets
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Only `web` faces the internet: the browser calls /api/* and Next proxies to
+# the API container, so the API and the database stay on the private network.
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: emil
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d emil']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  # One-shot: applies migrations as the postgres superuser — migration 0021
+  # REFUSES any role that cannot bypass RLS, because the SECURITY DEFINER
+  # functions it creates would otherwise silently see zero rows.
+  migrate:
+    build: { context: ., dockerfile: docker/api.Dockerfile }
+    command: ['pnpm', '--filter', '@emil/db', 'migrate']
+    environment:
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@db:5432/emil
+    depends_on:
+      db: { condition: service_healthy }
+    restart: 'no'
+
+  # One-shot: creates/refreshes the two LOGIN roles the services connect as.
+  # Re-running rotates their passwords to whatever .env.prod now holds.
+  roles:
+    image: postgres:16
+    entrypoint: ['psql']
+    command:
+      - postgres://postgres:${POSTGRES_PASSWORD}@db:5432/emil
+      - -v
+      - app_password='${EMIL_APP_PASSWORD:?set EMIL_APP_PASSWORD in .env.prod}'
+      - -v
+      - worker_password='${EMIL_WORKER_PASSWORD:?set EMIL_WORKER_PASSWORD in .env.prod}'
+      - -f
+      - /prod-roles.sql
+    volumes:
+      - ./scripts/prod-roles.sql:/prod-roles.sql:ro
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    restart: 'no'
+
+  api:
+    build: { context: ., dockerfile: docker/api.Dockerfile }
+    environment:
+      DATABASE_URL: postgres://emil_app_login:${EMIL_APP_PASSWORD}@db:5432/emil
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.prod (32+ chars)}
+      NODE_ENV: production
+    depends_on:
+      roles: { condition: service_completed_successfully }
+    healthcheck:
+      # /openapi.json is unauthenticated and exercises the router.
+      test: ['CMD-SHELL', "node -e \"fetch('http://127.0.0.1:3000/openapi.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  worker:
+    build: { context: ., dockerfile: docker/worker.Dockerfile }
+    environment:
+      DATABASE_URL: postgres://emil_worker_login:${EMIL_WORKER_PASSWORD}@db:5432/emil
+      NODE_ENV: production
+    depends_on:
+      roles: { condition: service_completed_successfully }
+    restart: unless-stopped
+
+  web:
+    build: { context: ., dockerfile: docker/web.Dockerfile }
+    environment:
+      API_ORIGIN: http://api:3000
+    ports:
+      - '${WEB_PORT:-8080}:3000'
+    depends_on:
+      api: { condition: service_healthy }
+    restart: unless-stopped
+
+  # Nightly pg_dump into ./backups, keeping the newest 14. An accounting
+  # system without backups is a liability — copy this directory OFFSITE too
+  # (rclone to any object storage); the machine that burns takes its own
+  # backups with it.
+  backup:
+    image: postgres:16
+    entrypoint: ['sh', '-c']
+    command:
+      - |
+        while true; do
+          pg_dump "postgres://postgres:$${POSTGRES_PASSWORD}@db:5432/emil" \
+            -Fc -f "/backups/emil-$$(date +%Y%m%d-%H%M%S).dump" \
+            && ls -1t /backups/emil-*.dump | tail -n +15 | xargs -r rm --
+          sleep 86400
+        done
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - ./backups:/backups
+    depends_on:
+      db: { condition: service_healthy }
+    restart: unless-stopped
+
+volumes:
+  pgdata:

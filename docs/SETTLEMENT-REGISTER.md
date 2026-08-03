@@ -279,6 +279,20 @@ The generated document carries request schemas, permissions and error responses.
 response bodies are not modelled, so a generated client knows what to send and not what it
 gets back.
 
+### 4.10 Production hosting kit — BUILT as configuration; the deploy needs the owner
+
+`docker/` (three Dockerfiles: api, worker, web — tsx from source, same as dev, no
+compiled artefact to drift), `docker-compose.prod.yml` (db → one-shot migrate as
+superuser → one-shot roles → api/worker/web, nightly pg_dump keeping 14, only `web`
+published — the API and database never face the internet), `scripts/prod-roles.sql`
+(login roles mirroring the test harness: NOBYPASSRLS, one inherited group each),
+`docker/Caddyfile.example` (HTTPS), `docs/DEPLOY.md` (runbook: verify, backups
+offsite + restore drill, upgrades, password rotation). The load-bearing finding is
+documented up front: migration 0021 REQUIRES the migrating role to bypass RLS, so
+Render/Heroku managed PostgreSQL refuse by design — a VPS, Railway or Fly are the
+homes that work. Unverifiable from this environment (no Docker here): the compose
+file is YAML-validated and the runbook states what to check on first boot.
+
 ### 4.8 `packages/ui` and `infra`
 
 Named in `CLAUDE.md` as planned. Neither exists. `infra` (Terraform) is not worth writing

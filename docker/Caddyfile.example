@@ -1,0 +1,19 @@
+# HTTPS in one file. Point your domain's DNS A-record at the server, put
+# this beside docker-compose.prod.yml as `Caddyfile`, and add to the compose:
+#
+#   caddy:
+#     image: caddy:2
+#     ports: ['80:80', '443:443']
+#     volumes:
+#       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+#       - caddy_data:/data
+#     depends_on: [web]
+#     restart: unless-stopped
+#
+# (and `caddy_data:` under volumes:). Caddy fetches and renews the
+# certificate itself. Then remove the `ports:` mapping from `web` — Caddy
+# reaches it on the internal network.
+
+shop.example.com {
+    reverse_proxy web:3000
+}
