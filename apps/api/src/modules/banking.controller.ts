@@ -386,6 +386,9 @@ const importProfile = z.object({
 
 const previewSchema = z.object({
   content: z.string().min(1),
+  format: z.enum(['CSV', 'ADVICE']).optional(),
+  /** Fallback date for undated advices, so the preview mirrors the import. */
+  statementDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   profileId: z.string().uuid().optional(),
   profile: importProfile.optional(),
 });

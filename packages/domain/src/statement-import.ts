@@ -75,7 +75,14 @@ export type ImportViolation =
   | { readonly code: 'BAD_DATE'; readonly lineNo: number; readonly value: string }
   | { readonly code: 'BAD_AMOUNT'; readonly lineNo: number; readonly value: string }
   | { readonly code: 'BOTH_DEBIT_AND_CREDIT'; readonly lineNo: number }
-  | { readonly code: 'NO_AMOUNT'; readonly lineNo: number };
+  | { readonly code: 'NO_AMOUNT'; readonly lineNo: number }
+  // Payment-advice format (payment-advice.ts) — keyed by the advice's own
+  // reference, because an advice document has no meaningful line numbers.
+  | { readonly code: 'ADVICE_NO_AMOUNT'; readonly reference: string }
+  | { readonly code: 'ADVICE_NO_DATE'; readonly reference: string }
+  | { readonly code: 'ADVICE_AMOUNT_MISMATCH'; readonly reference: string;
+      readonly remittance: string; readonly total: string }
+  | { readonly code: 'ADVICE_NO_REFERENCE' };
 
 export interface ParsedStatement {
   readonly rows: readonly ParsedStatementRow[];

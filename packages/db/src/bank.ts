@@ -1,5 +1,6 @@
 import {
   Money,
+  parsePaymentAdvices,
   parseStatement,
   type ImportProfile,
   type ParsedStatementRow,
@@ -117,9 +118,15 @@ export async function createBankAccount(
 export interface ImportStatementInput {
   readonly bankAccountId: string;
   readonly content: string;
-  /** A saved profile, or an inline one for a preview. */
+  /** A saved profile, or an inline one for a preview. Ignored for ADVICE. */
   readonly profileId?: string;
   readonly profile?: ImportProfile;
+  /**
+   * CSV (default): rows against a column profile. ADVICE: Maybank-style
+   * `Label : value` payment-advice documents, no profile involved — the
+   * layout is fixed by the bank and parsed from a real sample.
+   */
+  readonly format?: 'CSV' | 'ADVICE';
   readonly statementDate: string;
   readonly fileName?: string;
   readonly idempotencyKey: string;
@@ -189,8 +196,19 @@ export async function importStatement(
     throw new BankError('ACCOUNT_NOT_FOUND', `Bank account ${input.bankAccountId} not found`);
   }
 
-  const profile = input.profile ?? (await loadProfile(tx, ctx, input.profileId));
-  const parsed = parseStatement(input.content, profile, bankAccount.currency);
+  let parsed;
+  let profileId: string | null = null;
+  if (input.format === 'ADVICE') {
+    // Undated advices are dated by the statement date, with a violation the
+    // response carries so the substitution is seen, not silent.
+    parsed = parsePaymentAdvices(input.content, bankAccount.currency, {
+      fallbackDate: input.statementDate,
+    });
+  } else {
+    const profile = input.profile ?? (await loadProfile(tx, ctx, input.profileId));
+    parsed = parseStatement(input.content, profile, bankAccount.currency);
+    profileId = input.profileId ?? null;
+  }
 
   if (parsed.rows.length === 0) {
     throw new BankError(
@@ -209,7 +227,7 @@ export async function importStatement(
           ${ctx.tenantId}, ${input.bankAccountId}, ${input.statementDate},
           ${parsed.openingBalance?.toDecimalString() ?? null},
           ${parsed.closingBalance?.toDecimalString() ?? null},
-          'CSV', ${input.profileId ?? null}, ${input.fileName ?? null},
+          'CSV', ${profileId}, ${input.fileName ?? null},
           0, 0, ${input.idempotencyKey}, ${ctx.userId ?? null}
       )
       RETURNING id
@@ -278,7 +296,15 @@ async function insertTransaction(
 export async function previewStatement(
   tx: Tx,
   ctx: TenantContext,
-  input: { bankAccountId: string; content: string; profileId?: string; profile?: ImportProfile },
+  input: {
+    bankAccountId: string;
+    content: string;
+    profileId?: string;
+    profile?: ImportProfile;
+    format?: 'CSV' | 'ADVICE';
+    /** Fallback date for undated advices, so the preview shows what an import would do. */
+    statementDate?: string;
+  },
 ): Promise<{
   rows: readonly {
     txnDate: string;
@@ -296,8 +322,15 @@ export async function previewStatement(
     throw new BankError('ACCOUNT_NOT_FOUND', `Bank account ${input.bankAccountId} not found`);
   }
 
-  const profile = input.profile ?? (await loadProfile(tx, ctx, input.profileId));
-  const parsed = parseStatement(input.content, profile, bankAccount.currency);
+  let parsed;
+  if (input.format === 'ADVICE') {
+    parsed = parsePaymentAdvices(input.content, bankAccount.currency, {
+      ...(input.statementDate !== undefined ? { fallbackDate: input.statementDate } : {}),
+    });
+  } else {
+    const profile = input.profile ?? (await loadProfile(tx, ctx, input.profileId));
+    parsed = parseStatement(input.content, profile, bankAccount.currency);
+  }
 
   const existing = await tx<{ dedupe_hash: string; occurrence: number }[]>`
       SELECT dedupe_hash, occurrence FROM bank_transaction

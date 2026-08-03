@@ -15,7 +15,7 @@ gap nobody noticed. Each entry below is one of four things:
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
 Last reconciled against the tree: migration `0033`, 140 HTTP routes (operations in the
-generated OpenAPI document — the measured figure, not a hand count), 1,334 tests
+generated OpenAPI document — the measured figure, not a hand count), 1,341 tests
 (610 domain · 506 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
@@ -145,13 +145,24 @@ Which ledger figure lands in which box of the return.
 
 **Unblocked by:** RMCD's SST-02 form and its completion guide.
 
-### 3.7 Per-bank statement import profiles
+### 3.7 Per-bank statement import profiles — FIRST SAMPLE RECEIVED; advice format BUILT
 
-Maybank, CIMB, Public Bank and the rest each export a different CSV. `0018` requires a saved
-profile to record which real statement it was derived from.
+The owner photographed a real Maybank **payment advice** — `Label : value` layout, one
+payment per document (Our Reference / Details Of Payment / Remitting Bank — the bank
+spells it "Remiting" and the parser accepts both / Remittance Amount / Total Amount).
+`parsePaymentAdvices` (`packages/domain/src/payment-advice.ts`) reads that layout
+verbatim and produces the same `ParsedStatement` the CSV path does, so dedupe, preview,
+import, rules and matching are all shared; `format: 'ADVICE'` on the preview/import
+routes and a File-type picker on the Banking screen select it. Where the sample was
+silent the parser REFUSES rather than guesses: advices parse as MONEY IN only (the
+sample is a deposit — an outbound sample must be seen first), an undated advice is
+dated by the statement date with a violation that says so, and a Remittance/Total
+disagreement is rejected carrying both figures.
 
-**Unblocked by:** sample statement exports — the header row is enough. A guessed column map is
-precisely the plausible-but-wrong failure that explicit profiles exist to prevent.
+**Still blocked, narrower now:** the tabular side. Maybank/CIMB "transaction history"
+CSV exports — the header row of each is enough. And an OUTBOUND payment advice sample,
+to support advices for money out. A guessed column map is precisely the
+plausible-but-wrong failure that explicit profiles exist to prevent.
 
 ---
 

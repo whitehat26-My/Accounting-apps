@@ -525,6 +525,9 @@ const creditNoteSchema = z.object({
 const statementSchema = z.object({
   content: z.string().min(1),
   statementDate: isoDate,
+  // ADVICE: Maybank-style `Label : value` payment-advice documents, parsed
+  // from a real sample — no column profile involved.
+  format: z.enum(['CSV', 'ADVICE']).optional(),
   profileId: z.string().uuid().optional(),
   fileName: z.string().optional(),
   profile: z

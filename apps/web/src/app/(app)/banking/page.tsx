@@ -79,7 +79,7 @@ interface ImportResult {
 }
 
 interface PreviewResult {
-  rows: { txnDate: string; description: string; amount: WireMoney }[];
+  rows: { txnDate: string; description: string; amount: string; duplicate: boolean }[];
   violations: unknown[];
 }
 
@@ -228,6 +228,7 @@ function ImportCard({
   onImported: () => void;
 }) {
   const [content, setContent] = useState('');
+  const [format, setFormat] = useState<'CSV' | 'ADVICE'>('CSV');
   const [dateFormat, setDateFormat] = useState(DEFAULT_PROFILE.dateFormat);
   const [delimiter, setDelimiter] = useState(DEFAULT_PROFILE.delimiter);
   const [preview, setPreview] = useState<PreviewResult | null>(null);
@@ -238,11 +239,17 @@ function ImportCard({
     [account.bankName, dateFormat, delimiter],
   );
 
+  const statementDate = new Date().toISOString().slice(0, 10);
+  const parseBody =
+    format === 'ADVICE'
+      ? { content, format, statementDate }
+      : { content, format, profile, statementDate };
+
   const doPreview = useMutation({
     mutationFn: () =>
       api<PreviewResult>(`/v1/bank-accounts/${account.id}/statements/preview`, {
         method: 'POST',
-        body: { content, profile },
+        body: parseBody,
       }),
     onSuccess: (r) => {
       setPreview(r);
@@ -254,11 +261,7 @@ function ImportCard({
     mutationFn: () =>
       api<ImportResult>(`/v1/bank-accounts/${account.id}/statements`, {
         method: 'POST',
-        body: {
-          content,
-          profile,
-          statementDate: new Date().toISOString().slice(0, 10),
-        },
+        body: parseBody,
       }),
     onSuccess: (r) => {
       setResult(r);
@@ -294,28 +297,47 @@ function ImportCard({
           onChange={(e) => setContent(e.target.value)}
         />
         <div className="flex flex-wrap gap-3">
-          <Field label="Date format">
+          <Field label="File type">
             <select
               className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-              value={dateFormat}
-              onChange={(e) => setDateFormat(e.target.value)}
+              value={format}
+              onChange={(e) => setFormat(e.target.value as 'CSV' | 'ADVICE')}
             >
-              <option>DD/MM/YYYY</option>
-              <option>DD-MM-YYYY</option>
-              <option>YYYY-MM-DD</option>
+              <option value="CSV">Table — one row per transaction</option>
+              <option value="ADVICE">Payment advice — “Label : value” pages</option>
             </select>
           </Field>
-          <Field label="Separator">
-            <select
-              className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
-              value={delimiter}
-              onChange={(e) => setDelimiter(e.target.value)}
-            >
-              <option value=",">Comma</option>
-              <option value=";">Semicolon</option>
-              <option value={'\t'}>Tab</option>
-            </select>
-          </Field>
+          {format === 'CSV' ? (
+            <>
+              <Field label="Date format">
+                <select
+                  className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+                  value={dateFormat}
+                  onChange={(e) => setDateFormat(e.target.value)}
+                >
+                  <option>DD/MM/YYYY</option>
+                  <option>DD-MM-YYYY</option>
+                  <option>YYYY-MM-DD</option>
+                </select>
+              </Field>
+              <Field label="Separator">
+                <select
+                  className="rounded-md border border-neutral-300 px-2 py-1.5 text-sm"
+                  value={delimiter}
+                  onChange={(e) => setDelimiter(e.target.value)}
+                >
+                  <option value=",">Comma</option>
+                  <option value=";">Semicolon</option>
+                  <option value={'\t'}>Tab</option>
+                </select>
+              </Field>
+            </>
+          ) : (
+            <p className="max-w-sm self-end pb-2 text-xs text-neutral-500">
+              For Maybank “payment details” exports (Our Reference, Total Amount, …).
+              Incoming payments only; an advice without its own date is dated today.
+            </p>
+          )}
         </div>
         <div className="flex gap-2">
           <Button
@@ -344,9 +366,12 @@ function ImportCard({
             </p>
             {preview.rows.slice(0, 5).map((r, i) => (
               <div key={i} className="flex justify-between border-t border-neutral-200 py-1">
-                <span>{displayDate(r.txnDate)} · {r.description}</span>
-                <span className={r.amount.amount.startsWith('-') ? 'text-red-600' : 'text-emerald-700'}>
-                  {rm(r.amount.amount)}
+                <span>
+                  {displayDate(r.txnDate)} · {r.description}
+                  {r.duplicate ? ' · already held' : ''}
+                </span>
+                <span className={r.amount.startsWith('-') ? 'text-red-600' : 'text-emerald-700'}>
+                  {rm(r.amount)}
                 </span>
               </div>
             ))}

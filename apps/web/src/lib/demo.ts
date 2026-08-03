@@ -267,6 +267,41 @@ function demoParseCsv(
   return rows;
 }
 
+/** Maybank `Label : value` advices — the demo twin of the real parser. */
+function demoParseAdvice(
+  content: string,
+): { txnDate: string; description: string; amountCents: number }[] {
+  const rows: { txnDate: string; description: string; amountCents: number }[] = [];
+  let fields: Map<string, string> | null = null;
+
+  const flush = () => {
+    if (!fields) return;
+    const total = fields.get('TOTAL AMOUNT');
+    if (total === undefined || !/^\d+(\.\d+)?$/.test(total.replace(/,/g, ''))) return;
+    const details = (fields.get('DETAILS OF PAYMENT') ?? '')
+      .replace(/^PAYMENT DESCRIPTIONS\s*:\s*/i, '');
+    const remitting = fields.get('REMITTING BANK') ?? fields.get('REMITING BANK');
+    const description = [fields.get('PAYMENT REFERENCE'), details, remitting ? `FR ${remitting}` : '']
+      .filter((s) => s && s.length > 0)
+      .join(' ');
+    rows.push({ txnDate: today(), description, amountCents: cents(total.replace(/,/g, '')) });
+  };
+
+  for (const raw of content.split(/\r?\n/)) {
+    const colon = raw.indexOf(':');
+    if (colon <= 0) continue;
+    const label = raw.slice(0, colon).trim().toUpperCase();
+    const value = raw.slice(colon + 1).trim();
+    if (label === 'OUR REFERENCE') {
+      flush();
+      fields = new Map();
+    }
+    if (fields && !fields.has(label)) fields.set(label, value);
+  }
+  flush();
+  return rows;
+}
+
 /** The demo router. Same contract shape the screens already speak. */
 export function demoApi(
   path: string,
@@ -530,12 +565,14 @@ export function demoApi(
 
   const previewMatch = /^\/v1\/bank-accounts\/([^/]+)\/statements\/preview$/.exec(p);
   if (previewMatch) {
-    const input = b as { content: string; profile: Parameters<typeof demoParseCsv>[1] };
-    const rows = demoParseCsv(input.content, input.profile);
+    const input = b as { content: string; format?: string; profile: Parameters<typeof demoParseCsv>[1] };
+    const rows = input.format === 'ADVICE'
+      ? demoParseAdvice(input.content)
+      : demoParseCsv(input.content, input.profile);
     return {
       rows: rows.map((r) => ({
         txnDate: r.txnDate, description: r.description,
-        amount: { amount: dec(r.amountCents), currency: 'MYR' },
+        amount: dec(r.amountCents), duplicate: false,
       })),
       violations: rows.length === 0 ? [{ line: 1, problem: 'No rows could be read' }] : [],
     };
@@ -543,8 +580,10 @@ export function demoApi(
 
   const importMatch = /^\/v1\/bank-accounts\/([^/]+)\/statements$/.exec(p);
   if (importMatch && method === 'POST') {
-    const input = b as { content: string; profile: Parameters<typeof demoParseCsv>[1] };
-    const rows = demoParseCsv(input.content, input.profile);
+    const input = b as { content: string; format?: string; profile: Parameters<typeof demoParseCsv>[1] };
+    const rows = input.format === 'ADVICE'
+      ? demoParseAdvice(input.content)
+      : demoParseCsv(input.content, input.profile);
     if (rows.length === 0) throw { status: 422, body: { message: 'No rows could be read from this file. Check the settings against a preview.' } };
 
     const lines = store.bankLines ?? seedBankLines();
