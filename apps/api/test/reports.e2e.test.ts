@@ -424,6 +424,7 @@ describe('GET /v1/system/queues', () => {
       'outbox-sweep',
       'payment-reminders',
       'rollup-drift',
+      'weekly-digest',
     ]);
   });
 

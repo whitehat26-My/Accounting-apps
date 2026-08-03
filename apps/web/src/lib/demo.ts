@@ -312,6 +312,31 @@ export function demoApi(
     };
   }
 
+  if (p.startsWith('/v1/reports/weekly-digests')) {
+    // One sample week with a warning, so the card shows its teeth.
+    return {
+      digests: [{
+        id: 'demo-digest-1',
+        weekStart: '2026-07-20',
+        weekEnd: '2026-07-26',
+        warnCount: 1,
+        createdAt: '2026-07-27T00:05:00.000Z',
+        digest: {
+          weekStart: '2026-07-20',
+          weekEnd: '2026-07-26',
+          week: { salesNet: '11840.0000', takings: '12210.0000', grossProfit: '3552.0000',
+                  expenses: '2140.0000', daysWithSales: 6 },
+          comparedAgainstWeeks: 4,
+          flags: [
+            { code: 'OVERDUE_HEAVY', severity: 'WARN',
+              message: 'RM 7,000.00 across 2 overdue invoices — more than half the ' +
+                       "week's sales. Collections is where this week's money actually is." },
+          ],
+        },
+      }],
+    };
+  }
+
   // ---- stock ---------------------------------------------------------------
   if (p === '/v1/stock') {
     return {

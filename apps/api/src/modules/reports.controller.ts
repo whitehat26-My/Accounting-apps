@@ -11,6 +11,7 @@ import {
 import {
   cashForecast,
   cashFlowStatement,
+  listWeeklyDigests,
   equityStatement,
   generalLedger,
   generalLedgerCsv,
@@ -136,6 +137,22 @@ export class ReportsController {
         count: forecast.overduePayables.count,
       },
     };
+  }
+
+  /**
+   * The stored weekly digests, newest first. Read-only by design: digests are
+   * written by the worker once per completed week and never recomputed, so
+   * the report the owner read in July still reads the same in November.
+   */
+  @Requires('report.read')
+  @Get('reports/weekly-digests')
+  async weeklyDigests(@Req() request: FastifyRequest, @Query('limit') limit?: string) {
+    const ctx = this.ctx(request);
+    const parsed = parse(digestListSchema, { limit });
+    const rows = await withTenant(this.sql, ctx, (tx) =>
+      listWeeklyDigests(tx, ctx, parsed.limit),
+    );
+    return { digests: rows };
   }
 
   @Requires('report.read')
@@ -319,6 +336,10 @@ const classificationSchema = z.object({
   accountId: uuid,
   classification: z.enum(['OPERATING', 'INVESTING', 'FINANCING']),
   note: z.string().max(500).optional(),
+});
+
+const digestListSchema = z.object({
+  limit: z.coerce.number().int().min(1).max(52).optional(),
 });
 
 // ---------------------------------------------------------------------------

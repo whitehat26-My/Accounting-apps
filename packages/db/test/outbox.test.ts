@@ -254,6 +254,7 @@ describe('scheduledJobs', () => {
       'outbox-sweep',
       'payment-reminders',
       'rollup-drift',
+      'weekly-digest',
     ]);
     // Job names and timings only — no tenant data — which is why an ordinary
     // read grant is enough and no definer function is involved.

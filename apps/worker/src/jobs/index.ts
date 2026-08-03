@@ -8,7 +8,7 @@ import {
   type Sql,
   type TenantContext,
 } from '@emil/db';
-import { runFollowUpPass } from '@emil/db';
+import { runFollowUpPass, runWeeklyDigest } from '@emil/db';
 import type { Logger } from '../logger.js';
 
 /**
@@ -268,9 +268,52 @@ export const paymentReminders: Job = async ({ sql, log, now }) => {
   return { tenantsChecked: tenants.length, queued, cancelledAsPaid: cancelled, ownerAlerts };
 };
 
+/**
+ * The weekly digest, on a daily schedule.
+ *
+ * The scheduler speaks intervals, not calendars, so this runs every day and
+ * asks the idempotent question: "is the last completed Mon–Sun week stored?"
+ * Six mornings out of seven the answer is yes and the run is a no-op with a
+ * count of zero — which is a SUCCESSFUL run, per the contract at the top of
+ * this file. A worker down over the weekend catches up on its first run back,
+ * with no missed-week special case.
+ *
+ * The KL offset is fixed (+08:00, no DST), so the arithmetic is safe; the
+ * digest week must roll over on the shop's Monday, not UTC's.
+ */
+export const weeklyDigest: Job = async ({ sql, log, now }) => {
+  const tenants = await everyTenant(sql);
+  const klToday = new Date(now.getTime() + 8 * 3_600_000).toISOString().slice(0, 10);
+
+  let stored = 0;
+  let warnings = 0;
+
+  for (const tenantId of tenants) {
+    const ctx: TenantContext = { tenantId };
+    const result = await withTenant(sql, ctx, (tx) => runWeeklyDigest(tx, ctx, klToday));
+
+    if (result.stored) {
+      stored += 1;
+      warnings += result.warnings;
+      if (result.warnings > 0) {
+        // The whole point of the digest is that somebody hears about an odd
+        // week; until email exists (register §4.4) this log line is the bell.
+        log.warn('weekly digest stored with warnings', {
+          tenantId,
+          weekStart: result.weekStart,
+          warnings: result.warnings,
+        });
+      }
+    }
+  }
+
+  return { tenantsChecked: tenants.length, stored, warnings };
+};
+
 export const jobs: Readonly<Record<string, Job>> = {
   'rollup-drift': rollupDrift,
   'einvoice-retry': einvoiceRetry,
   'outbox-sweep': outboxSweep,
   'payment-reminders': paymentReminders,
+  'weekly-digest': weeklyDigest,
 };

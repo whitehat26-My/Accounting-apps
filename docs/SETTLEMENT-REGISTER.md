@@ -14,7 +14,7 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0031`, 135 HTTP routes, 1,308 tests
+Last reconciled against the tree: migration `0032`, 136 HTTP routes, 1,323 tests
 (610 domain · 506 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
@@ -219,9 +219,13 @@ composed, worked manually over WhatsApp today; a transport handler flips the sam
   late payer has demonstrated their timing is unknown) — they are reported separately as
   upside to chase. No probability modelling, no seasonality: only dated commitments, because
   a plausible wrong forecast is worse than an explicit gap.
-- **Weekly digest ("anything off?")** — NOT STARTED, buildable now: worker job compiling
-  the week's takings/expenses/unpaid + anomaly flags, stored as a report; emailed when
-  §4.4 unblocks.
+- **Weekly digest ("anything off?") — BUILT** (`0032`, `packages/domain/src/weekly-digest.ts`,
+  `packages/db/src/weekly-digest-data.ts`, `GET /v1/reports/weekly-digests`, Today-page
+  card). Daily idempotent worker job stores each completed Mon–Sun week ONCE — the report
+  the owner read in July still reads the same in November — with flags against the trailing
+  four weeks: REVENUE_DOWN/UP, EXPENSE_SPIKE, MARGIN_DIP, QUIET_WEEK, OVERDUE_HEAVY. All
+  comparisons are exact bigint cross-multiplication; thresholds deliberately blunt so a
+  flag means "genuinely unusual". Emailed when §4.4 unblocks; same rows either way.
 - **Bank auto-categorisation rules** — NOT STARTED: payee/narrative → account rules
   applied at statement import, on top of the existing matching engine.
 - **Inbound email monitoring (contract → invoice draft)** — BLOCKED: needs the owner's
