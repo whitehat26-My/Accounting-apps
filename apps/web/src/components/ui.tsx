@@ -74,13 +74,30 @@ export function Card({
 }) {
   return (
     <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+      {/*
+        `flex-wrap` on the header for the phone: several cards put date pickers
+        or a filter in `action`, and on a 390px screen a title plus two date
+        inputs cannot sit on one line — unwrapped they were clipped at the card
+        edge and forced the whole page to render zoomed out. Wrapping drops the
+        action onto its own line instead. `min-w-0` lets the title shrink rather
+        than pushing the action out of the card.
+      */}
       {title ? (
-        <div className="flex items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
-          <h2 className="text-sm font-semibold text-slate-900">{title}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
+          <h2 className="min-w-0 text-sm font-semibold text-slate-900">{title}</h2>
           {action ?? null}
         </div>
       ) : null}
-      <div className="p-5">{children}</div>
+      {/*
+        `overflow-x-auto` is what makes this usable on a phone. Every data table
+        in the app lives in a Card and is `w-full` with five to eight columns of
+        figures — on a 390px screen that is wider than the viewport, and without
+        a scroll container here the whole PAGE scrolls sideways instead of the
+        table. Contained, the table scrolls within its own card and the page
+        never moves. Safe to put on the body rather than around each table: no
+        card contains an absolutely-positioned popover that would be clipped.
+      */}
+      <div className="overflow-x-auto p-5">{children}</div>
     </div>
   );
 }
