@@ -178,7 +178,9 @@ const HELP: Record<string, { title: string; steps: string[] }> = {
     title: 'Settings',
     steps: [
       'The chart of accounts — where each kind of money is filed.',
+      'Opening balances: what the shop already had and owed on day one. Do this once, early — without it every report describes only the weeks since you started.',
       'Tax codes with dated rates; changing a rate needs the legal reference.',
+      'Periods: close a month so nothing new lands in it; close the year to move profit to retained earnings.',
     ],
   },
 };

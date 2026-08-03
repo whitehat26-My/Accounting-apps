@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { displayDate } from '@/lib/display';
+import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
 
@@ -74,9 +74,145 @@ export default function SettingsPage() {
       </Card>
 
       <ChartCard canAdd={manages} />
+      {can(me.data, 'journal.post') ? <OpeningBalancesCard /> : null}
       <TaxCard canAdd={writesTax} />
       <PeriodsCard canLock={can(me.data, 'period.lock')} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+interface StatableAccount {
+  id: string;
+  code: string;
+  name: string;
+  type: 'ASSET' | 'LIABILITY' | 'EQUITY';
+}
+
+interface ControlledAccount {
+  code: string;
+  name: string;
+  role: string;
+  guidance: string;
+}
+
+/**
+ * Opening balances — where the shop stood the day it started using this.
+ *
+ * The refused accounts are shown, greyed, with the reason. A form that simply
+ * omitted them would enforce the rule; showing them explains it, and the
+ * explanation is the part that stops somebody trying to work around it later.
+ */
+function OpeningBalancesCard() {
+  const queryClient = useQueryClient();
+  const [asOfDate, setAsOfDate] = useState(todayIso());
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
+  const [posted, setPosted] = useState<{ entryNo: string; figure: string; side: string } | null>(null);
+
+  const accounts = useQuery({
+    queryKey: ['opening-accounts'],
+    queryFn: () =>
+      api<{ statable: StatableAccount[]; controlled: ControlledAccount[] }>(
+        '/v1/opening-balances/accounts',
+      ),
+  });
+
+  const post = useMutation({
+    mutationFn: () =>
+      api<{ entryNo: string; balancingFigure: string; balancingSide: string }>(
+        '/v1/opening-balances',
+        {
+          method: 'POST',
+          body: {
+            asOfDate,
+            balances: Object.entries(amounts)
+              .filter(([, amount]) => amount.trim() !== '')
+              .map(([accountId, amount]) => ({ accountId, amount: amount.trim() })),
+          },
+        },
+      ),
+    onSuccess: (saved) => {
+      setPosted({ entryNo: saved.entryNo, figure: saved.balancingFigure, side: saved.balancingSide });
+      setAmounts({});
+      void queryClient.invalidateQueries();
+    },
+  });
+
+  const filled = Object.values(amounts).filter((a) => a.trim() !== '').length;
+
+  return (
+    <Card title="Opening balances — where the shop stood on day one">
+      {accounts.data ? (
+        <div className="space-y-4">
+          <p className="text-xs text-slate-500">
+            Nobody starts trading the day they start an accounting system. State what the
+            shop already had and owed, and the difference is recorded as accumulated worth —
+            you never type the balancing figure, it is worked out.
+          </p>
+
+          <Field label="As at (the day before you started using this)">
+            <Input
+              type="date"
+              className="!w-44"
+              value={asOfDate}
+              onChange={(e) => setAsOfDate(e.target.value)}
+            />
+          </Field>
+
+          <div className="space-y-1.5">
+            {accounts.data.statable.map((account) => (
+              <div key={account.id} className="flex items-center gap-3">
+                <span className="w-14 shrink-0 font-mono text-xs text-slate-400">
+                  {account.code}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-sm">{account.name}</span>
+                <Input
+                  className="!w-32 text-right"
+                  placeholder="0.00"
+                  inputMode="decimal"
+                  value={amounts[account.id] ?? ''}
+                  onChange={(e) =>
+                    setAmounts((all) => ({ ...all, [account.id]: e.target.value }))
+                  }
+                />
+              </div>
+            ))}
+          </div>
+
+          {accounts.data.controlled.length > 0 ? (
+            <div className="space-y-2 rounded-xl bg-slate-50 p-3">
+              <p className="text-xs font-medium text-slate-600">
+                These three are not entered here, on purpose:
+              </p>
+              {accounts.data.controlled.map((account) => (
+                <div key={account.code} className="text-xs text-slate-500">
+                  <span className="font-mono text-slate-400">{account.code}</span>{' '}
+                  <span className="font-medium text-slate-600">{account.name}</span>
+                  <span> — {account.guidance}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          <ErrorNote error={post.error} />
+          {posted ? (
+            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 ring-1 ring-inset ring-emerald-200">
+              Recorded as {posted.entryNo}. {rm(posted.figure)} was{' '}
+              {posted.side === 'CREDIT' ? 'credited to' : 'debited from'} Opening Balances —
+              that is what the shop was worth. If it is not roughly what you expected,
+              something above was mistyped.
+            </p>
+          ) : null}
+
+          <Button onClick={() => post.mutate()} disabled={filled === 0 || post.isPending}>
+            {post.isPending ? 'Recording…' : `Record ${filled || ''} opening balance${filled === 1 ? '' : 's'}`}
+          </Button>
+        </div>
+      ) : (
+        <Skeleton />
+      )}
+    </Card>
   );
 }
 

@@ -95,6 +95,7 @@ interface DemoStore {
   journalSeq?: number;
   periods?: DemoPeriod[];
   fyClosed?: boolean;
+  openingPosted?: boolean;
 }
 
 interface DemoJournalEntry {
@@ -337,6 +338,10 @@ function uid(): string {
 const ACCOUNTS = [
   { id: 'acc-1000', code: '1000', name: 'Cash and Bank', type: 'ASSET' },
   { id: 'acc-1200', code: '1200', name: 'Undeposited Funds', type: 'ASSET' },
+  // A liability and an equity account so the opening-balance card has
+  // something to net against — a shop with a van usually has both.
+  { id: 'acc-2500', code: '2500', name: 'Hire Purchase — van', type: 'LIABILITY' },
+  { id: 'acc-3100', code: '3100', name: 'Opening Balances', type: 'EQUITY' },
   { id: 'acc-4000', code: '4000', name: 'Sales Revenue', type: 'INCOME' },
   { id: 'acc-5000', code: '5000', name: 'Cost of Sales', type: 'EXPENSE' },
   { id: 'acc-6000', code: '6000', name: 'Utilities', type: 'EXPENSE' },
@@ -1294,6 +1299,57 @@ export function demoApi(
     ];
     const module = url.searchParams.get('sourceModule');
     return { entries: module ? entries.filter((e) => e.sourceModule === module) : entries, truncated: false };
+  }
+
+  if (p === '/v1/opening-balances/accounts') {
+    return {
+      statable: [...ACCOUNTS, ...(store.extraAccounts ?? [])]
+        .filter((a) => ['ASSET', 'LIABILITY', 'EQUITY'].includes(a.type))
+        // 3100 is where the difference LANDS, so it can never be stated as a
+        // balance — the real read model drops it for the same reason, and the
+        // demo has to agree or it teaches the wrong thing. 1300 Inventory is
+        // control-owned and appears in the refused list below instead.
+        .filter((a) => a.code !== '3100' && a.code !== '1300'),
+      controlled: [
+        { code: '1100', name: 'Accounts Receivable', role: 'AR',
+          guidance: 'Money customers already owe you is entered as the unpaid invoices themselves, on the Sales screen — otherwise there is no invoice to settle when they pay.' },
+        { code: '2000', name: 'Accounts Payable', role: 'AP',
+          guidance: 'Money you already owe suppliers is entered as the unpaid bills themselves, on the Purchases screen — otherwise there is no bill to pay.' },
+        { code: '1300', name: 'Inventory on Hand', role: 'INVENTORY',
+          guidance: 'Stock already on the shelf is entered as a stock adjustment per item, on the Stock screen — that is also what establishes each item’s average cost, which the first sale needs.' },
+      ],
+      equityCode: '3100',
+    };
+  }
+
+  if (p === '/v1/opening-balances' && method === 'POST') {
+    const input = b as { balances: { accountId: string; amount: string }[] };
+    const all = [...ACCOUNTS, ...(store.extraAccounts ?? [])];
+    let debits = 0;
+    let credits = 0;
+    for (const balance of input.balances) {
+      const account = all.find((a) => a.id === balance.accountId);
+      if (!account) throw demoError(404, `No account ${balance.accountId}`);
+      const amount = cents(balance.amount);
+      if (account.type === 'ASSET') debits += amount;
+      else credits += amount;
+    }
+    const difference = debits - credits;
+    store.openingPosted = true;
+    save(store);
+    return {
+      journalEntryId: uid(),
+      entryNo: `JE-${String(store.journalSeq ?? 103).padStart(6, '0')}`,
+      balancingFigure: dec(Math.abs(difference)),
+      balancingSide: difference < 0 ? 'DEBIT' : 'CREDIT',
+      replayed: false,
+    };
+  }
+
+  if (p === '/v1/opening-balances/gaps') {
+    // The seeded demo bank account carries no opening balance, so there is
+    // nothing to warn about — which is also the correct steady state.
+    return { gaps: [] };
   }
 
   if (p === '/v1/journals/suggest-pair') {

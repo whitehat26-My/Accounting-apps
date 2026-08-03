@@ -107,7 +107,7 @@ THE APP'S SCREENS
 - Journals: the journal book, and manual entries (accruals, corrections) for the accountant.
 - Team: who works here and what role each holds.
 - Audit: every change ever made — who, when, from where — on a tamper-evident chain.
-- Settings: chart of accounts, tax codes, period lock and year-end close.
+- Settings: chart of accounts, opening balances (what the shop had and owed on day one), tax codes, period lock and year-end close.
 `;
 
 function systemPrompt(snapshot: string, screen: string | undefined): string {

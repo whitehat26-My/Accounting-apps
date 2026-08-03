@@ -14,9 +14,9 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0033`, 145 HTTP routes (operations in the
-generated OpenAPI document — the measured figure, not a hand count), 1,355 tests
-(633 domain · 516 db · 168 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0033`, 148 HTTP routes (operations in the
+generated OpenAPI document — the measured figure, not a hand count), 1,374 tests
+(644 domain · 516 db · 176 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
 **The AUTOMATION track (started 2026-08-02):** the target is the full
@@ -450,6 +450,43 @@ deuteranopia ΔE 8.6 and normal-vision ΔE 32.0, both clear of the floors — an
 is carried by the minus and the label regardless. Dark mode is deliberately NOT
 attempted: the app has none, and an automatic flip of a validated light palette is
 exactly what the method says not to ship.
+
+### 5.8 Opening balances — BUILT (`packages/domain/src/opening-balance.ts`)
+
+**A defect found by reading the code, not by a failing test.** `createBankAccount` stores
+`opening_balance` on the bank account, and `reconcileAccount` adds it to the STATEMENT
+side of the comparison while the BOOK side comes from the ledger. So a shop that typed
+its real balance when adding its Maybank account, and never posted a matching opening
+entry, had a permanent variance: sign-off refused forever — correctly — with the screen
+able to say only that the difference was "a missing entry, a duplicate, or a wrong
+amount", none of which described what had happened. The refusal was right and the
+explanation was unreachable.
+
+`POST /v1/opening-balances` (journal.post) states the position: each real balance, with
+the difference falling to the **Opening Balances** equity account by construction. The
+balancing figure is computed and reported back — never typed — so a shop owner who
+states RM 18,540 of cash against a RM 30,000 loan is shown "RM 11,460 debited" and can
+recognise it, or spot that they mistyped. The entry goes through `validateJournalEntry`
+into `postJournalEntry` like every other, idempotent on the key.
+
+**The refusals are the feature.** Receivables, payables and inventory are refused BY
+NAME, each with the route that does it properly (unpaid invoices on Sales, unpaid bills
+on Purchases, a stock adjustment per item). Their balances are the sum of a subledger
+that the system checks continuously — invariant #6 and the stock check — so a lump sum
+posted straight to one of them balances the entry and breaks the invariant in the same
+instant, permanently and unattributably: no invoice to settle, no bill to pay, no item
+to sell. `GET /v1/opening-balances/accounts` is a purpose-built read model returning
+what may be stated AND what may not with its reason, so the form shows the refusals
+greyed and explained rather than silently omitting them.
+
+`GET /v1/opening-balances/gaps` (bank.read) is the defect's antidote: it names each bank
+account whose stated opening the ledger never heard of, both figures, and the fix — and
+the Banking screen shows it inline exactly where the unexplained variance appears. An
+e2e test drives the whole trap: set up an account with an opening balance, assert the
+gap is reported, post the difference, assert it goes quiet.
+
+11 domain tests including a property that any combination of assets, liabilities and
+equity still yields an entry `validateJournalEntry` accepts; 8 API e2e.
 
 ### 5.7 The in-app assistant — BUILT; live replies BLOCKED ON `ANTHROPIC_API_KEY`
 

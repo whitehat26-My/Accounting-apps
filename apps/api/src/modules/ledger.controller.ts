@@ -14,7 +14,10 @@ import {
   listFiscalYears,
   listPeriods,
   loadBaseCurrency,
+  openingBalanceAccounts,
+  openingBalanceGaps,
   postJournalEntry,
+  postOpeningBalances,
   reopenFiscalYear,
   receivablesAtClosingRate,
   runRevaluation,
@@ -310,6 +313,54 @@ export class LedgerController {
     return { suggestion };
   }
 
+  // ---- Opening balances ----------------------------------------------------
+
+  /**
+   * State where the shop stood the day it started using this.
+   *
+   * `journal.post`, because that is exactly what it does — one balanced entry
+   * through the same path as every invoice, with the difference falling to the
+   * Opening Balances equity account. Control accounts are refused by the
+   * service, not here: a rule enforced only at the edge is one an API key
+   * walks past.
+   */
+  @Requires('journal.post')
+  @Doc({ request: () => openingBalancesSchema })
+  @Post('opening-balances')
+  async openingBalances(
+    @Body() body: unknown,
+    @Headers('idempotency-key') idempotencyKey: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = parse(openingBalancesSchema, body);
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      postOpeningBalances(tx, ctx, { ...input, idempotencyKey }),
+    );
+  }
+
+  /** What the opening-balance form may offer, and what it must explain away. */
+  @Requires('journal.read')
+  @Get('opening-balances/accounts')
+  async openingAccounts(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => openingBalanceAccounts(tx, ctx));
+  }
+
+  /**
+   * Bank accounts whose stated opening balance the ledger never heard of.
+   *
+   * `bank.read` rather than a reporting permission: this is a fact about a
+   * bank account, and it is read by the screen where the symptom appears.
+   */
+  @Requires('bank.read')
+  @Get('opening-balances/gaps')
+  async openingGaps(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    const gaps = await withTenant(this.sql, ctx, (tx) => openingBalanceGaps(tx, ctx));
+    return { gaps };
+  }
+
   // ---- Period-end revaluation ---------------------------------------------
 
   /**
@@ -475,6 +526,14 @@ const journalSchema = z.object({
     // Two lines is the minimum that can balance. One is always wrong, and
     // catching it here gives a better message than the trigger would.
     .min(2),
+});
+
+const openingBalancesSchema = z.object({
+  asOfDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD'),
+  balances: z
+    .array(z.object({ accountId: z.string().uuid(), amount: decimal }))
+    .min(1)
+    .max(200),
 });
 
 const suggestPairSchema = z.object({

@@ -671,6 +671,13 @@ function LineRow({
 
 // ---------------------------------------------------------------------------
 
+interface OpeningGap {
+  bankAccountId: string;
+  bankAccountName: string;
+  openingDate: string | null;
+  message: string;
+}
+
 interface ReconciliationView {
   asOfDate: string;
   adjustedBankBalance: string;
@@ -696,6 +703,12 @@ function ReconcileCard({ account }: { account: BankAccount }) {
     queryFn: () =>
       api<ReconciliationView>(`/v1/bank-accounts/${account.id}/reconciliation?asOf=${asOf}`),
   });
+
+  const gaps = useQuery({
+    queryKey: ['opening-gaps'],
+    queryFn: () => api<{ gaps: OpeningGap[] }>('/v1/opening-balances/gaps'),
+  });
+  const gap = gaps.data?.gaps.find((g) => g.bankAccountId === account.id);
 
   const signOff = useMutation({
     mutationFn: () =>
@@ -733,11 +746,22 @@ function ReconcileCard({ account }: { account: BankAccount }) {
               <span>{rm(r.variance)}</span>
             </div>
             {!r.reconciles ? (
-              <p className="text-xs text-slate-500">
-                A non-zero difference means a missing entry, a duplicate, or a wrong
-                amount — work the “to sort” list above until this reads RM 0.00.
-                Sign-off is refused until it does.
-              </p>
+              <>
+                {/* The one cause the generic advice below cannot describe: the
+                    account was set up with an opening balance the ledger never
+                    heard of, so no amount of matching will ever close it. */}
+                {gap ? (
+                  <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                    {gap.message} Record it under <strong>Settings → Opening balances</strong>,
+                    dated {gap.openingDate ? displayDate(gap.openingDate) : 'the day you started'}.
+                  </p>
+                ) : null}
+                <p className="text-xs text-slate-500">
+                  A non-zero difference means a missing entry, a duplicate, or a wrong
+                  amount — work the “to sort” list above until this reads RM 0.00.
+                  Sign-off is refused until it does.
+                </p>
+              </>
             ) : null}
             {r.reconciles && !signedOff ? (
               <Button onClick={() => signOff.mutate()} disabled={signOff.isPending}>
