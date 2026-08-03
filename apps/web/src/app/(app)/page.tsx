@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
 import { Card } from '@/components/ui';
+import { can, useMe } from '@/lib/me';
 
 /**
  * Today: the Z-report as a screen.
@@ -45,22 +46,31 @@ interface Takings {
 
 export default function TodayPage() {
   const date = todayIso();
+  const me = useMe();
+  // Each block asks for exactly what its API call requires, so a cashier's
+  // Today is the till and a technician's is a calm empty page — no 403 noise.
+  const seesTakings = can(me.data, 'pos.sale');
+  const seesMoney = can(me.data, 'report.read');
+
   const takings = useQuery({
     queryKey: ['takings', date],
     queryFn: () => api<Takings>(`/v1/pos/takings?date=${date}`),
     refetchInterval: 60_000,
+    enabled: seesTakings,
   });
 
   const forecast = useQuery({
     queryKey: ['cash-forecast'],
     queryFn: () => api<Forecast>('/v1/reports/cash-forecast'),
     refetchInterval: 300_000,
+    enabled: seesMoney,
   });
 
   const digests = useQuery({
     queryKey: ['weekly-digests'],
     queryFn: () => api<DigestList>('/v1/reports/weekly-digests?limit=1'),
     refetchInterval: 3_600_000,
+    enabled: seesMoney,
   });
 
   const t = takings.data;
@@ -71,13 +81,24 @@ export default function TodayPage() {
     <div className="space-y-4">
       <h1 className="text-xl font-bold">Today — {displayDate(date)}</h1>
 
-      <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat label="Takings" value={t ? rm(t.receiptsTotal) : '—'} />
-        <Stat label="Sales" value={t ? `${t.invoiceCount}` : '—'} />
-        <Stat label="Cost of goods" value={t ? rm(t.costOfGoodsSold) : '—'} />
-        <Stat label="Gross profit" value={t ? rm(t.grossProfit) : '—'} highlight />
-      </div>
+      {seesTakings ? (
+        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+          <Stat label="Takings" value={t ? rm(t.receiptsTotal) : '—'} />
+          <Stat label="Sales" value={t ? `${t.invoiceCount}` : '—'} />
+          <Stat label="Cost of goods" value={t ? rm(t.costOfGoodsSold) : '—'} />
+          <Stat label="Gross profit" value={t ? rm(t.grossProfit) : '—'} highlight />
+        </div>
+      ) : null}
 
+      {!seesTakings && !seesMoney && me.data ? (
+        <Card>
+          <p className="text-sm text-neutral-500">
+            Welcome. Your work lives in the sections on the left.
+          </p>
+        </Card>
+      ) : null}
+
+      {seesMoney ? (
       <Card title="Cash — today and ahead">
         {f ? (
           <div className="space-y-3">
@@ -123,7 +144,9 @@ export default function TodayPage() {
           <p className="text-sm text-neutral-500">Loading…</p>
         )}
       </Card>
+      ) : null}
 
+      {seesMoney ? (
       <Card title="Last week — anything off?">
         {d ? (
           <div className="space-y-3">
@@ -170,7 +193,9 @@ export default function TodayPage() {
           </p>
         )}
       </Card>
+      ) : null}
 
+      {seesTakings ? (
       <Card title="Drawer — by payment method">
         {t && t.byMethod.length > 0 ? (
           <table className="w-full text-sm">
@@ -189,6 +214,7 @@ export default function TodayPage() {
           <p className="text-sm text-neutral-500">Nothing taken yet today.</p>
         )}
       </Card>
+      ) : null}
     </div>
   );
 }

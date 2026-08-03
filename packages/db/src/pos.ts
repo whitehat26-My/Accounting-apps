@@ -202,6 +202,78 @@ export interface DailyTakings {
   readonly grossProfit: string;
 }
 
+export interface TakingsSeriesPoint {
+  readonly date: string;
+  readonly receipts: string;
+  readonly invoiced: string;
+  readonly grossProfit: string;
+}
+
+/**
+ * The chart behind the Z-report: one point per calendar day, ZERO DAYS
+ * INCLUDED. A chart that skips quiet days flatters the month — the gap is the
+ * information.
+ */
+export async function dailyTakingsSeries(
+  tx: Tx,
+  ctx: TenantContext,
+  from: string,
+  to: string,
+): Promise<TakingsSeriesPoint[]> {
+  const receipts = await tx<{ day: Date; total: string }[]>`
+      SELECT payment_date AS day, SUM(amount)::text AS total
+        FROM payment
+       WHERE tenant_id = ${ctx.tenantId} AND direction = 'INBOUND'
+         AND payment_date BETWEEN ${from}::date AND ${to}::date
+       GROUP BY payment_date
+  `;
+
+  const invoiced = await tx<{ day: Date; total: string }[]>`
+      SELECT issue_date AS day, SUM(subtotal)::text AS total
+        FROM invoice
+       WHERE tenant_id = ${ctx.tenantId} AND status <> 'VOIDED'
+         AND issue_date BETWEEN ${from}::date AND ${to}::date
+       GROUP BY issue_date
+  `;
+
+  const cogs = await tx<{ day: Date; total: string }[]>`
+      SELECT e.entry_date AS day, SUM(l.base_debit - l.base_credit)::text AS total
+        FROM journal_line l
+        JOIN journal_entry e ON e.tenant_id = l.tenant_id AND e.id = l.journal_entry_id
+        JOIN posting_account_map m
+          ON m.tenant_id = l.tenant_id AND m.account_id = l.account_id AND m.role = 'COGS'
+       WHERE l.tenant_id = ${ctx.tenantId}
+         AND e.source_document_type = 'INVOICE_COGS'
+         AND e.entry_date BETWEEN ${from}::date AND ${to}::date
+         AND e.status IN ('POSTED', 'REVERSED')
+       GROUP BY e.entry_date
+  `;
+
+  const byDay = (rows: { day: Date; total: string }[]) =>
+    new Map(rows.map((r) => [toIsoDate(r.day), r.total]));
+  const receiptMap = byDay(receipts);
+  const invoiceMap = byDay(invoiced);
+  const cogsMap = byDay(cogs);
+
+  const points: TakingsSeriesPoint[] = [];
+  const cursor = new Date(`${from}T00:00:00Z`);
+  const end = new Date(`${to}T00:00:00Z`);
+  while (cursor <= end) {
+    const date = cursor.toISOString().slice(0, 10);
+    const revenue = Money.fromDecimal(invoiceMap.get(date) ?? '0', 'MYR');
+    const cost = Money.fromDecimal(cogsMap.get(date) ?? '0', 'MYR');
+    points.push({
+      date,
+      receipts: Money.fromDecimal(receiptMap.get(date) ?? '0', 'MYR').toDecimalString(),
+      invoiced: revenue.toDecimalString(),
+      grossProfit: revenue.subtract(cost).toDecimalString(),
+    });
+    cursor.setUTCDate(cursor.getUTCDate() + 1);
+  }
+
+  return points;
+}
+
 export async function dailyTakings(
   tx: Tx,
   ctx: TenantContext,

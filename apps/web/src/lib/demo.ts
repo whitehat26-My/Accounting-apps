@@ -81,7 +81,25 @@ interface DemoStore {
   jobs: DemoJob[];
   invoiceSeq: number;
   jobSeq: number;
+  members?: DemoMember[];
 }
+
+interface DemoMember {
+  membershipId: string;
+  userId: string;
+  email: string;
+  fullName: string;
+  role: string;
+  status: string;
+}
+
+const DEMO_TEAM: DemoMember[] = [
+  { membershipId: 'mem-1', userId: 'demo-user', email: 'boss@shop.my', fullName: 'The Boss', role: 'OWNER', status: 'ACTIVE' },
+  { membershipId: 'mem-2', userId: 'u-cashier', email: 'cashier@shop.my', fullName: 'Aina (counter)', role: 'SALES', status: 'ACTIVE' },
+  { membershipId: 'mem-3', userId: 'u-tech1', email: 'tech1@shop.my', fullName: 'Farid (bench)', role: 'TECHNICIAN', status: 'ACTIVE' },
+  { membershipId: 'mem-4', userId: 'u-tech2', email: 'tech2@shop.my', fullName: 'Wei Jian (bench)', role: 'TECHNICIAN', status: 'ACTIVE' },
+  { membershipId: 'mem-5', userId: 'u-acct', email: 'accounts@shop.my', fullName: 'Siti (accounts)', role: 'ACCOUNTANT', status: 'ACTIVE' },
+];
 
 const STORE_KEY = 'emil.demo.store';
 
@@ -174,6 +192,31 @@ export function demoApi(
   const p = url.pathname;
 
   // ---- auth & onboarding ---------------------------------------------------
+  if (p === '/v1/auth/me') {
+    return {
+      userId: 'demo-user',
+      tenantId: 'demo-tenant',
+      role: 'OWNER',
+      permissions: [
+        'pos.sale', 'repair.read', 'repair.write', 'item.read', 'item.write',
+        'stock.read', 'stock.adjust', 'report.read', 'user.read', 'user.manage',
+        'invoice.read', 'invoice.create', 'contact.read', 'contact.write',
+      ],
+    };
+  }
+  if (p === '/v1/auth/members' && method === 'GET') {
+    return { members: store.members ?? DEMO_TEAM };
+  }
+  if (p === '/v1/auth/members' && method === 'POST') {
+    const input = b as { email: string; role: string };
+    store.members = [
+      ...(store.members ?? DEMO_TEAM),
+      { membershipId: uid(), userId: uid(), email: input.email,
+        fullName: input.email.split('@')[0] ?? input.email, role: input.role,
+        status: 'ACTIVE' },
+    ];
+    return { id: uid() };
+  }
   if (p === '/v1/auth/register') return {};
   if (p === '/v1/auth/login') {
     return {
@@ -312,29 +355,57 @@ export function demoApi(
     };
   }
 
+  if (p.startsWith('/v1/reports/daily-takings')) {
+    // A plausible fortnight for a RM 50-60k/month shop: quiet Mondays, busy
+    // weekends, one closed day. Fixed values so the chart is stable.
+    const takingsPattern = [1850, 2400, 2150, 3100, 4200, 4850, 0, 1620, 2300, 2750, 2900, 3800, 5100, 2450];
+    const points = takingsPattern.map((ringgit, i) => {
+      const d = new Date(`${today()}T00:00:00Z`);
+      d.setUTCDate(d.getUTCDate() - (takingsPattern.length - 1 - i));
+      const date = d.toISOString().slice(0, 10);
+      return {
+        date,
+        receipts: dec(ringgit * 100),
+        invoiced: dec(ringgit * 100),
+        grossProfit: dec(Math.floor(ringgit * 0.32) * 100),
+      };
+    });
+    return { from: points[0]!.date, to: points[points.length - 1]!.date, points };
+  }
+
   if (p.startsWith('/v1/reports/weekly-digests')) {
-    // One sample week with a warning, so the card shows its teeth.
-    return {
-      digests: [{
-        id: 'demo-digest-1',
-        weekStart: '2026-07-20',
-        weekEnd: '2026-07-26',
-        warnCount: 1,
-        createdAt: '2026-07-27T00:05:00.000Z',
+    // Eight sample weeks, newest first — the latest carries a warning so the
+    // Today card shows its teeth, and the trend has a shape worth drawing.
+    const weeklySales = [11840, 13650, 12980, 12100, 14400, 11250, 13900, 12600];
+    const digests = weeklySales.map((ringgit, i) => {
+      const start = new Date(`${today()}T00:00:00Z`);
+      start.setUTCDate(start.getUTCDate() - start.getUTCDay() - 6 - 7 * i);
+      const weekStart = start.toISOString().slice(0, 10);
+      const end = new Date(start);
+      end.setUTCDate(end.getUTCDate() + 6);
+      return {
+        id: `demo-digest-${i + 1}`,
+        weekStart,
+        weekEnd: end.toISOString().slice(0, 10),
+        warnCount: i === 0 ? 1 : 0,
+        createdAt: `${weekStart}T00:05:00.000Z`,
         digest: {
-          weekStart: '2026-07-20',
-          weekEnd: '2026-07-26',
-          week: { salesNet: '11840.0000', takings: '12210.0000', grossProfit: '3552.0000',
-                  expenses: '2140.0000', daysWithSales: 6 },
+          weekStart,
+          weekEnd: end.toISOString().slice(0, 10),
+          week: { salesNet: dec(ringgit * 100), takings: dec(Math.floor(ringgit * 1.02) * 100),
+                  grossProfit: dec(Math.floor(ringgit * 0.3) * 100),
+                  expenses: dec(Math.floor(ringgit * 0.18) * 100), daysWithSales: 6 },
           comparedAgainstWeeks: 4,
-          flags: [
-            { code: 'OVERDUE_HEAVY', severity: 'WARN',
-              message: 'RM 7,000.00 across 2 overdue invoices — more than half the ' +
-                       "week's sales. Collections is where this week's money actually is." },
-          ],
+          flags: i === 0
+            ? [{ code: 'OVERDUE_HEAVY', severity: 'WARN',
+                 message: 'RM 7,000.00 across 2 overdue invoices — more than half the ' +
+                          "week's sales. Collections is where this week's money actually is." }]
+            : [],
         },
-      }],
-    };
+      };
+    });
+    const limitMatch = /limit=(\d+)/.exec(p);
+    return { digests: digests.slice(0, limitMatch ? Number(limitMatch[1]) : digests.length) };
   }
 
   // ---- stock ---------------------------------------------------------------

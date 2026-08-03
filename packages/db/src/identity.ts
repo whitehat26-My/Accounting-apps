@@ -441,6 +441,47 @@ export async function principalFor(
   return resolved.ok ? resolved.principal : undefined;
 }
 
+export interface TenantMember {
+  readonly membershipId: string;
+  readonly userId: string;
+  readonly email: string;
+  readonly fullName: string;
+  readonly role: RoleCode;
+  readonly status: string;
+  readonly expiresAt: string | null;
+  readonly joinedAt: string | null;
+}
+
+/** The team page: everyone with access to the current organisation. */
+export async function listMembers(tx: Tx): Promise<TenantMember[]> {
+  const rows = await tx<
+    { membership_id: string; user_id: string; email: string; full_name: string;
+      role_code: RoleCode; status: string; expires_at: Date | null;
+      joined_at: Date | null }[]
+  >`
+      SELECT * FROM members_of_current_tenant()
+  `;
+
+  return rows.map((r) => ({
+    membershipId: r.membership_id,
+    userId: r.user_id,
+    email: r.email,
+    fullName: r.full_name,
+    role: r.role_code,
+    status: r.status,
+    expiresAt: r.expires_at ? r.expires_at.toISOString() : null,
+    joinedAt: r.joined_at ? r.joined_at.toISOString() : null,
+  }));
+}
+
+/** "Add my cashier by email." Undefined when no active user holds it. */
+export async function userIdForEmail(tx: Tx, email: string): Promise<string | undefined> {
+  const [row] = await tx<{ user_id_for_email: string | null }[]>`
+      SELECT user_id_for_email(${email})
+  `;
+  return row?.user_id_for_email ?? undefined;
+}
+
 export interface AddMemberInput {
   readonly userId: string;
   readonly role: RoleCode;

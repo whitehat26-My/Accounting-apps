@@ -11,7 +11,7 @@ import {
   updateBankRule,
 } from '../src/bank-rules.js';
 import { unmatch } from '../src/reconciliation.js';
-import { createTestDatabase, seedTenant, type Tenant } from './helpers.js';
+import { createTestDatabase, seedTenant } from './helpers.js';
 
 /**
  * Bank rules against real statements: TNB codes itself to the expense
@@ -170,11 +170,11 @@ describe('bank rules', () => {
     expect(third.applied).toHaveLength(1);
     expect(third.applied[0]!.journalEntryId).toBe(first.applied[0]!.journalEntryId);
 
-    const [{ count }] = await admin<{ count: number }[]>`
+    const [entryCount] = await admin<{ count: number }[]>`
         SELECT COUNT(*)::int AS count FROM journal_entry
          WHERE tenant_id = ${ctx.tenantId} AND source_document_type = 'BANK_TRANSACTION'
     `;
-    expect(count).toBe(1);
+    expect(entryCount!.count).toBe(1);
   });
 
   it('a disabled rule stops firing; re-enabling brings it back', async () => {

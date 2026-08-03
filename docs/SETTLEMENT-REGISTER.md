@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0032`, 138 HTTP routes (operations in the
-generated OpenAPI document — the measured figure, not a hand count), 1,330 tests
+Last reconciled against the tree: migration `0033`, 140 HTTP routes (operations in the
+generated OpenAPI document — the measured figure, not a hand count), 1,334 tests
 (610 domain · 506 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
@@ -320,6 +320,27 @@ system until collection. WIP accounting (Dr WIP / Cr Inventory at fitting, Dr CO
 WIP at invoice) is the honest treatment for week-scale jobs and is future work; for
 same-week repairs the WIP balance rounds to noise. Also not in the slice: customer
 notification on READY (waits on §4.4 email), and a printed job sheet (waits on §4.5 PDF).
+
+### 5.6 The five-person shop — team, role-aware screens, charts — BUILT (`0033`)
+
+The owner's actual staffing: boss (OWNER), cashier (SALES), two technicians
+(**TECHNICIAN, new in 0033** — repairs, parts and stock levels, NOTHING with a ringgit
+sign: no pos.sale, no invoice.read, no report.read, no stock.adjust), and a
+technician-accountant (ACCOUNTANT). Ranks stay distinct (read-only roles shifted down
+one), and two 0012-style definer functions carry the team surface: `GET /v1/auth/members`
+(user.read) and add-by-EMAIL on `POST /v1/auth/members` — staff register themselves, the
+boss adds them by email and picks a role; `canGrantRole` still refuses anything above the
+actor's own rank, and only `user.manage` holders can resolve an email to an account.
+
+`apps/web` is now ROLE-AWARE: the nav renders only sections whose permission the signed-in
+user holds (courtesy — the API remains the boundary), the Today page shows the cashier the
+till and the technician a calm empty page, and two screens are new: **Team** (member list,
+add-by-email with plain-language role descriptions) and **Insights** — daily takings bars,
+weekly sales trend and gross profit from the stored digests, cash-ahead horizon bars.
+Charts are three hand-rolled SVG components (`src/components/charts.tsx`), no chart
+dependency; `Number()` appears there for pixel geometry only, every readable figure still
+formatted from the server's decimal string. `GET /v1/reports/daily-takings` (report.read)
+serves the series with zero days included — the gap is the information.
 
 ### 5.4 Credit-note restocking — DEFERRED, BY DECISION
 

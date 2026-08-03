@@ -23,7 +23,7 @@
  * a hot request path.
  */
 
-/** The fixed role set. Mirrors `app_role` in migration 0012. */
+/** The fixed role set. Mirrors `app_role` in migrations 0012 and 0033. */
 export type RoleCode =
   | 'OWNER'
   | 'ADMIN'
@@ -31,6 +31,7 @@ export type RoleCode =
   | 'APPROVER'
   | 'BOOKKEEPER'
   | 'SALES'
+  | 'TECHNICIAN'
   | 'READ_ONLY'
   | 'EXTERNAL_AUDITOR';
 
@@ -133,8 +134,9 @@ export const ROLE_RANK: Readonly<Record<RoleCode, number>> = {
   APPROVER: 3,
   BOOKKEEPER: 4,
   SALES: 5,
-  READ_ONLY: 6,
-  EXTERNAL_AUDITOR: 7,
+  TECHNICIAN: 6,
+  READ_ONLY: 7,
+  EXTERNAL_AUDITOR: 8,
 };
 
 /**

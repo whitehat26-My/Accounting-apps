@@ -5,6 +5,8 @@ import { z } from 'zod';
 import { DEFAULT_SESSION_POLICY, type Permission } from '@emil/domain';
 import {
   addMember,
+  listMembers,
+  userIdForEmail,
   authenticate,
   createSession,
   issueApiKey,
@@ -188,6 +190,22 @@ export class AuthController {
     };
   }
 
+  /** The team page: everyone with access, with the role they hold. */
+  @Requires('user.read')
+  @Get('members')
+  async members(@Req() request: FastifyRequest) {
+    const principal = principalOf(request);
+    const ctx = { tenantId: principal.tenantId, userId: principal.userId };
+    const members = await withTenant(this.sql, ctx, (tx) => listMembers(tx));
+    return { members };
+  }
+
+  /**
+   * Add a member by user id — or by EMAIL, which is how a shop actually does
+   * it: the cashier registers themselves, tells the boss their email, the
+   * boss picks a role. Only `user.manage` holders can resolve an email to an
+   * account, so the lookup is not an enumeration oracle for outsiders.
+   */
   @Requires('user.manage')
   @Doc({ request: () => addMemberSchema })
   @Post('members')
@@ -207,13 +225,23 @@ export class AuthController {
     }
 
     const ctx = { tenantId: principal.tenantId, userId: principal.userId };
-    return withTenant(this.sql, ctx, (tx) =>
-      addMember(tx, ctx, {
-        userId: input.userId,
+    return withTenant(this.sql, ctx, async (tx) => {
+      let userId = input.userId;
+      if (userId === undefined) {
+        userId = await userIdForEmail(tx, input.email!);
+        if (userId === undefined) {
+          throw new ValidationError(
+            `No registered account holds ${input.email} — ask them to register first, then add them`,
+          );
+        }
+      }
+
+      return addMember(tx, ctx, {
+        userId,
         role: input.role,
         ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
-      }),
-    );
+      });
+    });
   }
 
   @Requires('apikey.manage')
@@ -262,20 +290,26 @@ const switchOrganisationSchema = switchBody.extend({ refreshToken: z.string().mi
 
 const logoutSchema = z.object({ sessionId: z.string().uuid() });
 
-const addMemberSchema = z.object({
-  userId: z.string().uuid(),
-  role: z.enum([
-    'OWNER',
-    'ADMIN',
-    'ACCOUNTANT',
-    'APPROVER',
-    'BOOKKEEPER',
-    'SALES',
-    'READ_ONLY',
-    'EXTERNAL_AUDITOR',
-  ]),
-  expiresAt: z.string().datetime().optional(),
-});
+const addMemberSchema = z
+  .object({
+    userId: z.string().uuid().optional(),
+    email: z.string().email().optional(),
+    role: z.enum([
+      'OWNER',
+      'ADMIN',
+      'ACCOUNTANT',
+      'APPROVER',
+      'BOOKKEEPER',
+      'SALES',
+      'TECHNICIAN',
+      'READ_ONLY',
+      'EXTERNAL_AUDITOR',
+    ]),
+    expiresAt: z.string().datetime().optional(),
+  })
+  .refine((v) => (v.userId !== undefined) !== (v.email !== undefined), {
+    message: 'Provide exactly one of userId or email',
+  });
 
 const createApiKeySchema = z.object({
   name: z.string().min(1),

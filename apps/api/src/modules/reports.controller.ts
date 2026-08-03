@@ -11,6 +11,7 @@ import {
 import {
   cashForecast,
   cashFlowStatement,
+  dailyTakingsSeries,
   listWeeklyDigests,
   equityStatement,
   generalLedger,
@@ -137,6 +138,25 @@ export class ReportsController {
         count: forecast.overduePayables.count,
       },
     };
+  }
+
+  /** The chart behind the Z-report: one point per day, zero days included. */
+  @Requires('report.read')
+  @Get('reports/daily-takings')
+  async dailyTakingsChart(@Req() request: FastifyRequest, @Query('days') days?: string) {
+    const parsed = parse(dailySeriesSchema, { days });
+    const ctx = this.ctx(request);
+    const to = new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(new Date());
+    const fromDate = new Date(`${to}T00:00:00Z`);
+    fromDate.setUTCDate(fromDate.getUTCDate() - ((parsed.days ?? 14) - 1));
+    const from = fromDate.toISOString().slice(0, 10);
+
+    const points = await withTenant(this.sql, ctx, (tx) =>
+      dailyTakingsSeries(tx, ctx, from, to),
+    );
+    return { from, to, points };
   }
 
   /**
@@ -340,6 +360,10 @@ const classificationSchema = z.object({
 
 const digestListSchema = z.object({
   limit: z.coerce.number().int().min(1).max(52).optional(),
+});
+
+const dailySeriesSchema = z.object({
+  days: z.coerce.number().int().min(7).max(90).optional(),
 });
 
 // ---------------------------------------------------------------------------
