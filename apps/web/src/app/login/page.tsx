@@ -4,6 +4,7 @@ import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 import { api, saveSession } from '@/lib/api';
 import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import wordmark from '@/brand/wordmark.png';
 
 /**
  * Sign in / register, then land somewhere useful.
@@ -83,6 +84,7 @@ export default function LoginPage() {
   if (organisations) {
     return (
       <main className="mx-auto mt-24 max-w-sm space-y-4">
+        <img src={wordmark.src} alt="Shah G Tech" className="mx-auto h-14 w-auto" />
         <Card title="Choose an organisation">
           <div className="space-y-2">
             {organisations.map((org) => (
@@ -103,7 +105,7 @@ export default function LoginPage() {
 
   return (
     <main className="mx-auto mt-24 max-w-sm space-y-4">
-      <h1 className="text-center text-2xl font-bold text-emerald-800">Emil</h1>
+      <img src={wordmark.src} alt="Shah G Tech" className="mx-auto h-16 w-auto" />
       <Card title={mode === 'login' ? 'Sign in' : 'Create your account'}>
         <form
           className="space-y-3"

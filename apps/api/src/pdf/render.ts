@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
 import type { InvoiceDocument, ReceiptDocument } from '@emil/db';
 
@@ -117,18 +118,25 @@ function build(draw: (pdf: PDFKit.PDFDocument) => void): Promise<Buffer> {
   });
 }
 
-/** The shop's accent — the same emerald the app wears. */
-const BRAND = '#059669';
+/**
+ * The shop's brand blue, sampled from the Shah G Tech logo itself, and the
+ * logo beside it. A customer's copy carries the shop's real identity —
+ * presentation only; every figure below is stored data.
+ */
+const BRAND = '#1875BE';
+const LOGO = fileURLToPath(new URL('./wordmark.png', import.meta.url));
 
 function header(
   pdf: PDFKit.PDFDocument,
   seller: InvoiceDocument['seller'],
   title: string,
 ): void {
-  // A brand band across the top: the one place a customer's copy carries the
-  // shop's colour. Presentation only; every figure below is stored data.
   pdf.rect(0, 0, 595, 6).fill(BRAND);
   pdf.fillColor('#000000');
+
+  // Top-right, transparent background: the wordmark is 1600×478, so a 32pt
+  // height keeps it crisp without crowding the seller block.
+  pdf.image(LOGO, 545 - 107, MARGIN - 6, { height: 32 });
 
   pdf.font('Helvetica-Bold').fontSize(16).text(seller.name, MARGIN, MARGIN);
   pdf.font('Helvetica').fontSize(8).fillColor('#555555');

@@ -7,6 +7,8 @@ import { clearSession, loadSession, type Session } from '@/lib/api';
 import { can, ROLE_LABELS, useMe } from '@/lib/me';
 import { Icon } from '@/components/icons';
 import { Assistant } from '@/components/assistant';
+// Static import so the demo's GitHub Pages base path is baked in at build.
+import mark from '@/brand/mark.png';
 
 /**
  * The signed-in shell: dark rail on the left, work on the right.
@@ -89,8 +91,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     <div className="flex min-h-screen">
       <aside className="flex w-16 flex-col bg-slate-950 text-slate-300 md:w-60">
         <div className="flex items-center justify-center gap-3 px-2 pb-5 pt-6 md:justify-start md:px-5">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-[13px] font-black tracking-tight text-slate-950 shadow-lg shadow-emerald-500/20">
-            SG
+          {/* The shop's actual hexagon mark, on a white tile so the blue
+              reads against the dark rail. */}
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-lg shadow-black/40">
+            <img src={mark.src} alt="Shah G Tech" className="h-full w-full object-contain" />
           </div>
           <div className="hidden min-w-0 md:block">
             <div className="text-sm font-semibold text-white">Shah G Tech</div>
