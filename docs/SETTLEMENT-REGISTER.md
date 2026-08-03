@@ -14,7 +14,7 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0033`, 140 HTTP routes (operations in the
+Last reconciled against the tree: migration `0033`, 142 HTTP routes (operations in the
 generated OpenAPI document — the measured figure, not a hand count), 1,343 tests
 (610 domain · 506 db · 147 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
