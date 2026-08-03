@@ -188,7 +188,18 @@ export class PublicPayController {
     @Req() request: FastifyRequest,
     @Body() body: unknown,
   ) {
-    const gateway = this.gateways.get(provider);
+    // Fold provider casing to one canonical form. It reaches us from the URL a
+    // provider was told to call, and `Billplz` vs `billplz` must resolve to the
+    // same adapter and — more importantly — the same `(provider, event id)`
+    // dedup key. Without this, a replayed event under different casing would
+    // slip past the unique constraint and settle an invoice twice. Uppercase is
+    // the canonical form the rest of the system already uses: the gateway
+    // registry keys on it, `payment_gateway_config.provider` is stored in it,
+    // and every `PaymentGateway.provider` is upper — so the dedup key, the
+    // config lookup and the adapter lookup all agree.
+    const canonicalProvider = provider.toUpperCase();
+
+    const gateway = this.gateways.get(canonicalProvider);
     if (gateway === undefined) {
       // A 404, not a 503. A webhook route with no adapter cannot verify a
       // signature, and a route that accepts an unverifiable payment
@@ -197,7 +208,13 @@ export class PublicPayController {
       throw new NotFoundError('Webhook endpoint');
     }
 
-    const raw = typeof body === 'string' ? body : JSON.stringify(body ?? {});
+    // The exact bytes received, preserved by the JSON parser in main.ts. A
+    // provider signs what it sent; re-serialising the parsed object would change
+    // the bytes and break every real signature. Fall back only if the parser
+    // hook did not run (a non-JSON content type).
+    const raw =
+      (request as FastifyRequest & { rawBody?: string }).rawBody ??
+      (typeof body === 'string' ? body : JSON.stringify(body ?? {}));
 
     // Signature FIRST, before the payload is parsed or anything is stored.
     // Verifying afterwards would mean an attacker's payload had already
@@ -227,7 +244,7 @@ export class PublicPayController {
 
     return withTenant(this.sql, ctx, async (tx) => {
       const stored = await recordGatewayEvent(tx, ctx, {
-        provider,
+        provider: canonicalProvider,
         providerEventId: event.eventId,
         providerRef: event.providerRef,
         eventType: event.type,
@@ -252,7 +269,7 @@ export class PublicPayController {
 
       const confirmed = await confirmCollection(tx, ctx, {
         paymentLinkId: link.id,
-        provider,
+        provider: canonicalProvider,
         providerRef: event.providerRef,
         amount: event.amount.toDecimalString(),
         ...(event.fee !== undefined ? { fee: event.fee.toDecimalString() } : {}),
@@ -260,7 +277,7 @@ export class PublicPayController {
         sentAt: event.sentAt,
         // The provider's event id makes the receipt idempotent on the same key
         // the webhook is deduplicated on, so the two guarantees cannot disagree.
-        idempotencyKey: `${provider}:${event.eventId}`,
+        idempotencyKey: `${canonicalProvider}:${event.eventId}`,
       });
 
       await markGatewayEventProcessed(tx, ctx, stored.id);

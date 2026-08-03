@@ -20,6 +20,12 @@ RUN pnpm install --frozen-lockfile
 COPY packages packages
 COPY apps/api apps/api
 
+# Drop root: the image ships a `node` user (uid 1000). The build ran as root,
+# so hand the tree to that user and run as it — a container escape then lands
+# as an unprivileged account, not root.
+RUN chown -R node:node /app
+USER node
+
 ENV NODE_ENV=production
 EXPOSE 3000
 CMD ["pnpm", "--filter", "@emil/api", "start"]

@@ -29,6 +29,38 @@ const schema = z.object({
    */
   publicRateLimit: z.number().int().positive(),
   /**
+   * Requests per window for the assistant chat route, keyed PER TENANT.
+   *
+   * Every other route's cost is a database query; this one's is a paid LLM
+   * call, so one member holding a valid login could run up real money by
+   * scripting the chat endpoint. The per-IP limiter above does not bound that —
+   * a tenant behind one NAT shares an IP, and an authenticated caller can vary
+   * it. This is a much smaller budget, applied on the tenant, inside the route
+   * where the principal is known. Independent of the general limit so a busy
+   * tenant's ordinary traffic never eats into the assistant allowance.
+   */
+  assistantRateLimit: z.number().int().positive(),
+  /**
+   * What to trust `X-Forwarded-For` from.
+   *
+   * ---------------------------------------------------------------------------
+   * DEFAULT `false`, BECAUSE THE ALTERNATIVE FORGES THE CLIENT ADDRESS.
+   *
+   * Fastify's `trustProxy: true` trusts EVERY hop, so `request.ip` becomes the
+   * left-most `X-Forwarded-For` value — i.e. whatever the client typed. That
+   * IP keys the rate limiter and is written to the audit log as `actor_ip`, so
+   * trusting it blindly lets an attacker rotate the header to defeat every rate
+   * limit and to forge the "from where" on the audit trail.
+   *
+   * `false` uses the real socket address, which a client cannot spoof. When the
+   * app runs behind the bundled Caddy + web proxy, set `TRUST_PROXY` to the
+   * number of proxy hops in front of the API (Caddy + web = `2`) or to the
+   * proxy's CIDR — so `request.ip` is the real client without trusting a
+   * client-injected header. See docs/DEPLOY.md.
+   * ---------------------------------------------------------------------------
+   */
+  trustProxy: z.union([z.boolean(), z.number().int().nonnegative(), z.string().min(1)]),
+  /**
    * Register the in-memory `FakeGateway`.
    *
    * It accepts any signature, so enabling it in production would let anyone
@@ -82,6 +114,18 @@ const schema = z.object({
 
 export type ApiConfig = z.infer<typeof schema>;
 
+/**
+ * `TRUST_PROXY` → Fastify's `trustProxy`. Unset means `false` (trust nothing).
+ * A bare number is a hop count; `true`/`false` are literal; anything else is
+ * passed through as a CIDR / comma-separated address list.
+ */
+function parseTrustProxy(value: string | undefined): boolean | number | string {
+  if (value === undefined || value === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  if (/^\d+$/.test(value)) return Number(value);
+  return value;
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   const parsed = schema.safeParse({
     databaseUrl: env['DATABASE_URL'],
@@ -90,6 +134,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     rateLimit: Number(env['RATE_LIMIT'] ?? 600),
     rateLimitWindowMs: Number(env['RATE_LIMIT_WINDOW_MS'] ?? 60_000),
     publicRateLimit: Number(env['PUBLIC_RATE_LIMIT'] ?? 30),
+    assistantRateLimit: Number(env['ASSISTANT_RATE_LIMIT'] ?? 30),
+    trustProxy: parseTrustProxy(env['TRUST_PROXY']),
     enableFakeGateway: env['EMIL_ENABLE_FAKE_GATEWAY'] === '1',
     enableSandboxValues: env['EMIL_ENABLE_SANDBOX_VALUES'] === '1',
     ...(env['ANTHROPIC_API_KEY'] ? { anthropicApiKey: env['ANTHROPIC_API_KEY'] } : {}),

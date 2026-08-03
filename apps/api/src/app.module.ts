@@ -123,6 +123,15 @@ export const API_CONTROLLERS = [
       inject: [CONFIG],
     },
     {
+      // A per-tenant budget for the assistant, whose cost is a paid LLM call
+      // rather than a query. Injected into the controller, which keys it on the
+      // tenant — the pre-auth IP limiter cannot, and IP is the wrong key anyway.
+      provide: Symbol.for('ASSISTANT_RATE_LIMITER'),
+      useFactory: (config: ApiConfig) =>
+        new FixedWindowRateLimiter(config.assistantRateLimit, config.rateLimitWindowMs),
+      inject: [CONFIG],
+    },
+    {
       provide: GATEWAYS,
       useFactory: (config: ApiConfig): GatewayRegistry => {
         const registry = new GatewayRegistry();

@@ -250,7 +250,6 @@ export interface ScheduledJobStatus {
   readonly nextRunAt: string;
   readonly lastRunAt: string | null;
   readonly lastStatus: 'OK' | 'ERROR' | null;
-  readonly lastError: string | null;
   readonly lastDurationMs: number | null;
   readonly runCount: number;
   readonly failureCount: number;
@@ -262,18 +261,32 @@ export interface ScheduledJobStatus {
  * Global rather than tenant-scoped, because the jobs are: `rollup-drift` asks
  * a question of every tenant at once. It exposes job names and timings — no
  * tenant data — and is behind `system.read`.
+ *
+ * ---------------------------------------------------------------------------
+ * `last_error` IS DELIBERATELY NOT SELECTED, AND THAT IS A TENANT-ISOLATION
+ * FIX, NOT AN OVERSIGHT.
+ *
+ * `scheduled_job` is a GLOBAL table (RLS-exempt), and its jobs run over every
+ * tenant's data. A PostgreSQL error message routinely embeds row values — an
+ * invoice number, a uuid, an e-Invoice identifier — so `last_error` from a job
+ * that failed on tenant A's row would be readable by ANY tenant's Owner
+ * through this endpoint. That is a cross-tenant leak (CLAUDE.md rule 9). The
+ * status (OK / ERROR) is all a tenant needs to know their queue is healthy;
+ * the message itself stays worker-side, in the logs, where the operator reads
+ * it. See `system.controller.ts`.
+ * ---------------------------------------------------------------------------
  */
 export async function scheduledJobs(tx: Tx): Promise<ScheduledJobStatus[]> {
   const rows = await tx<
     {
       name: string; description: string; interval_seconds: number; is_enabled: boolean;
       next_run_at: Date; last_run_at: Date | null; last_status: 'OK' | 'ERROR' | null;
-      last_error: string | null; last_duration_ms: number | null;
+      last_duration_ms: number | null;
       run_count: number; failure_count: number;
     }[]
   >`
       SELECT name, description, interval_seconds, is_enabled, next_run_at,
-             last_run_at, last_status, last_error, last_duration_ms,
+             last_run_at, last_status, last_duration_ms,
              run_count, failure_count
         FROM scheduled_job
        ORDER BY name
@@ -287,7 +300,6 @@ export async function scheduledJobs(tx: Tx): Promise<ScheduledJobStatus[]> {
     nextRunAt: r.next_run_at.toISOString(),
     lastRunAt: r.last_run_at ? r.last_run_at.toISOString() : null,
     lastStatus: r.last_status,
-    lastError: r.last_error,
     lastDurationMs: r.last_duration_ms,
     runCount: r.run_count,
     failureCount: r.failure_count,

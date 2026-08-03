@@ -21,6 +21,11 @@ COPY apps/web apps/web
 
 RUN pnpm --filter @emil/web build
 
+# Drop root: run as the image's unprivileged `node` user (uid 1000). Done after
+# the build so `.next/` and its cache are owned by the account that serves them.
+RUN chown -R node:node /app
+USER node
+
 ENV NODE_ENV=production
 EXPOSE 3000
 CMD ["pnpm", "--filter", "@emil/web", "start"]

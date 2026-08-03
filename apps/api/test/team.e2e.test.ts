@@ -85,6 +85,36 @@ describe('building the team by email', () => {
     expect(takings.status).toBe(200);
   });
 
+  it('an Admin cannot act on an Owner, even granting a role below them', async () => {
+    // The demote-the-Owner hole. `canGrantRole` lets an Admin grant READ_ONLY
+    // (it is below them), and `addMember` upserts — so without the target-rank
+    // guard an Admin could re-role an Owner to READ_ONLY and strip the one
+    // person senior to them. The actor's rank is checked against the TARGET's
+    // current rank, not just the role being granted.
+    const targetOwner = await makeUser(api, { tenantId: tenant.tenantId, role: 'OWNER' });
+    const admin = await makeUser(api, { tenantId: tenant.tenantId, role: 'ADMIN' });
+    const { accessToken: adminToken } = await accessTokenFor(
+      api, admin.refreshToken, tenant.tenantId,
+    );
+
+    const attempt = await call(api, {
+      method: 'POST',
+      url: '/v1/auth/members',
+      token: adminToken,
+      tenantId: tenant.tenantId,
+      body: { userId: targetOwner.userId, role: 'READ_ONLY' },
+    });
+    expect(attempt.status).toBe(422);
+
+    // The upsert never ran: the target still holds OWNER.
+    const list = await call(api, {
+      method: 'GET', url: '/v1/auth/members', token: bossToken, tenantId: tenant.tenantId,
+    });
+    const target = (list.body['members'] as { userId: string; role: string }[])
+      .find((m) => m.userId === targetOwner.userId);
+    expect(target?.role).toBe('OWNER');
+  });
+
   it('says plainly when the email has no account', async () => {
     const response = await call(api, {
       method: 'POST',

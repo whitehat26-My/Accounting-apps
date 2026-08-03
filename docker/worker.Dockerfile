@@ -18,5 +18,9 @@ RUN pnpm install --frozen-lockfile
 COPY packages packages
 COPY apps/worker apps/worker
 
+# Drop root: run as the image's unprivileged `node` user (uid 1000).
+RUN chown -R node:node /app
+USER node
+
 ENV NODE_ENV=production
 CMD ["pnpm", "--filter", "@emil/worker", "start"]

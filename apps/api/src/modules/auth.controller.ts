@@ -14,7 +14,7 @@ import {
   principalFor,
   refreshSession,
   registerUser,
-  revokeSession,
+  revokeByRefreshToken,
   withTenant,
   withUser,
   type Sql,
@@ -171,7 +171,9 @@ export class AuthController {
   @Post('logout')
   async logout(@Body() body: unknown) {
     const input = parse(logoutSchema, body);
-    await withUser(this.sql, null, (tx) => revokeSession(tx, input.sessionId));
+    // By refresh token, not session id: the token is a secret only its holder
+    // has, so this cannot be used to sign out someone else. See the service.
+    await withUser(this.sql, null, (tx) => revokeByRefreshToken(tx, input.refreshToken));
     return { revoked: true };
   }
 
@@ -224,6 +226,7 @@ export class AuthController {
       );
     }
 
+    const { mayActOnRole } = await import('@emil/domain');
     const ctx = { tenantId: principal.tenantId, userId: principal.userId };
     return withTenant(this.sql, ctx, async (tx) => {
       let userId = input.userId;
@@ -234,6 +237,22 @@ export class AuthController {
             `No registered account holds ${input.email} — ask them to register first, then add them`,
           );
         }
+      }
+
+      // You may not act on a member who OUTRANKS you, whatever role you are
+      // granting. `canGrantRole` above guards the role being granted; without
+      // this an Admin could grant READ_ONLY (allowed, it is below them) to the
+      // OWNER and strip the one person senior to them — leaving the org
+      // ownerless. `addMember` upserts, so this is the only guard on the
+      // target's current standing.
+      const [existing] = await tx<{ role_code: string }[]>`
+          SELECT role_code FROM membership
+           WHERE tenant_id = ${ctx.tenantId} AND user_id = ${userId}
+      `;
+      if (existing && !mayActOnRole(principal.role, existing.role_code as typeof principal.role)) {
+        throw new ValidationError(
+          `A ${principal.role} cannot change the ${existing.role_code} — they outrank you`,
+        );
       }
 
       return addMember(tx, ctx, {
@@ -288,7 +307,7 @@ function sessionContext(request: FastifyRequest): { ip?: string; userAgent?: str
 
 const switchOrganisationSchema = switchBody.extend({ refreshToken: z.string().min(1) });
 
-const logoutSchema = z.object({ sessionId: z.string().uuid() });
+const logoutSchema = z.object({ refreshToken: z.string().min(1) });
 
 const addMemberSchema = z
   .object({

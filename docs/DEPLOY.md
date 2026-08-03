@@ -58,6 +58,22 @@ Use `docker/Caddyfile.example`: point your domain at the server, add the
 obtains and renews the certificate itself. Do this before real use — sessions
 over plain HTTP on shop Wi-Fi are credentials in the clear.
 
+**Set `TRUST_PROXY` when you add a proxy.** By default the API trusts no
+`X-Forwarded-For` header and keys its rate limit on the socket peer — correct
+when nothing sits in front of it, but once a proxy does, every request appears
+to come from the proxy's IP and the whole deployment shares one rate-limit
+bucket. Set `TRUST_PROXY` in `.env.prod` to the number of proxy hops in front
+of the API so it reads the real client address instead:
+
+- `TRUST_PROXY=2` for the `Caddy → web → api` topology above (Caddy plus the
+  Next rewrite in `web` are two hops).
+- `TRUST_PROXY=1` if browsers reach `web` directly on `WEB_PORT` with no Caddy.
+
+Set it too high and a client can forge its own address by injecting the header;
+too low and the limiter throttles everyone as one. It is a hop count, so it is
+exactly the number of proxies you actually run — a CIDR list is also accepted
+for trusting specific proxy networks instead.
+
 ### Backups — non-negotiable
 
 The `backup` service runs `pg_dump` nightly into `./backups`, keeping 14.
@@ -102,6 +118,8 @@ again — that is what rotating a signing key means.
 | `EMIL_WORKER_PASSWORD` | worker | Login role inheriting `emil_worker` — the only role that can call the cross-tenant outbox functions. |
 | `JWT_SECRET` | api | 32+ chars, no default by design. |
 | `WEB_PORT` | web | Published port, default 8080. |
+| `TRUST_PROXY` | api | Proxy hops in front of the API for the rate limit's client IP. Unset = trust nobody; `2` for Caddy→web→api. See HTTPS above. |
+| `ASSISTANT_RATE_LIMIT` | api | Assistant chat requests per minute, per tenant. Default 30 — its cost is a paid model call, so it is capped tighter than ordinary routes. |
 | `API_ORIGIN` | web | Set in the compose file; where Next proxies `/api/*`. |
 
 ## What this deliberately does not include

@@ -545,8 +545,12 @@ END $$;
 -- Row-Level Security
 --
 -- FORCE also applies the policy to the table owner, closing the most common
--- RLS bypass. Policies carry WITH CHECK as well as USING: a USING-only policy
--- still permits INSERTing rows belonging to another tenant.
+-- RLS bypass. Every policy states WITH CHECK explicitly, alongside USING.
+-- Postgres would reuse the USING expression as the write check if WITH CHECK
+-- were omitted, so this is not what stops a cross-tenant INSERT today — writing
+-- it out keeps the write-side invariant INDEPENDENT of the read-side, so the
+-- day USING is ever widened (say, to let an auditor read across tenants) the
+-- set of rows a caller may WRITE does not silently widen with it.
 -- =============================================================================
 DO $$
 DECLARE

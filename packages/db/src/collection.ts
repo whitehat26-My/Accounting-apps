@@ -49,6 +49,8 @@ export class CollectionError extends Error {
       | 'NO_CLEARING_ACCOUNT'
       | 'NO_FEE_ACCOUNT'
       | 'STALE_WEBHOOK'
+      | 'ALREADY_PAID'
+      | 'LINK_CANCELLED'
       | 'SETTLEMENT_UNBALANCED'
       | 'SETTLEMENT_EMPTY'
       | 'JOURNAL_INVALID',
@@ -574,6 +576,40 @@ export async function confirmCollection(
 
   if (!link) {
     throw new CollectionError('LINK_NOT_FOUND', `Payment link ${input.paymentLinkId} not found`);
+  }
+
+  // State guard on the WRITE path, not just the read.
+  //
+  // `gateway_event`'s unique constraint stops an IDENTICAL redelivery, but a
+  // provider that sends a second, DISTINCT PAID event for the same link — or a
+  // PAID on a link already CANCELLED — carries a different event id and slips
+  // past it. Settling twice against a partially-paid invoice would then double
+  // the receipt. Once PAID, always PAID; a CANCELLED link is closed. The
+  // collection state machine names this rule (`advanceCollection`); this is
+  // where the money actually moves, so this is where it has to hold.
+  //
+  // The exception is a same-KEY redelivery: that is the legitimate idempotent
+  // retry the whole flow is built on, and `recordReceipt` below returns the
+  // stored receipt for it. So a PAID link only refuses a confirmation carrying
+  // a DIFFERENT key — a genuinely new settlement attempt, not a replay.
+  if (link.status === 'PAID') {
+    const [sameKey] = await tx<{ id: string }[]>`
+        SELECT id FROM payment
+         WHERE tenant_id = ${ctx.tenantId}
+           AND idempotency_key = ${`collection:${input.idempotencyKey}`}
+    `;
+    if (!sameKey) {
+      throw new CollectionError(
+        'ALREADY_PAID',
+        `Payment link ${input.paymentLinkId} is already settled; this confirmation is a replay.`,
+      );
+    }
+  }
+  if (link.status === 'CANCELLED') {
+    throw new CollectionError(
+      'LINK_CANCELLED',
+      `Payment link ${input.paymentLinkId} was cancelled and cannot be settled.`,
+    );
   }
 
   const config = await loadGatewayConfig(tx, ctx, input.provider);

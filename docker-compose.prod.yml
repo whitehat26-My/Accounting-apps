@@ -58,12 +58,21 @@ services:
     environment:
       DATABASE_URL: postgres://emil_app_login:${EMIL_APP_PASSWORD}@db:5432/emil
       JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.prod (32+ chars)}
+      # How many reverse-proxy hops sit in front of the API, so it trusts the
+      # right X-Forwarded-For entry for the per-address rate limit. Empty means
+      # trust nothing (client IP = the socket peer) — correct until a proxy is
+      # in front. See .env.prod.example for the value this topology needs.
+      TRUST_PROXY: ${TRUST_PROXY:-}
       # Optional: connects the in-app assistant. Empty means the assistant
       # honestly reports itself unconfigured; everything else still works.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       NODE_ENV: production
     depends_on:
       roles: { condition: service_completed_successfully }
+    # Least privilege at the container boundary: no capabilities (Node binds a
+    # high port, needs none) and no path to regain any through setuid binaries.
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
     healthcheck:
       # /openapi.json is unauthenticated and exercises the router.
       test: ['CMD-SHELL', "node -e \"fetch('http://127.0.0.1:3000/openapi.json').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))\""]
@@ -79,6 +88,8 @@ services:
       NODE_ENV: production
     depends_on:
       roles: { condition: service_completed_successfully }
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
     restart: unless-stopped
 
   web:
@@ -89,6 +100,8 @@ services:
       - '${WEB_PORT:-8080}:3000'
     depends_on:
       api: { condition: service_healthy }
+    cap_drop: [ALL]
+    security_opt: ['no-new-privileges:true']
     restart: unless-stopped
 
   # Nightly pg_dump into ./backups, keeping the newest 14. An accounting

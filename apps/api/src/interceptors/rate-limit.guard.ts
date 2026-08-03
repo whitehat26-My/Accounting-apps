@@ -84,10 +84,17 @@ export class RateLimitGuard implements CanActivate {
   canActivate(execution: ExecutionContext): boolean {
     const request = execution.switchToHttp().getRequest<FastifyRequest>();
 
-    // Keyed on the tenant AND the caller. Keying on the source address alone
-    // would let one busy tenant behind a corporate NAT throttle another.
-    const tenant = request.headers['x-tenant-id'];
-    const key = `${Array.isArray(tenant) ? tenant[0] : (tenant ?? 'anon')}:${request.ip}`;
+    // Keyed on the source address ALONE.
+    //
+    // The key deliberately no longer includes `X-Tenant-Id`: this guard runs
+    // before authentication, so that header is unvalidated attacker input, and
+    // rotating it per request minted a fresh bucket every time — the limiter
+    // enforced nothing. `request.ip` is the socket address (or a trusted-proxy
+    // client address; never a client-forged `X-Forwarded-For` unless
+    // TRUST_PROXY says so — see config.ts). The fairness nicety the tenant key
+    // bought (one NAT'd tenant not throttling another) is not worth a limiter
+    // that any client can walk past.
+    const key = request.ip;
 
     /*
      * The pay routes get their own, much tighter budget.

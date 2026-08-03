@@ -190,6 +190,36 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     }
   });
 
+  it('every tenant policy carries an explicit WITH CHECK, not USING alone', async () => {
+    // The behavioural tests below prove a cross-tenant write is refused. This
+    // proves it structurally, at the catalog: a policy with `polwithcheck` NULL
+    // is USING-only. Postgres would silently reuse USING as the write check
+    // today, so such a policy is not a leak now — but it couples the write rule
+    // to the read rule, so the day USING is widened for reads the writes widen
+    // with it. Requiring an explicit WITH CHECK keeps the two independent, and
+    // catches a hand-written policy that forgot it.
+    const policies = await sql<{ tablename: string; polname: string; has_check: boolean }[]>`
+        SELECT c.relname                     AS tablename,
+               p.polname                     AS polname,
+               p.polwithcheck IS NOT NULL    AS has_check
+          FROM pg_policy p
+          JOIN pg_class c     ON c.oid = p.polrelid
+          JOIN pg_namespace n ON n.oid = c.relnamespace
+         WHERE n.nspname = 'public'
+           AND EXISTS (SELECT 1 FROM pg_attribute a
+                        WHERE a.attrelid = c.oid AND a.attname = 'tenant_id'
+                          AND NOT a.attisdropped)
+    `;
+
+    expect(policies.length).toBeGreaterThan(0);
+    for (const p of policies) {
+      expect(
+        p.has_check,
+        `policy ${p.polname} on ${p.tablename} is USING-only — add an explicit WITH CHECK`,
+      ).toBe(true);
+    }
+  });
+
   it('the exempt identity tables really do have no grant to the app role', async () => {
     // `app_user` and `user_session` are exempt from the RLS sweep because they
     // are global. That exemption is only defensible because the application

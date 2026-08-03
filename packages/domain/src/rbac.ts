@@ -112,6 +112,44 @@ export function can(principal: Principal, permission: Permission): boolean {
   return true;
 }
 
+/**
+ * The permissions a principal ACTUALLY holds — the role's set narrowed by an
+ * API key's scopes.
+ *
+ * ---------------------------------------------------------------------------
+ * USE THIS, NOT `principal.permissions`, ANYWHERE A ROUTE HAS NO `@Requires`.
+ *
+ * The `AuthGuard` only intersects scopes against a route's REQUIRED permission,
+ * so a route that carries no `@Requires` (the assistant, `/auth/me`) and then
+ * reads `principal.permissions` directly sees the un-narrowed ROLE set. That is
+ * how a key scoped to "read invoices" could read the whole financial snapshot
+ * through the assistant. This collapses the intersection into one set so a
+ * consumer cannot forget to apply it.
+ * ---------------------------------------------------------------------------
+ */
+export function effectivePermissions(principal: Principal): ReadonlySet<Permission> {
+  if (principal.scopes === undefined) return principal.permissions;
+  const narrowed = new Set<Permission>();
+  for (const permission of principal.permissions) {
+    if (principal.scopes.has(permission)) narrowed.add(permission);
+  }
+  return narrowed;
+}
+
+/**
+ * Whether an actor may act ON a member who currently holds `subject`.
+ *
+ * `canGrantRole` guards the role being GRANTED; this guards the person being
+ * ACTED ON. Without it an Admin can demote the Owner — the grant of READ_ONLY
+ * is permitted (it is below the Admin's rank), but the target outranks the
+ * Admin, so the Admin ends up stripping the one member senior to them and
+ * leaving the organisation ownerless. An actor may only act on a member at or
+ * below their own rank.
+ */
+export function mayActOnRole(actor: RoleCode, subject: RoleCode): boolean {
+  return ROLE_RANK[actor] <= ROLE_RANK[subject];
+}
+
 export function canAll(
   principal: Principal,
   permissions: readonly Permission[],

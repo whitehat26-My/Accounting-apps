@@ -469,6 +469,37 @@ describe('confirmCollection', () => {
     expect(await accountBalance(f, f.tenant.accounts['1200']!)).toBe('1080.0000');
   });
 
+  it('refuses a DIFFERENT confirmation of an already-settled link', async () => {
+    // A same-key redelivery replays (the test above). A distinct PAID event for
+    // a link already settled — a different event id, past `gateway_event`'s
+    // unique constraint — must NOT settle it a second time and double the
+    // receipt. This is the write-path guard the state machine names.
+    const f = await collectionTenant('confirm_double_settle');
+    const invoice = await issueOne(f);
+    const link = await withTenant(sql, f.ctx, (tx) =>
+      createPaymentLink(tx, f.ctx, { invoiceId: invoice.id, idempotencyKey: randomUUID() }),
+    );
+    const base = {
+      paymentLinkId: link.id,
+      provider: 'FPX',
+      amount: '1080.00',
+      paidAt: '2026-08-03T14:32:00.000Z',
+    };
+
+    await withTenant(sql, f.ctx, (tx) =>
+      confirmCollection(tx, f.ctx, { ...base, providerRef: 'fpx_a', idempotencyKey: randomUUID() }),
+    );
+
+    await expect(
+      withTenant(sql, f.ctx, (tx) =>
+        confirmCollection(tx, f.ctx, { ...base, providerRef: 'fpx_b', idempotencyKey: randomUUID() }),
+      ),
+    ).rejects.toThrow(/already settled/i);
+
+    // Settled exactly once: the clearing account holds one payment, not two.
+    expect(await accountBalance(f, f.tenant.accounts['1200']!)).toBe('1080.0000');
+  });
+
   it('refuses a stale webhook even though it would otherwise be valid', async () => {
     // A signature does not expire on its own, so age is the only thing between
     // a captured payload and it being replayed a month later.

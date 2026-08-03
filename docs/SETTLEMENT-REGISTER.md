@@ -14,10 +14,10 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0033`, 148 HTTP routes (operations in the
-generated OpenAPI document — the measured figure, not a hand count), 1,374 tests
-(644 domain · 516 db · 176 api · 21 worker · 17 contracts), plus one Playwright browser
-journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
+Last reconciled against the tree: migration `0034` (security hardening), 148 HTTP routes
+(operations in the generated OpenAPI document — the measured figure, not a hand count),
+1,382 tests (649 domain · 518 db · 177 api · 21 worker · 17 contracts), plus one Playwright
+browser journey through the full first day (`apps/web/e2e/first-day.spec.ts`).
 
 **The AUTOMATION track (started 2026-08-02):** the target is the full
 "business operating system" loop — automated follow-up, cash forecasting, weekly digest,
@@ -553,3 +553,48 @@ Recorded because a register that only lists future work implies the past work wa
 | The income statement counted the closing entry | A closed year reported zero trading. The entry is dated inside the year on purpose — it has to be — so the P&L now subtracts it explicitly (`yearEndCloseMovement`). |
 | A bodyless `POST` with `Content-Type: application/json` answered 400 | `POST /v1/fiscal-years/:id/close` and `POST /v1/tax-returns/:id/submit` were unreachable from any HTTP client that sets the header by default, which is all of them. |
 | `@Doc({ request: … })` named the wrong schema on two routes | `POST /v1/periods/:id/status` advertised the journal-entry schema; `POST /v1/tax-returns/:id/submit` advertised the amendment schema and takes no body. The conformance test checks that a schema *exists*, not that it is the right one. |
+
+## 7. Security audit — findings and fixes (migration `0034`)
+
+A full adversarial pass over the whole surface (auth, RLS, the unauthenticated pay
+routes, the assistant, the container images) was run and every finding either fixed or,
+where it is a deployment setting, made safe-by-default and documented. Recorded here so
+the audit is a written artefact, not a conversation. No finding was left open.
+
+**High** — both were privilege confusions, not memory-safety or injection:
+
+| Finding | Fix |
+| --- | --- |
+| `trustProxy: true` trusted every `X-Forwarded-For` hop, so any client could forge `request.ip` — defeating the rate limiter and forging the audit `actor_ip`. | Default `false` (socket peer, unforgeable); `TRUST_PROXY` sets the hop count behind a real proxy (`config.ts`, `main.ts`, `.env.prod.example`, `docs/DEPLOY.md`). |
+| A route with no `@Requires` (the assistant, `/auth/me`) read `principal.permissions` directly, so an API key scoped to "read invoices" saw the whole financial snapshot and the write tools — the guard only intersects scopes against a route's *required* permission. | `effectivePermissions()` collapses role∩scope into one set; the assistant uses it (`rbac.ts`, `assistant.controller.ts`). |
+
+**Medium:**
+
+| Finding | Fix |
+| --- | --- |
+| An Admin could re-role an Owner to READ_ONLY — `canGrantRole` guards the role granted, not the target's standing, and `addMember` upserts. | `mayActOnRole(actor, subject)` refuses acting on a member who outranks you (`rbac.ts`, `auth.controller.ts`, e2e in `team.e2e.test.ts`). |
+| `scheduledJobs()` returned `last_error` from a GLOBAL table whose jobs run over every tenant's rows — a PG error string embeds row values, so one tenant's Owner could read another's data (rule 9). | `last_error` dropped from the tenant-facing response; the OK/ERROR status is all a tenant needs (`outbox.ts`). |
+| A second, DISTINCT gateway `PAID` event for an already-settled link slipped past `gateway_event`'s unique constraint and double-settled. | Write-path state guard in `confirmCollection()`: a PAID link refuses a confirmation carrying a *different* idempotency key; a same-key redelivery still replays (`collection.ts`, test in `collection.test.ts`). |
+| Logout took a `sessionId` — a readable claim in any (even expired) access token — so it could sign out someone else. | Logout now takes the refresh token, a 256-bit secret only its holder has, and revokes its family (`revokeByRefreshToken`, `auth.controller.ts`, `identity.ts`). |
+| The 90-day session-family ceiling was defined in the domain but never enforced — the service had no way to read the family's start. | `session_family_started_at()` definer function; `refreshSession` enforces `familyExpired()` (`0034`, `identity.ts`). |
+| The account lockout could be held indefinitely: `failed_logins` reset only on success, so one wrong password per window re-armed the lock forever. | `record_login_outcome` now clears a lapsed lock and starts a fresh streak (`0034`). |
+| Some `SECURITY DEFINER` functions (from `0012`/`0033`) were `EXECUTE`-able by `PUBLIC` and omitted `pg_temp` from their `search_path` — a latent takeover the day a third DB role is added, and a temp-table shadowing vector. | `0034` loops over `pg_proc` and `REVOKE`s `PUBLIC` + pins `search_path = public, pg_temp` on every definer function. |
+| The web app set no security headers; the webhook re-serialised the parsed body before signature verification (a real provider's signature would never match). | CSP + `X-Frame-Options: DENY` + HSTS in `next.config.ts` and at the Caddy edge; the JSON parser preserves the raw bytes and the webhook verifies against them (`main.ts`, `public-pay.controller.ts`). |
+
+**Low / hardening:**
+
+- Gateway webhook provider casing folded to one canonical form (uppercase, matching the
+  registry and `payment_gateway_config`) so `Billplz`/`billplz` cannot mint two dedup rows.
+- Per-tenant cap on the assistant chat route (`ASSISTANT_RATE_LIMIT`, default 30/min) — its
+  cost is a paid model call, which the pre-auth per-IP limiter does not bound.
+- Containers run as the unprivileged `node` user with `cap_drop: [ALL]` and
+  `no-new-privileges`; `.dockerignore` excludes env files, test code and backups.
+- `rls.test.ts` now asserts structurally that every tenant policy carries an explicit
+  `WITH CHECK`, and the `0001` comment that claimed a USING-only policy admits cross-tenant
+  INSERTs (Postgres reuses USING as the write check) was corrected.
+
+**Open ports / attack surface, as deployed:** only `web` (`WEB_PORT`, default 8080) is
+published by `docker-compose.prod.yml`; the API, worker and PostgreSQL stay on the private
+compose network. The only unauthenticated surface touching tenant data remains the
+`/public/*` pay routes, which carry their own tighter rate-limit bucket and leak nothing
+beyond amount/reference/merchant. No open port was found beyond the one intended.

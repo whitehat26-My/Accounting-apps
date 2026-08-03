@@ -17,9 +17,13 @@ import { attachContext } from './context/request-context.js';
  * own subset of the middleware proves the subset works, not the application.
  */
 export async function createApp(): Promise<NestFastifyApplication> {
+  const config = loadConfig();
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter({ trustProxy: true, bodyLimit: 8 * 1024 * 1024 }),
+    // `trustProxy` is config, defaulting to `false` — see config.ts. Trusting
+    // every hop (the old `true`) let a client forge `request.ip` via
+    // `X-Forwarded-For`, defeating the rate limiter and the audit `actor_ip`.
+    new FastifyAdapter({ trustProxy: config.trustProxy, bodyLimit: 8 * 1024 * 1024 }),
     // `bodyParser: false` so the JSON parser registered below is the only one.
     // Nest registers its own during `init()`, which would collide — and it is
     // the one that rejects an empty body. See the parser for why that matters.
@@ -66,7 +70,13 @@ export async function createApp(): Promise<NestFastifyApplication> {
   app.getHttpAdapter().getInstance().addContentTypeParser(
     'application/json',
     { parseAs: 'string' },
-    (_request, body: string, done) => {
+    (request, body: string, done) => {
+      // Keep the EXACT bytes received, before JSON.parse loses them. A gateway
+      // signs the raw payload, and re-serialising the parsed object (different
+      // key order, whitespace, unicode escaping) yields a different string whose
+      // signature never matches — the webhook verifier reads `rawBody`, not a
+      // round-tripped copy. Harmless for every other route, which ignores it.
+      (request as FastifyRequest & { rawBody?: string }).rawBody = body;
       if (body.length === 0) return done(null, {});
       try {
         done(null, JSON.parse(body));
