@@ -665,6 +665,21 @@ At RM 50–60k/month (≈ RM 600–720k/year):
   threshold need checking against RMCD once repair revenue is visible as its own stream —
   which the repair-jobs slice (§5.3) will make measurable.
 
+### 5.11 The shop's day is Asia/Kuala_Lumpur, on the server too
+
+Found when the container's clock crossed midnight Kuala Lumpur time in the middle of a
+browser test: the till posted a sale dated 5 August and the dashboard asked for 4 August's
+takings, so the day's money vanished.
+
+`new Date().toISOString().slice(0, 10)` is the UTC date, and Malaysia is UTC+8 with no
+daylight saving — so from midnight to 08:00 local, the UTC date is still *yesterday*. The
+browser had always been right (`apps/web/src/lib/display.ts` formats in
+`Asia/Kuala_Lumpur`); the server computed "today" in four places, two correctly and two in
+UTC, which is exactly the shape of a divergence nobody notices until it is dark outside.
+
+There is now one `businessToday()` in `packages/db/src/internal.ts` and every caller uses
+it. Rule 8 had already settled the question; the code had not caught up.
+
 ## 6. Defects found and fixed while compiling this register
 
 Recorded because a register that only lists future work implies the past work was clean.
@@ -737,9 +752,9 @@ between counter and books, and data on the shop's own machine.
 
 | Gap | State |
 | --- | --- |
-| **Sales quotes → invoice** | **BUILT** (`0036`) — schema, rules, service, routes, 26 tests. The web screen is outstanding. |
+| **Sales quotes → invoice** | **BUILT** (`0036`) — schema, rules, service, routes, and the web screen. The browser journey drives the whole lifecycle and ends by checking the invoice exists. |
 | Recurring invoices | NOT STARTED. Xero's signature automation; needs a template table and a scheduled job, and the worker already exists to run it. |
-| Customer statements | NOT STARTED. A statement of account per customer over a date range. Pure query over existing documents plus a PDF — no schema. |
+| Customer statements | **BUILT** — `packages/db/src/statement.ts`, `GET /v1/statements`, `/v1/statements/:id`, `/v1/statements/:id/pdf`, and a screen. No new tables: reconstructed from invoices, payments and credit notes each time, so re-running last March next year still shows last March. Asserted to agree with the ageing report, and consecutive months are asserted to join up exactly. |
 | Fixed assets & depreciation | NOT STARTED. Register, method, schedule, and the monthly posting. |
 | Budgets vs actual | NOT STARTED. A budget per account per period, and the variance column on the P&L. |
 | Expense claims | NOT STARTED. Staff spend their own money and get paid back; today that is a manual journal. |

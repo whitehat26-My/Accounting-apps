@@ -6,6 +6,7 @@ import {
   callRaw,
   createTestApi,
   makeUser,
+  pdfText,
   seedTenant,
   type TestApi,
   type Tenant,
@@ -461,5 +462,113 @@ describe('GET /v1/system/queues', () => {
     });
 
     expect(response.status).toBe(403);
+  });
+});
+
+describe('customer statements', () => {
+  /*
+   * The books above are manual journals, which means no receivables — a
+   * statement needs actual documents. One invoice, part paid, gives the
+   * document a shape worth checking: an opening balance of nothing, a charge, a
+   * credit, and a closing balance that is neither.
+   */
+  beforeAll(async () => {
+    const issued = await call(api, {
+      method: 'POST',
+      ...as('/v1/invoices'),
+      idempotencyKey: randomUUID(),
+      body: {
+        contactId: tenant.customerId,
+        issueDate: '2026-05-05',
+        dueDate: '2026-06-04',
+        lines: [
+          {
+            description: 'Workshop labour',
+            quantity: '1',
+            unitPrice: '1500.00',
+            accountId: tenant.accounts['4000'],
+            taxCodeId: tenant.taxCodes['NONE'],
+          },
+        ],
+      },
+    });
+    expect(issued.status, JSON.stringify(issued.body)).toBe(201);
+
+    const paid = await call(api, {
+      method: 'POST',
+      ...as('/v1/receipts'),
+      idempotencyKey: randomUUID(),
+      body: {
+        contactId: tenant.customerId,
+        paymentDate: '2026-05-20',
+        amount: '600.00',
+        method: 'TRANSFER',
+        depositAccountId: tenant.accounts['1000'],
+        allocations: [{ invoiceId: issued.body['invoiceId'] ?? issued.body['id'], amount: '600.00' }],
+      },
+    });
+    expect(paid.status, JSON.stringify(paid.body)).toBe(201);
+  }, 60_000);
+
+  it('lists who owes something, then states one account', async () => {
+    const owing = await call(api, { method: 'GET', ...as('/v1/statements?asOf=2026-12-31') });
+    expect(owing.status).toBe(200);
+    const customers = owing.body['customers'] as { id: string; balance: string }[];
+    expect(customers.length).toBeGreaterThan(0);
+
+    const first = customers[0]!;
+    const statement = await call(api, {
+      method: 'GET',
+      ...as(`/v1/statements/${first.id}?from=2026-01-01&to=2026-12-31`),
+    });
+
+    expect(statement.status).toBe(200);
+    // The list and the statement are computed by different queries. They are
+    // allowed to be written separately; they are not allowed to disagree.
+    expect(statement.body['closingBalance']).toBe(first.balance);
+    expect(statement.body).toHaveProperty('openingBalance');
+    expect(Array.isArray(statement.body['entries'])).toBe(true);
+  });
+
+  it('prints one as a PDF carrying the customer and the amount due', async () => {
+    const owing = await call(api, { method: 'GET', ...as('/v1/statements?asOf=2026-12-31') });
+    const first = (owing.body['customers'] as { id: string; name: string }[])[0]!;
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/statements/${first.id}/pdf?from=2026-01-01&to=2026-12-31`),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    expect(response.body.startsWith('%PDF')).toBe(true);
+
+    const text = pdfText(response.body);
+    expect(text).toContain('STATEMENT OF ACCOUNT');
+    expect(text).toContain(first.name);
+    // The carried-forward figure is ON the page, not implied by the first row.
+    expect(text).toContain('Balance brought forward');
+    expect(text).toContain('AMOUNT NOW DUE');
+  });
+
+  it('refuses a period that ends before it starts', async () => {
+    const owing = await call(api, { method: 'GET', ...as('/v1/statements?asOf=2026-12-31') });
+    const first = (owing.body['customers'] as { id: string }[])[0]!;
+
+    const response = await call(api, {
+      method: 'GET',
+      ...as(`/v1/statements/${first.id}?from=2026-12-31&to=2026-01-01`),
+    });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('answers 404 for a contact that is not this tenant’s', async () => {
+    // Rule 9 at the edge: the same answer for "does not exist" and "is not
+    // yours", so a customer list cannot be enumerated one id at a time.
+    const response = await call(api, {
+      method: 'GET',
+      ...as('/v1/statements/00000000-0000-4000-8000-000000000000?from=2026-01-01&to=2026-12-31'),
+    });
+    expect(response.status).toBe(404);
   });
 });

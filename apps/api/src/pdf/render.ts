@@ -1,6 +1,11 @@
 import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
-import type { InvoiceDocument, PayslipDocument, ReceiptDocument } from '@emil/db';
+import type {
+  CustomerStatement,
+  InvoiceDocument,
+  PayslipDocument,
+  ReceiptDocument,
+} from '@emil/db';
 
 /**
  * PDF rendering — presentation, nothing else.
@@ -240,7 +245,139 @@ function subtotalRow(pdf: PDFKit.PDFDocument, label: string, amount: string): vo
   pdf.y = y + LINE;
 }
 
+
+/**
+ * A customer statement.
+ *
+ * ---------------------------------------------------------------------------
+ * THE DOCUMENT A CUSTOMER ARGUES WITH.
+ *
+ * Which is why it leads with the opening balance rather than the first
+ * transaction: a statement that starts mid-story invites "what was this
+ * carried-forward figure?", and the answer has to be on the page. Every line
+ * carries a document number the customer can quote back, and the running
+ * balance is printed on each so a disagreement can be pinned to one row rather
+ * than to the total.
+ *
+ * The two figures at the foot are what they owe and how much of it is already
+ * late. Nothing here is stored — it is reconstructed from the invoices,
+ * payments and credit notes each time — so a statement reprinted next year for
+ * last March still shows last March.
+ * ---------------------------------------------------------------------------
+ */
+export function renderStatementPdf(
+  doc: CustomerStatement,
+  seller: InvoiceDocument['seller'],
+): Promise<Buffer> {
+  return build((pdf) => {
+    header(pdf, seller, 'STATEMENT OF ACCOUNT');
+
+    const topY = pdf.y;
+    pdf.font('Helvetica-Bold').fontSize(11).text(doc.contact.name, MARGIN, topY);
+    pdf.font('Helvetica').fontSize(9).fillColor('#555555');
+    if (doc.contact.email) pdf.text(doc.contact.email, MARGIN, pdf.y);
+    const leftBottom = pdf.y;
+
+    pdf.fillColor('#555555').fontSize(8);
+    pdf.text('PERIOD', 380, topY, { width: 165, align: 'right', characterSpacing: 0.5 });
+    pdf.fillColor('#000000').font('Helvetica-Bold').fontSize(10);
+    pdf.text(`${displayDate(doc.from)} — ${displayDate(doc.to)}`, 380, pdf.y, {
+      width: 165,
+      align: 'right',
+    });
+
+    pdf.fillColor('#000000').font('Helvetica').fontSize(9);
+    pdf.y = Math.max(leftBottom, pdf.y) + 12;
+
+    // ---- Column headings ---------------------------------------------------
+    const cols = { date: MARGIN, ref: 118, detail: 210, charge: 330, credit: 400, balance: 470 };
+    pdf.font('Helvetica-Bold').fontSize(8.5);
+    const headY = pdf.y;
+    pdf.text('Date', cols.date, headY);
+    pdf.text('Document', cols.ref, headY);
+    pdf.text('Detail', cols.detail, headY);
+    pdf.text('Charge', cols.charge, headY, { width: 62, align: 'right' });
+    pdf.text('Paid', cols.credit, headY, { width: 62, align: 'right' });
+    pdf.text('Balance', cols.balance, headY, { width: 75, align: 'right' });
+    pdf.y = headY + LINE;
+    rule(pdf);
+
+    // ---- The carried-forward figure, on the page and labelled ---------------
+    pdf.font('Helvetica-Bold').fontSize(9);
+    const openY = pdf.y;
+    pdf.text('Balance brought forward', cols.date, openY, { width: 300 });
+    pdf.text(money(doc.openingBalance), cols.balance, openY, { width: 75, align: 'right' });
+    pdf.y = openY + LINE;
+    pdf.font('Helvetica');
+
+    // ---- Every movement in the period --------------------------------------
+    for (const entry of doc.entries) {
+      if (pdf.y > 700) {
+        pdf.addPage();
+        pdf.font('Helvetica').fontSize(9);
+      }
+      const y = pdf.y;
+      pdf.fontSize(9);
+      pdf.text(displayDate(entry.date), cols.date, y, { width: 88 });
+      pdf.text(entry.reference, cols.ref, y, { width: 88 });
+      if (entry.detail) {
+        pdf.fontSize(8).fillColor('#666666');
+        pdf.text(entry.detail, cols.detail, y + 0.5, { width: 115, ellipsis: true, height: 11 });
+        pdf.fillColor('#000000').fontSize(9);
+      }
+      if (entry.charge) pdf.text(money(entry.charge), cols.charge, y, { width: 62, align: 'right' });
+      if (entry.credit) pdf.text(money(entry.credit), cols.credit, y, { width: 62, align: 'right' });
+      pdf.text(money(entry.balance), cols.balance, y, { width: 75, align: 'right' });
+      pdf.y = y + LINE;
+    }
+
+    rule(pdf);
+
+    // ---- What they owe, and what is late -----------------------------------
+    const dueY = pdf.y;
+    pdf.rect(MARGIN, dueY, 495, 28).fill('#f4f4f5');
+    pdf.fillColor(BRAND).font('Helvetica-Bold').fontSize(10)
+      .text('AMOUNT NOW DUE', MARGIN + 12, dueY + 9);
+    pdf.fillColor('#000000').fontSize(13)
+      .text(`RM ${money(doc.closingBalance)}`, 300, dueY + 7, { width: 233, align: 'right' });
+    pdf.font('Helvetica').fontSize(9);
+    pdf.y = dueY + 38;
+
+    if (Number(doc.overdue) > 0) {
+      /*
+       * Stated separately rather than folded into the total, because "you owe
+       * RM 4,000" and "RM 1,200 of it was due three weeks ago" prompt
+       * different conversations, and the second is the one that gets paid.
+       */
+      pdf.fillColor('#b45309').font('Helvetica-Bold').fontSize(9.5);
+      pdf.text(
+        `RM ${money(doc.overdue)} of this is already past its due date.`,
+        MARGIN,
+        pdf.y,
+        { width: 495 },
+      );
+      pdf.fillColor('#000000').font('Helvetica').fontSize(9);
+      pdf.moveDown(0.6);
+    }
+
+    pdf.fontSize(7.5).fillColor('#555555');
+    pdf.text(
+      'Amounts are shown in ' +
+        doc.currency +
+        '. If this statement disagrees with your records, please quote the document ' +
+        'number of the line in question.',
+      MARGIN,
+      pdf.y,
+      { width: 495, lineGap: 1.5 },
+    );
+    pdf.fillColor('#000000');
+
+    footer(pdf);
+  });
+}
+
 // ------------------------------------------------------------------ helpers
+
 
 
 function build(draw: (pdf: PDFKit.PDFDocument) => void): Promise<Buffer> {

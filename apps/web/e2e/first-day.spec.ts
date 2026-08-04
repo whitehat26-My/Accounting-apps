@@ -85,6 +85,19 @@ test('first day at the shop', async ({ page }) => {
   await expect(page.getByText('Nothing unpaid.')).toBeHidden();
   await expect(page.getByText(/INV-/).first()).toBeVisible();
 
+  // ---- And the customer gets a statement for it ---------------------------
+  /*
+   * The statement screen leads with WHO OWES SOMETHING, because "run this
+   * month's statements" is the task and working out that list by hand is most
+   * of the work. The invoice just converted from the quote is the only thing
+   * outstanding, so it must appear here — and its amount must match.
+   */
+  await page.getByRole('link', { name: 'Statements' }).click();
+  await page.getByRole('button', { name: 'Statement' }).first().click();
+  await expect(page.getByText('Balance brought forward')).toBeVisible();
+  await expect(page.getByText('Amount now due')).toBeVisible();
+  await page.screenshot({ path: 'e2e-artifacts/statements.png', fullPage: true });
+
   // ---- What would it cost to put someone behind that counter? -------------
   /*
    * The last question of a good first day, and the one that catches owners

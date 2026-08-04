@@ -21,6 +21,9 @@ import {
   setCashFlowClassification,
   statementOfFinancialPosition,
   statementOfProfitOrLoss,
+  customerStatement,
+  customersWithBalances,
+  sellerBlock,
   trialBalanceCsv,
   trialBalanceReport,
   withTenant,
@@ -31,6 +34,7 @@ import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
+import { renderStatementPdf } from '../pdf/render.js';
 
 /**
  * Reporting.
@@ -55,6 +59,82 @@ export class ReportsController {
 
   private ctx(request: FastifyRequest) {
     return tenantContextOf(request);
+  }
+
+  // ---- Customer statements ------------------------------------------------
+
+  /**
+   * Who owes something, so a shop can run the month's statements without first
+   * working out which customers to run them for.
+   */
+  @Requires('report.read')
+  @Get('statements')
+  async statementList(@Query('asOf') asOf: string, @Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, async (tx) => ({
+      asOf: parse(isoDate, asOf),
+      customers: await customersWithBalances(tx, ctx, parse(isoDate, asOf)),
+    }));
+  }
+
+  /**
+   * One customer's account over a period.
+   *
+   * A GET with the customer in the path and the dates in the query, because
+   * unlike a payslip there is nothing confidential in the URL that is not
+   * already in the path — and a statement is the kind of thing somebody wants
+   * to bookmark and re-open.
+   */
+  /** The same statement, as the page you post or attach to an email. */
+  @Requires('report.read')
+  @Get('statements/:contactId/pdf')
+  async statementPdf(
+    @Param('contactId') contactId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const { statement, seller } = await withTenant(this.sql, ctx, async (tx) => ({
+      statement: await customerStatement(
+        tx,
+        ctx,
+        parse(uuid, contactId),
+        parse(isoDate, from),
+        parse(isoDate, to),
+      ),
+      seller: await sellerBlock(tx, ctx),
+    }));
+
+    const pdf = await renderStatementPdf(statement, seller);
+    void reply
+      .header('content-type', 'application/pdf')
+      .header(
+        'content-disposition',
+        `inline; filename="statement-${statement.to}.pdf"`,
+      )
+      .send(pdf);
+  }
+
+  @Requires('report.read')
+  @Get('statements/:contactId')
+  async statement(
+    @Param('contactId') contactId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      customerStatement(
+        tx,
+        ctx,
+        parse(uuid, contactId),
+        parse(isoDate, from),
+        parse(isoDate, to),
+      ),
+    );
   }
 
   // ---- The statements -----------------------------------------------------

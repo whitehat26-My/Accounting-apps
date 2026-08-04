@@ -3,6 +3,7 @@ import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { decimal, isoDate, quantity } from '@emil/contracts';
 import {
+  businessToday,
   applyBankRules,
   bankTransactions,
   bookBalance,
@@ -112,7 +113,7 @@ export class BankingController {
     // The book balance is stated AS AT a date, never "now": comparing a
     // running bank balance to a book balance taken at a different moment is
     // the classic way to chase a variance that does not exist.
-    const asOfDate = filter.asOfDate ?? new Date().toISOString().slice(0, 10);
+    const asOfDate = filter.asOfDate ?? businessToday();
 
     const [transactions, book] = await withTenant(this.sql, ctx, async (tx) => [
       await bankTransactions(tx, ctx, bankAccountId, filter),

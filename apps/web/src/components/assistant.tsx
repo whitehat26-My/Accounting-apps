@@ -121,6 +121,15 @@ const HELP: Record<string, { title: string; steps: string[] }> = {
       'Copy & open WhatsApp puts the reminder in the chat, ready to send.',
     ],
   },
+  statements: {
+    title: 'Statements',
+    steps: [
+      'The list shows who owes something as at the date you pick — that IS the month\u2019s send list.',
+      'Open one to see everything that customer did in the period, with the balance after each line.',
+      'Print / PDF gives the copy you post or attach to an email.',
+      'Consecutive months join up exactly: one month\u2019s closing balance is the next one\u2019s opening balance.',
+    ],
+  },
   purchases: {
     title: 'Purchases',
     steps: [

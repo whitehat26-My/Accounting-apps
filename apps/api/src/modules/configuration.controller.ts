@@ -3,6 +3,7 @@ import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { isoDate } from '@emil/contracts';
 import {
+  businessToday,
   amendTaxReturn,
   createTaxCode,
   endWithholdingRate,
@@ -209,7 +210,7 @@ export class ConfigurationController {
   @Requires('tax.read')
   @Get('tax-returns/outstanding')
   async outstanding(@Query('through') through: string, @Req() request: FastifyRequest) {
-    const date = parse(isoDate, through ?? new Date().toISOString().slice(0, 10));
+    const date = parse(isoDate, through ?? businessToday());
     const ctx = tenantContextOf(request);
     return {
       through: date,

@@ -9,7 +9,7 @@ import {
 } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { issueInvoice, type IssueInvoiceLine } from './invoice.js';
-import { toIsoDate } from './internal.js';
+import { businessToday, toIsoDate } from './internal.js';
 
 /**
  * Sales quotes: offer, answer, and the one conversion that touches money.
@@ -323,7 +323,7 @@ export async function getQuote(
        ORDER BY line_no
   `;
 
-  return toView(quote, lines, today ?? toIsoDate(new Date()));
+  return toView(quote, lines, today ?? businessToday());
 }
 
 export interface ListQuotesFilter {
@@ -377,7 +377,7 @@ export async function listQuotes(
     else bucket.push(line);
   }
 
-  const asOf = today ?? toIsoDate(new Date());
+  const asOf = today ?? businessToday();
   return rows.map((r) => toView(r, byQuote.get(r.id) ?? [], asOf));
 }
 
