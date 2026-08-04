@@ -67,9 +67,42 @@ test('first day at the shop', async ({ page }) => {
 
   await expect(page.getByRole('cell', { name: 'RM 325.00' })).toBeVisible();
   await expect(page.getByText('Total cost to the shop')).toBeVisible();
-  // Contributions only. A screen that said "net pay" while omitting income tax
-  // would be believed precisely because it looked finished.
-  await expect(page.getByText('Income tax (PCB) is not included.')).toBeVisible();
+  // Contributions only until the tax box is ticked. A screen that said "take
+  // home" while omitting income tax would be believed precisely because it
+  // looked finished.
+  await expect(page.getByText('Income tax (PCB) is not included — tick the box above.')).toBeVisible();
 
   await page.screenshot({ path: 'e2e-artifacts/payroll.png', fullPage: true });
+
+  // ---- And now with income tax, for a technician seven months in ----------
+  /*
+   * The full payslip, through the real MTD formula. RM207.50 is the figure the
+   * specification's own method produces for a RM6,000 wage with seven months
+   * already paid — so this asserts the whole path at once: Table 1 out of the
+   * database, the EPF figure out of the Third Schedule as K1, and the
+   * annualised projection over the five months that remain.
+   */
+  await page.getByLabel('Monthly wage (RM)').fill('6000.00');
+  await page.getByLabel('Age', { exact: true }).fill('35');
+  await page.getByLabel('Include income tax (PCB)').check();
+  await page.getByLabel('Gross paid this year so far (RM)').fill('42000.00');
+  await page.getByLabel('EPF deducted this year so far (RM)').fill('4620.00');
+  await page.getByLabel('PCB deducted this year so far (RM)').fill('1452.50');
+  await page.getByRole('button', { name: 'Calculate' }).click();
+
+  /*
+   * Assert the take-home rather than the tax line. RM 5,046.20 is
+   * 6,000 - 746.30 of contributions - 207.50 of tax, so it can only be right if
+   * every one of the four deductions is right — and unlike the RM 207.50 cell
+   * it appears exactly once, where that figure is also a substring of the
+   * "RM 746.30 + RM 207.50" total beside it.
+   */
+  await expect(page.getByText('The staff member takes home')).toBeVisible();
+  await expect(page.getByText('RM 5,046.20')).toBeVisible();
+  await expect(page.getByText(/RM 207\.50 in income tax/)).toBeVisible();
+  // The Total row adds contributions and tax on the SERVER — a payslip that
+  // printed "746.30 + 207.50" would be asking the reader to do the arithmetic.
+  await expect(page.getByRole('cell', { name: 'RM 953.80' })).toBeVisible();
+
+  await page.screenshot({ path: 'e2e-artifacts/payroll-with-tax.png', fullPage: true });
 });

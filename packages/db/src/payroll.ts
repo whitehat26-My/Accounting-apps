@@ -276,6 +276,16 @@ export interface ContributionBreakdown {
   readonly totalEmployer: string;
   /** Wage less the employee's statutory deductions. NOT net pay — PCB is not applied. */
   readonly wageAfterContributions: string;
+  /**
+   * Wage plus every employer contribution — what leaves the bank each month for
+   * this person.
+   *
+   * Summed here rather than left to the caller, because the caller is a browser
+   * and `apps/web` holds no arithmetic. A screen that added two money strings
+   * would need parseFloat, and the moment it needs parseFloat the calculation
+   * belongs on this side.
+   */
+  readonly totalEmploymentCost: string;
 }
 
 /**
@@ -284,12 +294,12 @@ export interface ContributionBreakdown {
  * ---------------------------------------------------------------------------
  * WHAT THIS DELIBERATELY DOES NOT RETURN: NET PAY.
  *
- * PCB (Monthly Tax Deduction) is the fourth statutory deduction and it is NOT
- * implemented — LHDN's computerised-calculation specification defines five
- * formulae and reliefs this system has not yet transcribed, and a "net pay"
- * figure that silently omits income tax is worse than no figure, because it
- * looks complete. So the field is called `wageAfterContributions`, which is
- * exactly what it is, and `docs/SETTLEMENT-REGISTER.md` names the unblocker.
+ * PCB — the fourth statutory deduction — IS implemented, in `computePayslip`
+ * below. It is not here because it needs things this function is never told:
+ * who the employee is for tax purposes, and where they are in the tax year.
+ * Reaching for a default would produce a confident wrong answer, so the field
+ * is called `wageAfterContributions`, which is exactly what it is, and the
+ * caller that wants a take-home figure asks the function that can compute one.
  * ---------------------------------------------------------------------------
  */
 export async function computeContributions(
@@ -342,6 +352,7 @@ export async function computeContributions(
     totalEmployee: result.totalEmployee.toDecimalString(),
     totalEmployer: result.totalEmployer.toDecimalString(),
     wageAfterContributions: wage.subtract(result.totalEmployee).toDecimalString(),
+    totalEmploymentCost: wage.add(result.totalEmployer).toDecimalString(),
   };
 }
 
@@ -359,10 +370,7 @@ export async function employmentCost(
   query: ContributionQuery,
 ): Promise<{ readonly breakdown: ContributionBreakdown; readonly totalCost: string }> {
   const breakdown = await computeContributions(tx, query);
-  const totalCost = Money.fromDecimal(breakdown.wage, 'MYR')
-    .add(Money.fromDecimal(breakdown.totalEmployer, 'MYR'))
-    .toDecimalString();
-  return { breakdown, totalCost };
+  return { breakdown, totalCost: breakdown.totalEmploymentCost };
 }
 
 // ---------------------------------------------------------------------------
@@ -496,6 +504,13 @@ export interface Payslip extends ContributionBreakdown {
    * to a figure that omits income tax and looks the same.
    */
   readonly netPay: string | null;
+  /**
+   * Everything taken off the pay: contributions AND tax. Null alongside
+   * `netPay` for the same reason, and summed here for the same reason
+   * `totalEmploymentCost` is — a payslip that showed "746.30 + 207.50" would be
+   * asking the reader to do the arithmetic the system exists to do.
+   */
+  readonly totalDeducted: string | null;
 }
 
 /**
@@ -519,7 +534,7 @@ export async function computePayslip(tx: Tx, query: PayslipQuery): Promise<Paysl
   });
 
   if (query.tax === undefined) {
-    return { ...contributions, pcb: null, netPay: null };
+    return { ...contributions, pcb: null, netPay: null, totalDeducted: null };
   }
 
   const schedule = await loadMtdSchedule(tx, query.asOf);
@@ -568,5 +583,8 @@ export async function computePayslip(tx: Tx, query: PayslipQuery): Promise<Paysl
       nonResident: result.nonResident,
     },
     netPay: netPay.toDecimalString(),
+    totalDeducted: Money.fromDecimal(contributions.totalEmployee, 'MYR')
+      .add(result.mtd)
+      .toDecimalString(),
   };
 }

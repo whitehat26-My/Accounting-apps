@@ -306,6 +306,7 @@ describe('a real staff list', () => {
       }),
     );
 
+    expect(totalCost).toBe(breakdown.totalEmploymentCost);
     expect(Number(totalCost)).toBeCloseTo(2500 + Number(breakdown.totalEmployer), 4);
     // The employer share is real money — well over RM 300 on a RM 2,500 wage —
     // and the figure nobody budgets for.
