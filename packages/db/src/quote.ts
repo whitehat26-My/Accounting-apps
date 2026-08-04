@@ -1,7 +1,9 @@
 import {
+  Money,
   checkQuoteTransition,
   describeQuoteViolation,
   isErr,
+  quantityToUnits,
   quoteHasLapsed,
   type QuoteStatus,
 } from '@emil/domain';
@@ -26,7 +28,8 @@ export class QuoteError extends Error {
       | 'CONTACT_NOT_FOUND'
       | 'ILLEGAL_TRANSITION'
       | 'QUOTE_NOT_EDITABLE'
-      | 'QUOTE_NOT_CONVERTIBLE',
+      | 'QUOTE_NOT_CONVERTIBLE'
+      | 'INVALID_LINES',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -343,10 +346,39 @@ export async function listQuotes(
          ${filter.contactId !== undefined ? tx`AND contact_id = ${filter.contactId}` : tx``}
        ORDER BY quote_date DESC, quote_no DESC
   `;
-  // Listed without their lines: a list screen shows who, when and how much, and
-  // fetching every line for every row is the query that makes the page crawl
-  // once a shop has a year of quotes.
-  return rows.map((r) => toView(r, [], today ?? toIsoDate(new Date())));
+  if (rows.length === 0) return [];
+
+  /*
+   * The lines, for all of the quotes, in ONE query.
+   *
+   * This function used to pass `[]` and say in a comment that a list screen
+   * shows "how much" — which it could not, because a subtotal computed from no
+   * lines is 0.00. Every row on the list read RM 0.00, and the comment made
+   * that look intentional.
+   *
+   * The concern behind it was real: a line query per row is what makes a page
+   * crawl once a shop has a year of quotes. So it is one query keyed by quote
+   * id and grouped in memory — N+1 avoided without lying about the total.
+   */
+  const ids = rows.map((r) => r.id);
+  const lines = await tx<(LineRow & { sales_quote_id: string })[]>`
+      SELECT sales_quote_id, line_no, item_id, description, quantity, unit_price,
+             account_id, tax_code_id, discount_basis_points
+        FROM sales_quote_line
+       WHERE tenant_id = ${ctx.tenantId}
+         AND sales_quote_id = ANY(${ids}::uuid[])
+       ORDER BY sales_quote_id, line_no
+  `;
+
+  const byQuote = new Map<string, LineRow[]>();
+  for (const line of lines) {
+    const bucket = byQuote.get(line.sales_quote_id);
+    if (bucket === undefined) byQuote.set(line.sales_quote_id, [line]);
+    else bucket.push(line);
+  }
+
+  const asOf = today ?? toIsoDate(new Date());
+  return rows.map((r) => toView(r, byQuote.get(r.id) ?? [], asOf));
 }
 
 // ---------------------------------------------------------------------------
@@ -395,7 +427,7 @@ function toView(q: QuoteRow, lines: LineRow[], today: string): QuoteView {
     amountsAreTaxInclusive: q.amounts_are_tax_inclusive,
     invoiceId: q.invoice_id,
     declineReason: q.decline_reason,
-    subtotal: subtotalOf(lines),
+    subtotal: subtotalOf(lines, q.currency),
     lines: lines.map((l) => ({
       lineNo: l.line_no,
       description: l.description,
@@ -408,25 +440,46 @@ function toView(q: QuoteRow, lines: LineRow[], today: string): QuoteView {
 }
 
 /**
- * A presentation subtotal, in minor units throughout.
+ * A presentation subtotal.
  *
  * Deliberately NOT the invoice total: tax is computed at the tax point by the
  * TaxEngine when the invoice is issued, and duplicating that here would give a
  * quote screen a second opinion about tax. This is "what the lines add up to",
  * which is what a quote shows.
+ *
+ * ---------------------------------------------------------------------------
+ * IT IS STILL MONEY, SO IT IS STILL `Money`.
+ *
+ * This function used to read `Math.round(Number(quantity) * 10000)` and
+ * `Math.round(Number(unit_price) * 100)`, which broke rule 2 twice over: a
+ * float in money code, and a 4dp unit price truncated to 2dp before it was
+ * multiplied. A price of 189.5050 became 189.50, and on a twelve-unit line the
+ * quote understated itself by six sen — small, wrong, and quoted to a customer.
+ *
+ * `quantityToUnits` is the exact parser the inventory engine already uses, and
+ * `multiplyRatio` keeps the whole calculation in integers.
+ * ---------------------------------------------------------------------------
  */
-function subtotalOf(lines: LineRow[]): string {
-  let cents = 0n;
+function subtotalOf(lines: LineRow[], currency: string): string {
+  let total = Money.zero(currency as Parameters<typeof Money.zero>[0]);
   for (const l of lines) {
-    const qty = BigInt(Math.round(Number(l.quantity) * 10000));
-    const price = BigInt(Math.round(Number(l.unit_price) * 100));
-    const gross = (qty * price) / 10000n;
-    const discount = (gross * BigInt(l.discount_basis_points)) / 10000n;
-    cents += gross - discount;
+    const quantityUnits = quantityToUnits(l.quantity);
+    if (quantityUnits === null) {
+      // A quantity the database holds but this cannot parse is a bug, not a
+      // rounding question, and a silently-skipped line would understate a
+      // customer-facing figure.
+      throw new QuoteError(
+        'INVALID_LINES',
+        `Quote line ${l.line_no} has an unreadable quantity (${l.quantity}).`,
+      );
+    }
+    const price = Money.fromDecimal(l.unit_price, total.currency);
+    // quantity is scaled by 10^4, so dividing by that is the ratio, not a fudge.
+    const gross = price.multiplyRatio(quantityUnits, 10_000n);
+    const discount = gross.multiplyRatio(BigInt(l.discount_basis_points), 10_000n);
+    total = total.add(gross.subtract(discount));
   }
-  const negative = cents < 0n;
-  const abs = negative ? -cents : cents;
-  return `${negative ? '-' : ''}${abs / 100n}.${String(abs % 100n).padStart(2, '0')}`;
+  return total.toDecimalString();
 }
 
 async function replaceLines(

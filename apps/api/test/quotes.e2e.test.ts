@@ -53,7 +53,10 @@ describe('quoting over HTTP', () => {
 
     const fetched = await call(api, { method: 'GET', ...as(`/v1/quotes/${id}`) });
     expect(fetched.status).toBe(200);
-    expect(fetched.body['subtotal']).toBe('2268.00');
+    // 4dp, like every other money field on the wire. The subtotal used to come
+    // back at 2dp because it was computed by hand in floating point; it is a
+    // `Money` now, and `Money` speaks at MONEY_SCALE.
+    expect(fetched.body['subtotal']).toBe('2268.0000');
 
     for (const to of ['SENT', 'ACCEPTED']) {
       const moved = await call(api, { method: 'POST', ...as(`/v1/quotes/${id}/status`), body: { to } });

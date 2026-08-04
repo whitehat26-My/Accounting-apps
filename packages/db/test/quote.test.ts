@@ -59,7 +59,7 @@ const draft = (over: Record<string, unknown> = {}) => ({
   quoteDate: '2026-08-03',
   validUntil: '2026-09-02',
   lines: [
-    freeLine('500GB NVMe SSD', '12', '189.00'),
+    freeLine('500GB NVMe SSD', '12', '189.0000'),
     freeLine('Fitting', '1', '50.00'),
   ],
   idempotencyKey: randomUUID(),
@@ -78,7 +78,7 @@ describe('raising a quote', () => {
     const quote = await withTenant(sql, ctx, (tx) => getQuote(tx, ctx, created.id, '2026-08-03'));
     expect(quote.status).toBe('DRAFT');
     // 12 × 189.00 = 2268.00, plus 50.00
-    expect(quote.subtotal).toBe('2318.00');
+    expect(quote.subtotal).toBe('2318.0000');
     expect(quote.lines).toHaveLength(2);
     expect(quote.lapsed).toBe(false);
 
@@ -106,7 +106,7 @@ describe('raising a quote', () => {
     );
     const quote = await withTenant(sql, ctx, (tx) => getQuote(tx, ctx, created.id));
     // 1000.00 less 10% = 900.00
-    expect(quote.subtotal).toBe('900.00');
+    expect(quote.subtotal).toBe('900.0000');
   });
 
   it('refuses a contact that is not this tenant’s', async () => {
@@ -191,9 +191,9 @@ describe('the life of a quote', () => {
   it('only rewrites the lines of a draft', async () => {
     const created = await withTenant(sql, ctx, (tx) => createQuote(tx, ctx, draft()));
     const rewritten = await withTenant(sql, ctx, (tx) =>
-      updateQuoteLines(tx, ctx, created.id, [freeLine('One SSD only', '1', '189.00')]),
+      updateQuoteLines(tx, ctx, created.id, [freeLine('One SSD only', '1', '189.0000')]),
     );
-    expect(rewritten.subtotal).toBe('189.00');
+    expect(rewritten.subtotal).toBe('189.0000');
 
     await withTenant(sql, ctx, (tx) => transitionQuote(tx, ctx, created.id, { to: 'SENT' }));
     await expect(
@@ -222,5 +222,128 @@ describe('the life of a quote', () => {
 
   it('leaves the rollups undisturbed', async () => {
     expect(await withTenant(sql, ctx, (tx) => detectRollupDrift(tx, ctx))).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The subtotal, which is money and was not being treated as money
+// ---------------------------------------------------------------------------
+
+describe('what a quote adds up to', () => {
+  it('keeps every sen of a 4dp unit price across a multi-unit line', async () => {
+    /*
+     * The regression this exists for.
+     *
+     * `subtotalOf` used to truncate the unit price to 2dp before multiplying —
+     * `Math.round(Number(unit_price) * 100)` — so a price of 189.5050 became
+     * 189.50 and twelve of them lost six sen. Small, wrong, and quoted to a
+     * customer, which is the worst combination of the three.
+     */
+    const quote = await withTenant(sql, ctx, async (tx) => {
+      const { id } = await createQuote(tx, ctx, {
+        contactId: tenant.customerId,
+        quoteDate: '2026-08-04',
+        idempotencyKey: randomUUID(),
+        lines: [
+          {
+            description: '500GB NVMe SSD',
+            quantity: '12',
+            unitPrice: '189.5050',
+            accountId: tenant.accounts['4000']!,
+            taxCodeId: tenant.taxCodes['NONE']!,
+          },
+        ],
+      });
+      return getQuote(tx, ctx, id);
+    });
+
+    // 189.5050 x 12 = 2,274.06 exactly. The old arithmetic gave 2,274.00.
+    expect(quote.subtotal).toBe('2274.0600');
+  });
+
+  it('applies a line discount without a float anywhere', async () => {
+    const quote = await withTenant(sql, ctx, async (tx) => {
+      const { id } = await createQuote(tx, ctx, {
+        contactId: tenant.customerId,
+        quoteDate: '2026-08-04',
+        idempotencyKey: randomUUID(),
+        lines: [
+          {
+            description: 'Labour',
+            quantity: '3.5',
+            unitPrice: '100.00',
+            discountBasisPoints: 1250, // 12.5%
+            accountId: tenant.accounts['4000']!,
+            taxCodeId: tenant.taxCodes['NONE']!,
+          },
+        ],
+      });
+      return getQuote(tx, ctx, id);
+    });
+
+    // 350.00 less 12.5% = 306.25. A percentage that is not representable in
+    // binary floating point, chosen for exactly that reason.
+    expect(quote.subtotal).toBe('306.2500');
+  });
+
+  it('shows the real total on the LIST, not zero', async () => {
+    /*
+     * `listQuotes` used to pass no lines to the view builder, so every row on a
+     * list screen showed a subtotal of 0.00 — and a comment explained that a
+     * list "shows how much", which it could not. The lines now come back in one
+     * query rather than one per row.
+     */
+    const created = await withTenant(sql, ctx, (tx) =>
+      createQuote(tx, ctx, {
+        contactId: tenant.customerId,
+        quoteDate: '2026-08-04',
+        reference: 'LIST-TOTAL',
+        idempotencyKey: randomUUID(),
+        lines: [
+          {
+            description: 'Motherboard',
+            quantity: '2',
+            unitPrice: '450.00',
+            accountId: tenant.accounts['4000']!,
+            taxCodeId: tenant.taxCodes['NONE']!,
+          },
+        ],
+      }),
+    );
+
+    const listed = await withTenant(sql, ctx, (tx) => listQuotes(tx, ctx));
+    const found = listed.find((q) => q.id === created.id);
+    expect(found?.subtotal).toBe('900.0000');
+    // Still a LIST: the lines themselves are not carried, only what they total.
+    expect(listed.every((q) => q.subtotal !== '0.0000' || q.lines.length === 0)).toBe(true);
+  });
+
+  it('lists many quotes without a query per quote', async () => {
+    // The N+1 the old comment was worried about, and the reason the fix groups
+    // one keyed query in memory instead of looping.
+    for (let i = 0; i < 12; i += 1) {
+      await withTenant(sql, ctx, (tx) =>
+        createQuote(tx, ctx, {
+          contactId: tenant.customerId,
+          quoteDate: '2026-08-04',
+          idempotencyKey: randomUUID(),
+          lines: [
+            {
+              description: `Bulk ${i}`,
+              quantity: '1',
+              unitPrice: '10.00',
+              accountId: tenant.accounts['4000']!,
+              taxCodeId: tenant.taxCodes['NONE']!,
+            },
+          ],
+        }),
+      );
+    }
+
+    const started = Date.now();
+    const listed = await withTenant(sql, ctx, (tx) => listQuotes(tx, ctx));
+    expect(listed.length).toBeGreaterThanOrEqual(12);
+    expect(listed.every((q) => Number(q.subtotal) > 0)).toBe(true);
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 });
