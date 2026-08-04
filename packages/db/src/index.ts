@@ -30,6 +30,7 @@ export * from './year-end.js';
 export * from './inventory.js';
 export * from './pos.js';
 export * from './repair.js';
+export * from './quote.js';
 export * from './onboarding.js';
 export * from './document-data.js';
 export * from './dunning.js';

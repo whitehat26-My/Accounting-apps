@@ -624,3 +624,45 @@ published by `docker-compose.prod.yml`; the API, worker and PostgreSQL stay on t
 compose network. The only unauthenticated surface touching tenant data remains the
 `/public/*` pay routes, which carry their own tighter rate-limit bucket and leak nothing
 beyond amount/reference/merchant. No open port was found beyond the one intended.
+
+## 8. Xero parity — the gap list
+
+Compiled by comparing this system against Xero feature by feature, because
+"what does the market leader have that we do not" is a different question from
+"what did we plan and not finish", and the answers only partly overlap.
+
+**Where this system already wins** and Xero cannot follow without the owner
+buying a second and third product: the till, the workshop, serial tracking,
+photo evidence, Malaysian SST/e-Invoice intent, one ledger with no export step
+between counter and books, and data on the shop's own machine.
+
+### 8.1 Buildable — no external dependency
+
+| Gap | State |
+| --- | --- |
+| **Sales quotes → invoice** | **BUILT** (`0036`) — schema, rules, service, routes, 26 tests. The web screen is outstanding. |
+| Recurring invoices | NOT STARTED. Xero's signature automation; needs a template table and a scheduled job, and the worker already exists to run it. |
+| Customer statements | NOT STARTED. A statement of account per customer over a date range. Pure query over existing documents plus a PDF — no schema. |
+| Fixed assets & depreciation | NOT STARTED. Register, method, schedule, and the monthly posting. |
+| Budgets vs actual | NOT STARTED. A budget per account per period, and the variance column on the P&L. |
+| Expense claims | NOT STARTED. Staff spend their own money and get paid back; today that is a manual journal. |
+| Tracking categories | NOT STARTED. Xero's departments/locations — a second dimension on a posting, for when a second branch opens. |
+| Installable mobile app | NOT STARTED. A PWA manifest and service worker gets most of what a native app gives, without app stores. |
+
+### 8.2 Blocked on something outside this repository
+
+Named rather than attempted, for the same reason the withholding rates are:
+
+| Gap | The unblocker |
+| --- | --- |
+| **Automatic bank feeds** | A bank or aggregator API agreement. This is Xero's single biggest daily time-saver, and Malaysian open-banking access is not available to a small shop today. Statement import is the honest substitute and is BUILT. |
+| **Receipt OCR** | An OCR key (Textract / Document AI). The capture and attachment half is buildable now — the repair-photo pipeline in `0035` is the same shape — and the reader is a port behind it. |
+| **Payroll (EPF/SOCSO/PCB/EIS)** | Verified statutory rates and thresholds from KWSP, PERKESO and LHDN. A guessed payroll rate underpays a statutory contribution and is a liability, so the tables ship empty or not at all. |
+| Emailed invoices and statements | An email service key. Already noted at §4.4. |
+
+### 8.3 Not buildable, and worth being honest about
+
+An app marketplace with a thousand integrations, twenty years of edge cases,
+and every Malaysian accountant already knowing the tool. These are Xero's real
+moat and no amount of code closes them. The counter-argument is that none of
+them help a computer shop run its workshop.

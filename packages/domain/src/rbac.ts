@@ -77,6 +77,8 @@ export type Permission =
   | 'pos.sale'
   | 'repair.read'
   | 'repair.write'
+  | 'quote.read'
+  | 'quote.write'
   | 'collections.chase'
   | 'org.manage'
   | 'org.delete';
