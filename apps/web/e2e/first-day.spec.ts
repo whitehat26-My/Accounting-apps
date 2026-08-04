@@ -50,6 +50,41 @@ test('first day at the shop', async ({ page }) => {
   await page.getByRole('link', { name: 'Today' }).click();
   await expect(page.getByText('RM 150.00').first()).toBeVisible();
 
+  // ---- A customer asks what a job would cost ------------------------------
+  /*
+   * The whole quote lifecycle through the browser, ending in a real invoice.
+   *
+   * The last step is the one worth driving from here rather than only from the
+   * API suite: "Make it an invoice" is the single button on that screen that
+   * posts to the ledger, and everything before it must leave the books alone.
+   */
+  await page.getByRole('link', { name: 'Quotes' }).click();
+  await page.getByLabel('Customer').selectOption({ index: 1 });
+  await page.getByLabel('Post the income to').selectOption({ index: 1 });
+  await page.getByLabel('Tax code').selectOption({ index: 1 });
+  await page.getByPlaceholder('What the job includes').fill('Rebuild and reinstall Windows');
+  await page.getByPlaceholder('Unit price (RM)').fill('450.00');
+  await page.getByRole('button', { name: 'Save as draft' }).click();
+
+  // The subtotal comes back from the server. It reading RM 450.00 rather than
+  // RM 0.00 is the list-subtotal defect this slice fixed.
+  await expect(page.getByText('RM 450.00').first()).toBeVisible();
+
+  await page.screenshot({ path: 'e2e-artifacts/quotes.png', fullPage: true });
+
+  await page.getByRole('button', { name: 'Mark as sent' }).click();
+  await page.getByRole('button', { name: 'They said yes' }).click();
+  await page.getByRole('button', { name: 'Make it an invoice' }).click();
+  await page.getByRole('button', { name: 'Issue the invoice' }).click();
+
+  // Gone from the open list, and now under Sales as money someone owes. The
+  // cash sale earlier in this journey was paid at the till, so an unpaid
+  // invoice existing at all is this conversion and nothing else.
+  await expect(page.getByText('No open quotes.')).toBeVisible();
+  await page.getByRole('link', { name: 'Sales', exact: true }).click();
+  await expect(page.getByText('Nothing unpaid.')).toBeHidden();
+  await expect(page.getByText(/INV-/).first()).toBeVisible();
+
   // ---- What would it cost to put someone behind that counter? -------------
   /*
    * The last question of a good first day, and the one that catches owners

@@ -47,6 +47,7 @@ const SECTIONS: { label: string | null; items: NavItem[] }[] = [
   {
     label: 'Money',
     items: [
+      { href: '/quotes', label: 'Quotes', icon: 'quotes', needs: 'quote.read' },
       { href: '/sales', label: 'Sales', icon: 'sales', needs: 'invoice.read' },
       { href: '/collections', label: 'Collections', icon: 'collections', needs: 'invoice.read' },
       { href: '/purchases', label: 'Purchases', icon: 'purchases', needs: 'bill.read' },

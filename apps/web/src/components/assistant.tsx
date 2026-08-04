@@ -96,6 +96,15 @@ const HELP: Record<string, { title: string; steps: string[] }> = {
       'You can also just tell the assistant: "add Acer laptop A315, sell at 1899, cost 1550".',
     ],
   },
+  quotes: {
+    title: 'Quotes',
+    steps: [
+      'Write what a job would cost, before anybody owes anything — a quote posts nothing to the books.',
+      'Mark it sent when the customer has it, then record their yes or no. A no needs a reason, and the reason is kept.',
+      '"Make it an invoice" is the one button here that touches the books: the customer then owes the money and it appears under Sales.',
+      'A no or a lapsed quote can be reopened as a draft and re-priced when they come back.',
+    ],
+  },
   sales: {
     title: 'Sales',
     steps: [

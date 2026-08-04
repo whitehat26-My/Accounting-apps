@@ -1,14 +1,15 @@
 /**
- * Nav icons: fourteen hand-drawn 16×16 stroke glyphs, one per section.
+ * Nav icons: fifteen hand-drawn 16×16 stroke glyphs, one per section.
  *
  * Inline SVG rather than an icon package for the same reason ui.tsx is not a
- * component library: fourteen paths are not a dependency's worth of surface,
+ * component library: fifteen paths are not a dependency's worth of surface,
  * and these inherit currentColor so the nav states style them for free.
  */
 
 const paths: Record<string, string> = {
   today: 'M2 8.5 8 3l6 5.5M4 7.5V13h3v-3h2v3h3V7.5',
   pos: 'M2 3h2l1.5 7h6L13 5H5M6 12.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Zm5 0a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5Z',
+  quotes: 'M3.5 2.5h9v11l-2-1.5-2 1.5-2-1.5-2 1.5v-11ZM6 5.5h4M6 8h4M6 10.5h2',
   sales: 'M4 2h8v12l-2-1.4L8 14l-2-1.4L4 14V2ZM6 5.5h4M6 8h4',
   collections: 'M8 2a4 4 0 0 0-4 4v3l-1.5 2.5h11L12 9V6a4 4 0 0 0-4-4ZM6.5 12.5a1.5 1.5 0 0 0 3 0',
   purchases: 'M3 5h10l-1 8H4L3 5Zm2.5 0a2.5 2.5 0 0 1 5 0',
