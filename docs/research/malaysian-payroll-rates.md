@@ -15,7 +15,7 @@ gap. Every figure below carries a source and a confidence level.
 | **EPF** | ✅ **VERIFIED from the legal instrument.** Full Third Schedule transcribed — 1,203 wage bands. |
 | **EIS** | ✅ **VERIFIED from perkeso.gov.my**, including the age rules. |
 | **SOCSO** | ⚠️ Percentages corroborated; the **banded contribution table is still needed**. |
-| **PCB** | ⚠️ Method understood; the **LHDN specification and YA 2026 bands are still needed**. |
+| **PCB** | ⚠️ **Tax schedule verified** from LHDN with cumulative amounts, arithmetic-checked. The **five formula definitions** are still needed. |
 
 ---
 
@@ -118,46 +118,67 @@ table; they are not the calculation.
 
 ---
 
-## PCB / MTD — ⚠️ method understood, figures outstanding
+## PCB / MTD — ⚠️ bands verified, formula spec still outstanding
 
 PCB is an algorithm, not a rate. LHDN publishes *Spesifikasi Kaedah Pengiraan Berkomputer
-PCB 2026*, defining **five formula categories** chosen by residence status. LHDN states
-there is **no amendment to the MTD formula for 2026** — the changes are to the TP1 and TP3
+PCB 2026*, defining **five formula categories** chosen by residence status, and states there
+is **no amendment to the MTD formula for 2026** — the changes are to the TP1 and TP3
 relief-claim forms.
 
 Method: estimate the year's tax on annualised income less reliefs, subtract PCB already
 deducted, spread the remainder over the remaining months.
 
-### Resident individual bands — YA 2025
+### ✅ The tax schedule — verified from LHDN
 
-| Chargeable income | Rate |
-| --- | --- |
-| First RM5,000 | 0% |
-| RM5,001 – RM20,000 | 1% |
-| RM20,001 – RM35,000 | 3% |
-| RM35,001 – RM50,000 | 6% |
-| RM50,001 – RM70,000 | 11% |
-| RM70,001 – RM100,000 | 19% |
-| RM100,001 – RM400,000 | 25% |
-| RM400,001 – RM600,000 | 26% |
-| RM600,001 – RM2,000,000 | 28% |
-| Above RM2,000,000 | 30% |
+**Source:** *Navigasi HASiL 2026*, Lembaga Hasil Dalam Negeri Malaysia, committed at
+`docs/research/sources/navigasi-hasil-2026.pdf` (text extract beside it as `.txt` so it is
+greppable without re-parsing).
 
-⚠️ These are **YA 2025** (reported unchanged from YA 2024). **YA 2026 is unconfirmed** and
-must be checked against Budget 2026 before PCB is computed for the 2026 year. The reliefs
-that feed the formula are on the TP1/TP3 forms, both of which changed for 2026.
+The document gives the schedule as **cumulative tax plus a rate on the balance**, which is
+the form a PCB engine actually needs — not the bare percentages a summary would give you.
 
----
+| Cat | Chargeable income | Tax on the lower figure (RM) | Rate on the remainder |
+| --- | --- | --- | --- |
+| A | 0 – 5,000 | 0 | 0% |
+| B | 5,001 – 20,000 | 0 | 1% |
+| C | 20,001 – 35,000 | 150 | 3% |
+| D | 35,001 – 50,000 | 600 | 6% |
+| E | 50,001 – 70,000 | 1,500 | 11% |
+| F | 70,001 – 100,000 | 3,700 | 19% |
+| G | 100,001 – 400,000 | 9,400 | 25% |
+| H | 400,001 – 600,000 | 84,400 | 26% |
+| I | 600,001 – 2,000,000 | 136,400 | 28% |
+| J | Exceeding 2,000,000 | 528,400 | 30% |
+
+**Validated arithmetically.** Every cumulative figure equals the previous one plus the band
+width at the previous rate — 9,400 + (400,000 − 100,000) × 25% = 84,400, and so on for all
+ten. The chain closes exactly, which is good evidence the table was read correctly rather
+than plausibly.
+
+⚠️ **The schedule is labelled Year of Assessment 2025.** That is the year being filed during
+2026, and LHDN's own 2026 navigation booklet carries it, so it is current — but PCB deducted
+during calendar 2026 belongs to **YA 2026**, and whether these bands carry forward unchanged
+is **not confirmed by this document**. To be checked before PCB runs for a 2026 payroll.
+
+### Reliefs
+
+Present in the same source, pages 21–26, headed *Pelepasan Tahun Taksiran 2025*. Individual
+and dependent relatives RM9,000; disabled individual additional RM6,000; spouse or alimony
+RM4,000; disabled spouse RM6,000; children by category; and a long tail of specific reliefs
+with their own limits and conditions. Not transcribed here yet — they are in the committed
+text extract and will be lifted into an effective-dated table when the PCB engine is built.
 
 ## What is still needed
 
 1. **PERKESO's banded SOCSO contribution table** (Category 1 and 2), current at the RM6,000
-   ceiling — `perkeso.gov.my/en/rate-of-contribution.html`.
-2. **LHDN's PCB 2026 specification PDF** — the five formulas and the reliefs —
-   `hasil.gov.my` → Majikan → Spesifikasi Data.
-3. **Confirmation of the YA 2026 tax bands.**
+   ceiling — `perkeso.gov.my/en/rate-of-contribution.html`. A screenshot of the table is
+   enough; it is far smaller than the EPF schedule.
+2. **LHDN's PCB 2026 specification PDF** — the five formula definitions. The tax bands are
+   now known, but the formula that turns a monthly wage into a deduction is not.
+3. **Confirmation that the YA 2025 bands carry into YA 2026.**
 
-EPF needs nothing further. EIS needs nothing further.
+EPF needs nothing further. EIS needs nothing further. The PCB tax schedule needs nothing
+further; the PCB *formula* does.
 
 ## How this will be verified once built
 

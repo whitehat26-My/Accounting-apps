@@ -657,7 +657,7 @@ Named rather than attempted, for the same reason the withholding rates are:
 | --- | --- |
 | **Automatic bank feeds** | A bank or aggregator API agreement. This is Xero's single biggest daily time-saver, and Malaysian open-banking access is not available to a small shop today. Statement import is the honest substitute and is BUILT. |
 | **Receipt OCR** | An OCR key (Textract / Document AI). The capture and attachment half is buildable now — the repair-photo pipeline in `0035` is the same shape — and the reader is a port behind it. |
-| **Payroll (EPF/SOCSO/PCB/EIS)** | PARTLY UNBLOCKED. EPF is now **verified from the legal instrument** — the Third Schedule in force from 01/10/2025, transcribed to 1,203 validated wage bands at `docs/research/sources/`. EIS is verified from PERKESO including the age rules. Still needed: PERKESO's banded SOCSO table, LHDN's PCB specification, and confirmation of the YA 2026 bands. See `docs/research/malaysian-payroll-rates.md`. |
+| **Payroll (EPF/SOCSO/PCB/EIS)** | MOSTLY UNBLOCKED. **EPF verified** from the Third Schedule in force 01/10/2025 (1,203 validated wage bands). **EIS verified** from PERKESO with its age rules. **PCB tax schedule verified** from LHDN's Navigasi HASiL 2026, cumulative amounts arithmetic-checked. Outstanding: PERKESO's banded SOCSO table (a screenshot suffices) and LHDN's five MTD formula definitions. Sources committed under `docs/research/sources/`; see `docs/research/malaysian-payroll-rates.md`. |
 | Emailed invoices and statements | An email service key. Already noted at §4.4. |
 
 ### 8.3 Not buildable, and worth being honest about
