@@ -13,8 +13,8 @@ gap. Every figure below carries a source and a confidence level.
 | Scheme | State |
 | --- | --- |
 | **EPF** | ✅ **VERIFIED from the legal instrument.** Full Third Schedule transcribed — 1,203 wage bands. |
-| **EIS** | ✅ **VERIFIED from perkeso.gov.my**, including the age rules. |
-| **SOCSO** | ⚠️ Percentages corroborated; the **banded contribution table is still needed**. |
+| **EIS** | ✅ **VERIFIED** — full 65-band table transcribed from the Act 800 schedule, plus the age rules. |
+| **SOCSO** | ✅ **VERIFIED** — full 65-band table transcribed from the Act 4 schedule **including SKBBK**, in force since 01/06/2026. |
 | **PCB** | ⚠️ **Tax schedule verified** from LHDN with cumulative amounts, arithmetic-checked. The **five formula definitions** are still needed. |
 
 ---
@@ -84,39 +84,61 @@ easy to miss — a system built on older assumptions under-contributes for forei
 
 ---
 
-## EIS / SIP — ✅ verified
+## EIS / SIP — ✅ verified, table transcribed
 
-**Source:** perkeso.gov.my, Employment Insurance System Act 2017 (Act 800), Second Schedule
-and section 18.
+**Employment Insurance System Act 2017 (Act 800), Second Schedule.** Source committed at
+`docs/research/sources/eis-akta800-contribution-rates.pdf` (an image-only scan, read by
+rendering it), transcribed to `eis-akta800-from-2024-10-01.csv`.
 
-| Employer | Employee | Total |
+**65 bands, identical wage boundaries to the SOCSO schedule.** Employer and employee pay the
+same amount in every band. The top band is RM11.90 each — 0.2% of the RM5,950 band midpoint,
+which is how the headline "0.2%" is actually realised.
+
+- **Ceiling RM6,000/month**; band 65 repeats band 64, as in SOCSO.
+- **Employees aged 18 to 60 contribute.**
+- **Aged 57 or above with no contribution before 57: exempt.**
+- **Government employees, domestic workers and the self-employed: exempt.**
+
+Transcribed with a cross-check rather than by eye alone: rows 10 to 64 step by a flat 20 sen,
+so the transcription was asserted against that pattern at five independent points. The check
+caught a real slip — the ceiling row repeats rather than continuing the step.
+
+## SOCSO / PERKESO — ✅ verified, and the rates have CHANGED
+
+**Employees' Social Security Act 1969 (Act 4).** Source:
+*Kadar Caruman Baharu Merangkumi Skim Kemalangan Bukan Bencana Kerja (SKBBK)* —
+committed at `docs/research/sources/socso-akta4-skbbk-schedule.pdf`, transcribed to
+`socso-akta4-skbbk-from-2026-06-01.csv` (65 bands, every row's components validated
+against its stated total).
+
+### ⚠️ The correction that matters
+
+The first draft of this document said Category 2 was *employer 1.25%, employee nil*. **That
+is now wrong.** PERKESO introduced **SKBBK — Skim Kemalangan Bukan Bencana Kerja**, the
+24-hour "LINDUNG 24 Jam" non-work-accident scheme, **effective 1 June 2026**. It is already
+in force.
+
+SKBBK adds an **employee** contribution of roughly **0.75% of wages**, and it applies to
+**both** categories — so Category 2, which previously took nothing from the employee, now
+does. Any payroll built on the pre-June-2026 figures under-deducts from every employee.
+
+This is precisely the failure the tables exist to prevent: the widely-repeated
+"1.75% / 0.5%" summary describes a scheme that was superseded two months ago.
+
+### Structure of the schedule
+
+| | Category 1 (Employment Injury + Invalidity + SKBBK) | Category 2 (Employment Injury + SKBBK) |
 | --- | --- | --- |
-| **0.2%** | **0.2%** | 0.4% |
+| Who | Under 60 | Aged 60+, or already on Invalidity Pension |
+| Employer | one column | one column |
+| Employee | **two** columns — Invalidity, and SKBBK | **one** column — SKBBK |
 
-- **Capped at an assumed monthly salary of RM6,000.**
-- **Employees aged 18 to 60 must contribute.**
-- **Employees aged 57 and above who have no prior contribution before age 57 are exempt** —
-  this was the open question in the first draft, and it is now answered.
-- **Government employees, domestic workers and the self-employed are exempt.**
+At the RM5,900.01–6,000.00 band: Category 1 is employer **104.15**, employee invalidity
+**29.75**, employee SKBBK **44.65**, total **178.55**. Category 2 is employer **74.40**,
+employee SKBBK **44.65**, total **119.05**.
 
----
-
-## SOCSO / PERKESO — ⚠️ percentages only
-
-**Employees' Social Security Act 1969 (Act 4).**
-
-| Category | Who | Employer | Employee |
-| --- | --- | --- | --- |
-| **Category 1** — Employment Injury **and** Invalidity | Under 60 | 1.75% | 0.5% |
-| **Category 2** — Employment Injury **only** | Aged 60+, or already receiving Invalidity Pension | 1.25% | nil |
-
-**Wage ceiling RM6,000/month, effective 1 October 2024** (raised from RM5,000).
-
-**Still needed: the banded contribution table.** SOCSO works the same way EPF does — the
-statutory amount is a table cell, not the percentage. The percentages above describe the
-table; they are not the calculation.
-
----
+**Ceiling RM6,000/month** — the 65th band ("exceeding RM6,000") repeats the 64th exactly,
+which is how the ceiling is expressed in the schedule rather than as a separate rule.
 
 ## PCB / MTD — ⚠️ bands verified, formula spec still outstanding
 
@@ -170,15 +192,14 @@ text extract and will be lifted into an effective-dated table when the PCB engin
 
 ## What is still needed
 
-1. **PERKESO's banded SOCSO contribution table** (Category 1 and 2), current at the RM6,000
-   ceiling — `perkeso.gov.my/en/rate-of-contribution.html`. A screenshot of the table is
-   enough; it is far smaller than the EPF schedule.
-2. **LHDN's PCB 2026 specification PDF** — the five formula definitions. The tax bands are
-   now known, but the formula that turns a monthly wage into a deduction is not.
-3. **Confirmation that the YA 2025 bands carry into YA 2026.**
+**One thing:** LHDN's **five MTD formula definitions** — the algorithm that turns a monthly
+wage into a deduction. *Spesifikasi Kaedah Pengiraan Berkomputer PCB* on `hasil.gov.my`
+(Majikan → Spesifikasi Data). The tax bands and the reliefs are known; the formula is not.
 
-EPF needs nothing further. EIS needs nothing further. The PCB tax schedule needs nothing
-further; the PCB *formula* does.
+Also worth confirming, though not blocking: whether the YA 2025 bands carry into YA 2026.
+
+EPF, SOCSO and EIS need nothing further — all three are transcribed from their schedules and
+can be built today.
 
 ## How this will be verified once built
 
