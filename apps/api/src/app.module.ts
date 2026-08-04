@@ -23,6 +23,7 @@ import { StockController } from './modules/stock.controller.js';
 import { PosController } from './modules/pos.controller.js';
 import { RepairsController } from './modules/repairs.controller.js';
 import { QuotesController } from './modules/quotes.controller.js';
+import { PayrollController } from './modules/payroll.controller.js';
 import { OnboardingController } from './modules/onboarding.controller.js';
 import { DocumentsController } from './modules/documents.controller.js';
 import { PublicPayController } from './modules/public-pay.controller.js';
@@ -64,6 +65,7 @@ export const API_CONTROLLERS = [
   PosController,
   RepairsController,
   QuotesController,
+  PayrollController,
   OnboardingController,
   DocumentsController,
   PublicPayController,

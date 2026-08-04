@@ -23,6 +23,7 @@ export * from './audit.js';
 export * from './account.js';
 export * from './period.js';
 export * from './statutory.js';
+export * from './payroll.js';
 export * from './readiness.js';
 export * from './sandbox.js';
 export * from './tax-return.js';

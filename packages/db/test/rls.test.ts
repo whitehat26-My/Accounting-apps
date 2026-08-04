@@ -152,6 +152,15 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     app_role: 'global role definitions, read-only',
     app_permission: 'global permission definitions, read-only',
     role_permission: 'global role/permission matrix, read-only',
+    // The published EPF, SOCSO and EIS schedules. National rates: every tenant
+    // reads the identical rows, nobody writes them except a migration, and the
+    // application role holds SELECT only. Same reasoning as the LHDN code lists
+    // above. They are effective-dated rather than tenant-scoped, because what
+    // varies is the DATE a schedule applies from, not the organisation reading it.
+    statutory_epf_band: 'global EPF Third Schedule, read-only',
+    statutory_epf_rule: 'global EPF above-ceiling rates, read-only',
+    statutory_socso_band: 'global SOCSO Act 4 schedule, read-only',
+    statutory_eis_band: 'global EIS Act 800 schedule, read-only',
   };
 
   it('every tenant-owned table has RLS enabled AND forced with a policy', async () => {

@@ -79,6 +79,7 @@ export type Permission =
   | 'repair.write'
   | 'quote.read'
   | 'quote.write'
+  | 'payroll.read'
   | 'collections.chase'
   | 'org.manage'
   | 'org.delete';

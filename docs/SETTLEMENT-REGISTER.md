@@ -553,6 +553,42 @@ returning them at original cost vs current average). Until then: credit the invo
 post a counted adjustment when the unit physically returns — two honest records instead of
 one guessed one.
 
+### 5.9 Statutory contributions — BUILT (`0037`, `packages/domain/src/payroll.ts`)
+
+EPF, SOCSO and EIS, computed from the published schedules rather than from percentages.
+
+**What exists.** Migration `0037` seeds four global, effective-dated, read-only tables:
+1,203 EPF Third Schedule bands across Parts A/C/E, the above-ceiling percentage rules for
+A/C/E/F, 65 SOCSO bands (Act 4, including SKBBK) and 65 EIS bands (Act 800). Every figure
+was transcribed from a legal instrument committed under `docs/research/sources/`, and the
+CSVs the migration was generated from are committed beside it.
+`packages/domain/src/payroll.ts` applies them and is pure; `packages/db/src/payroll.ts`
+loads them; `POST /v1/payroll/contributions`, `POST /v1/payroll/employment-cost` and
+`GET /v1/payroll/schedules` serve them behind a new `payroll.read` permission that SALES
+and TECHNICIAN do not hold.
+
+**Why tables and not percentages — with the number that proves it.** EPF's employer share
+is **13% up to RM 5,000 and 12% above it**. Nothing in "the employer pays 12%", which is
+what every summary says, hints at that step. On a RM 2,500 wage the schedule says RM 325
+and a flat 12% says RM 300 — an under-deduction of RM 25 a month, which is the *employer's*
+liability, recoverable with penalty, compounding silently for as long as nobody checks.
+The domain suite asserts the engine's answer against all 1,203 published bands; the db
+suite asserts that the employer's bill genuinely goes DOWN between RM 5,000 and RM 5,100,
+so that any future "fix" of that anomaly fails the build.
+
+**What it deliberately does not do.** No employee records, no pay runs, no payslips, no
+ledger postings, and above all **no net pay** — PCB is not implemented (§8.2), and the
+field is called `wageAfterContributions` because that is what it is. The rates had to be
+right before a payroll built on them was worth having; a pay run shipped first would have
+produced plausible figures that were wrong by a few sen on most salaries.
+
+**Effective dating is load-bearing, not decorative.** SKBBK — the 24-hour non-work accident
+scheme — began on 1 June 2026 and added an employee deduction to SOCSO Category 2, which
+previously took nothing. `asOf` is required at every entry point with no default of `now()`,
+and the EPF bands are pinned to the same `effective_from` as the percentage tail so a 2025
+table can never be applied with a 2026 rate. A date before the earliest schedule this
+system carries raises `NO_SCHEDULE_IN_FORCE` rather than resolving to the nearest one.
+
 ### 5.5 Statutory notes for THIS tenant — flagged, not asserted
 
 ⚠️ **Verify with a tax agent; the register records the questions, not answers.**
@@ -657,7 +693,7 @@ Named rather than attempted, for the same reason the withholding rates are:
 | --- | --- |
 | **Automatic bank feeds** | A bank or aggregator API agreement. This is Xero's single biggest daily time-saver, and Malaysian open-banking access is not available to a small shop today. Statement import is the honest substitute and is BUILT. |
 | **Receipt OCR** | An OCR key (Textract / Document AI). The capture and attachment half is buildable now — the repair-photo pipeline in `0035` is the same shape — and the reader is a port behind it. |
-| **Payroll (EPF/SOCSO/PCB/EIS)** | NEARLY UNBLOCKED. **EPF, SOCSO and EIS are all verified and transcribed** from their statutory schedules — 1,203 + 65 + 65 wage bands, each validated against its own totals. The SOCSO figures include **SKBBK**, the 24-hour scheme effective 01/06/2026 that adds an employee contribution to BOTH categories and makes every pre-June-2026 summary wrong. The PCB tax bands and reliefs are verified too. Outstanding: LHDN's five MTD formula definitions, and only those. Sources under `docs/research/sources/`; see `docs/research/malaysian-payroll-rates.md`. |
+| **PCB (Monthly Tax Deduction)** | LHDN's five MTD formula definitions — `Spesifikasi Kaedah Pengiraan Berkomputer PCB`, from `hasil.gov.my` → Majikan → Spesifikasi Data. The tax bands and reliefs are already verified and transcribed; what is missing is the *algorithm* that turns a month's wage into a year's projected tax and back. It is the last of the four statutory deductions, and until it exists the contributions engine reports `wageAfterContributions` and refuses to call anything "net pay". |
 | Emailed invoices and statements | An email service key. Already noted at §4.4. |
 
 ### 8.3 Not buildable, and worth being honest about
