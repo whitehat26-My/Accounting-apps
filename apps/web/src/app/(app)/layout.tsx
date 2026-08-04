@@ -61,6 +61,7 @@ const SECTIONS: { label: string | null; items: NavItem[] }[] = [
     label: 'Manage',
     items: [
       { href: '/team', label: 'Team', icon: 'team', needs: 'user.read' },
+      { href: '/payroll', label: 'Payroll', icon: 'payroll', needs: 'payroll.read' },
       { href: '/audit', label: 'Audit', icon: 'audit', needs: 'audit.read' },
       { href: '/settings', label: 'Settings', icon: 'settings', needs: 'tax.read' },
     ],

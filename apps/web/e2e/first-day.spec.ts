@@ -17,7 +17,7 @@ test('first day at the shop', async ({ page }) => {
   await page.getByLabel('Your name').fill('Sharif');
   await page.getByLabel('Email').fill(email);
   await page.getByLabel('Password').fill(password);
-  await page.getByRole('button', { name: 'Register', exact: true }).click();
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
 
   await expect(page).toHaveURL(/\/setup/);
   await page.getByLabel('Business name').fill('Emil Computer Centre Sdn Bhd');
@@ -49,4 +49,27 @@ test('first day at the shop', async ({ page }) => {
   // ---- The day knows ------------------------------------------------------
   await page.getByRole('link', { name: 'Today' }).click();
   await expect(page.getByText('RM 150.00').first()).toBeVisible();
+
+  // ---- What would it cost to put someone behind that counter? -------------
+  /*
+   * The last question of a good first day, and the one that catches owners
+   * out: the wage is not the cost. This also proves the payroll screen reads
+   * the real statutory tables through the real API — the RM 325 below is the
+   * EPF Third Schedule's own figure for that band, which is 13% and not the
+   * 12% every summary quotes.
+   */
+  await page.getByRole('link', { name: 'Payroll' }).click();
+  await page.getByLabel('Monthly wage (RM)').fill('2500.00');
+  // `exact` because "Age" is a substring of "Monthly w-age- (RM)".
+  await page.getByLabel('Age', { exact: true }).fill('24');
+  await page.getByLabel('Contribution month').fill('2026-08-01');
+  await page.getByRole('button', { name: 'Calculate' }).click();
+
+  await expect(page.getByRole('cell', { name: 'RM 325.00' })).toBeVisible();
+  await expect(page.getByText('Total cost to the shop')).toBeVisible();
+  // Contributions only. A screen that said "net pay" while omitting income tax
+  // would be believed precisely because it looked finished.
+  await expect(page.getByText('Income tax (PCB) is not included.')).toBeVisible();
+
+  await page.screenshot({ path: 'e2e-artifacts/payroll.png', fullPage: true });
 });

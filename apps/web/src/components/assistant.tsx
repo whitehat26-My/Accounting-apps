@@ -174,6 +174,15 @@ const HELP: Record<string, { title: string; steps: string[] }> = {
       'Roles decide what each person sees — the cashier sees the till, not the books.',
     ],
   },
+  payroll: {
+    title: 'Payroll',
+    steps: [
+      'Type a monthly wage and it tells you three things: what the staff member takes home, what the shop pays on top, and the true total cost.',
+      'The figures are looked up in the EPF, SOCSO and EIS tables — not worked out from a percentage. The employer EPF rate is 13% up to RM 5,000 and 12% above, so the "12%" everyone quotes is wrong for most shop wages.',
+      'Set the contribution month if you are working out an earlier one. SKBBK changed the SOCSO deductions from 1 June 2026.',
+      'Income tax (PCB) is not included yet, so this is contributions only — not final net pay.',
+    ],
+  },
   settings: {
     title: 'Settings',
     steps: [
