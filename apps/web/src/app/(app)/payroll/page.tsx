@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, apiBlobUrl } from '@/lib/api';
 import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 import { rm, todayIso } from '@/lib/display';
 
@@ -104,39 +104,66 @@ export default function PayrollPage() {
   const [paidSoFar, setPaidSoFar] = useState('0.00');
   const [epfSoFar, setEpfSoFar] = useState('0.00');
   const [taxSoFar, setTaxSoFar] = useState('0.00');
+  // Only needed to PRINT: a payslip is addressed to someone, and the shop types
+  // the name because nothing here stores employees.
+  const [staffName, setStaffName] = useState('');
+  const [staffId, setStaffId] = useState('');
+  const [jobTitle, setJobTitle] = useState('');
+
+  /*
+   * One request body, built once and used by both buttons.
+   *
+   * Calculating and printing must not be able to disagree — a payslip that
+   * differs from the figures on the screen above it is the kind of defect
+   * nobody reports because nobody believes their own eyes.
+   */
+  const requestBody = () => ({
+    wage,
+    asOf,
+    // The only numbers this screen sends as numbers. An age and a child count
+    // are counts, not money — and the wage beside them stays a string precisely
+    // because it is money.
+    age: Number(age),
+    citizenship,
+    ...(withTax
+      ? {
+          tax: {
+            // A foreign worker on a contract of 182 days or more is resident
+            // for tax; a shorter posting is a flat 30%. The shop knows which, so
+            // the citizenship field is not overloaded to guess it.
+            resident: citizenship !== 'NON_CITIZEN',
+            category,
+            qualifyingChildren: Number(children),
+          },
+          taxYearToDate: {
+            accumulatedGross: paidSoFar,
+            accumulatedEpf: epfSoFar,
+            accumulatedMtd: taxSoFar,
+          },
+        }
+      : {}),
+  });
 
   const calculate = useMutation({
     mutationFn: () =>
       api<Payslip>(withTax ? '/v1/payroll/payslip' : '/v1/payroll/contributions', {
         method: 'POST',
-        body: {
-          wage,
-          asOf,
-          // The only numbers this screen sends as numbers. An age and a child
-          // count are counts, not money — and the wage beside them stays a
-          // string precisely because it is money.
-          age: Number(age),
-          citizenship,
-          ...(withTax
-            ? {
-                tax: {
-                  // A foreign worker on a contract of 182 days or more is
-                  // resident for tax; a shorter posting is a flat 30%. The shop
-                  // knows which, so the citizenship field is not overloaded to
-                  // guess it.
-                  resident: citizenship !== 'NON_CITIZEN',
-                  category,
-                  qualifyingChildren: Number(children),
-                },
-                taxYearToDate: {
-                  accumulatedGross: paidSoFar,
-                  accumulatedEpf: epfSoFar,
-                  accumulatedMtd: taxSoFar,
-                },
-              }
-            : {}),
-        },
+        body: requestBody(),
       }),
+  });
+
+  const print = useMutation({
+    mutationFn: async () => {
+      const url = await apiBlobUrl('/v1/payroll/payslip/pdf', {
+        ...requestBody(),
+        employee: {
+          name: staffName.trim(),
+          ...(staffId.trim() ? { staffId: staffId.trim() } : {}),
+          ...(jobTitle.trim() ? { jobTitle: jobTitle.trim() } : {}),
+        },
+      });
+      window.open(url, '_blank');
+    },
   });
 
   const result = calculate.data;
@@ -273,15 +300,51 @@ export default function PayrollPage() {
                   onChange={(event) => setTaxSoFar(event.target.value)}
                 />
               </Field>
+
+              {/*
+                Only needed to print. A payslip is a statement addressed to a
+                person, so it needs their name; the calculation does not, and
+                asking for it before it is needed would imply this system keeps
+                a staff register. It does not.
+              */}
+              <Field label="Staff name (to print a payslip)">
+                <Input
+                  value={staffName}
+                  onChange={(event) => setStaffName(event.target.value)}
+                  placeholder="Nurul Huda binti Ahmad"
+                />
+              </Field>
+              <Field label="Staff number">
+                <Input value={staffId} onChange={(event) => setStaffId(event.target.value)} />
+              </Field>
+              <Field label="Job title">
+                <Input value={jobTitle} onChange={(event) => setJobTitle(event.target.value)} />
+              </Field>
             </div>
           ) : null}
 
-          <Button type="submit" disabled={calculate.isPending}>
-            {calculate.isPending ? 'Working it out…' : 'Calculate'}
-          </Button>
+          <div className="flex flex-wrap items-center gap-3">
+            <Button type="submit" disabled={calculate.isPending}>
+              {calculate.isPending ? 'Working it out…' : 'Calculate'}
+            </Button>
+            {withTax ? (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={print.isPending || staffName.trim() === ''}
+                onClick={() => print.mutate()}
+              >
+                {print.isPending ? 'Preparing…' : 'Print payslip'}
+              </Button>
+            ) : null}
+            {withTax && staffName.trim() === '' ? (
+              <span className="text-xs text-slate-500">Enter a staff name to print.</span>
+            ) : null}
+          </div>
         </form>
 
         <ErrorNote error={calculate.error} />
+        <ErrorNote error={print.error} />
       </Card>
 
       {result ? (
@@ -460,7 +523,9 @@ export default function PayrollPage() {
           </li>
           <li>
             This is a calculator, not a payroll run: it keeps no employee records, files
-            nothing, and posts nothing to the accounts.
+            nothing, and posts nothing to the accounts. A printed payslip is generated on
+            the spot and not stored — print it again next month from the same figures, or
+            keep the PDF.
           </li>
         </ul>
       </Card>

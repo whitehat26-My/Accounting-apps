@@ -164,7 +164,15 @@ export async function receiptDocumentData(
   };
 }
 
-async function sellerBlock(tx: Tx, ctx: TenantContext): Promise<SellerBlock> {
+/**
+ * The organisation as it appears at the top of a printed document.
+ *
+ * Exported because a payslip needs the same block: it is the same legal entity
+ * making the statement, and a second query that read the same columns into a
+ * differently-shaped object would be a second place for the registration
+ * numbers to go stale.
+ */
+export async function sellerBlock(tx: Tx, ctx: TenantContext): Promise<SellerBlock> {
   const [org] = await tx<
     {
       name: string; ssm_registration_no: string | null; tin: string | null;

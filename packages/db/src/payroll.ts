@@ -34,6 +34,7 @@ import {
   type EpfPart,
   type EpfRule,
   type MonthlyContributions,
+  type SocsoCategory,
   type MtdBand,
   type MtdEmployee,
   type MtdMonth,
@@ -43,7 +44,8 @@ import {
   type StatutorySchedules,
 } from '@emil/domain';
 
-import type { Tx } from './client.js';
+import type { TenantContext, Tx } from './client.js';
+import { sellerBlock, type SellerBlock } from './document-data.js';
 
 export class PayrollError extends Error {
   constructor(
@@ -586,5 +588,165 @@ export async function computePayslip(tx: Tx, query: PayslipQuery): Promise<Paysl
     totalDeducted: Money.fromDecimal(contributions.totalEmployee, 'MYR')
       .add(result.mtd)
       .toDecimalString(),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The printed payslip
+// ---------------------------------------------------------------------------
+
+/**
+ * Who the payslip is FOR.
+ *
+ * Supplied by the caller, not looked up, because this system holds no employee
+ * records — see the note on `computeContributions`. That is a real limitation
+ * and it is better stated here than papered over: the shop types the name, and
+ * nothing about the person is retained afterwards.
+ */
+export interface PayslipEmployee {
+  readonly name: string;
+  /** Staff number, if the shop uses them. */
+  readonly staffId?: string;
+  readonly jobTitle?: string;
+  /**
+   * NRIC or passport. Optional, and deliberately so — a payslip is useful
+   * without it, and an identity document number is the kind of field that gets
+   * collected because a form has a box for it.
+   */
+  readonly idNumber?: string;
+}
+
+export interface PayslipDocument {
+  readonly employer: SellerBlock;
+  readonly employee: PayslipEmployee;
+  /** "August 2026" — the month the pay relates to, for the heading. */
+  readonly period: string;
+  readonly payDate: string;
+  readonly currency: 'MYR';
+  readonly earnings: readonly { readonly label: string; readonly amount: string }[];
+  readonly grossPay: string;
+  readonly deductions: readonly {
+    readonly label: string;
+    readonly note?: string;
+    readonly amount: string;
+  }[];
+  readonly totalDeductions: string;
+  readonly netPay: string;
+  readonly employerContributions: readonly {
+    readonly label: string;
+    readonly amount: string;
+  }[];
+  readonly totalEmployerContributions: string;
+  /** Which Part / Category / scheme applied, for the notes at the foot. */
+  readonly basis: {
+    readonly epfPart: EpfPart;
+    readonly socsoCategory: SocsoCategory;
+    readonly eisApplies: boolean;
+    readonly nonResident: boolean;
+    readonly chargeableIncome: string;
+  };
+}
+
+const MONTHS = [
+  'January', 'February', 'March', 'April', 'May', 'June',
+  'July', 'August', 'September', 'October', 'November', 'December',
+] as const;
+
+/**
+ * Everything a payslip prints, computed and assembled.
+ *
+ * ---------------------------------------------------------------------------
+ * THE TAX PROFILE IS REQUIRED HERE, UNLIKE EVERYWHERE ELSE.
+ *
+ * `computePayslip` will happily answer without one and return `netPay: null`,
+ * which is the right behaviour for a screen that is only costing a hire. A
+ * PRINTED payslip is different: it is a statement given to a person about
+ * their own pay, and a document headed "net pay" that silently omitted income
+ * tax would be believed absolutely. So this refuses to produce one.
+ * ---------------------------------------------------------------------------
+ */
+export async function payslipDocument(
+  tx: Tx,
+  ctx: TenantContext,
+  query: PayslipQuery & { readonly tax: MtdEmployee; readonly employee: PayslipEmployee },
+): Promise<PayslipDocument> {
+  const slip = await computePayslip(tx, query);
+  if (slip.pcb === null || slip.netPay === null || slip.totalDeducted === null) {
+    // Unreachable while `tax` is required by the type, and asserted rather than
+    // assumed: the alternative is a payslip with a blank where the tax goes.
+    throw new PayrollError(
+      'NO_SCHEDULE_IN_FORCE',
+      'A payslip cannot be printed without income tax. Supply the employee’s tax ' +
+        'profile, or use the contributions calculator, which does not claim to ' +
+        'state take-home pay.',
+    );
+  }
+
+  const employer = await sellerBlock(tx, ctx);
+  const month = Number(query.asOf.slice(5, 7));
+  const year = query.asOf.slice(0, 4);
+
+  const earnings: { label: string; amount: string }[] = [
+    { label: 'Basic wage', amount: slip.wage },
+  ];
+  if (query.bonus !== undefined && !Money.fromDecimal(query.bonus, 'MYR').isZero()) {
+    earnings.push({ label: 'Bonus / additional remuneration', amount: query.bonus });
+  }
+  const grossPay = earnings
+    .reduce((total, e) => total.add(Money.fromDecimal(e.amount, 'MYR')), Money.zero('MYR'))
+    .toDecimalString();
+
+  /*
+   * SOCSO is TWO lines on the employee side, not one.
+   *
+   * Invalidity and SKBBK are separate contributions collected together, and
+   * PERKESO's own statement shows them apart. A payslip that combined them
+   * could not be reconciled against that statement, which is the one thing a
+   * payslip most needs to survive.
+   */
+  const deductions: { label: string; note?: string; amount: string }[] = [
+    { label: 'EPF', note: `Third Schedule, Part ${slip.epfPart}`, amount: slip.epf.employee },
+    {
+      label: 'SOCSO — Invalidity',
+      note: `Act 4, Category ${slip.socsoCategory}`,
+      amount: slip.socso.employeeInvalidity,
+    },
+    { label: 'SOCSO — SKBBK', amount: slip.socso.employeeSkbbk },
+    {
+      label: 'EIS',
+      note: slip.eisApplies ? 'Act 800' : 'not covered',
+      amount: slip.eis.employee,
+    },
+    {
+      label: 'Income tax (PCB)',
+      note: slip.pcb.nonResident ? 'non-resident rate' : 'monthly tax deduction',
+      amount: slip.pcb.deduction,
+    },
+  ];
+
+  return {
+    employer,
+    employee: query.employee,
+    period: `${MONTHS[month - 1]} ${year}`,
+    payDate: query.asOf,
+    currency: 'MYR',
+    earnings,
+    grossPay,
+    deductions,
+    totalDeductions: slip.totalDeducted,
+    netPay: slip.netPay,
+    employerContributions: [
+      { label: 'EPF', amount: slip.epf.employer },
+      { label: 'SOCSO', amount: slip.socso.employer },
+      { label: 'EIS', amount: slip.eis.employer },
+    ],
+    totalEmployerContributions: slip.totalEmployer,
+    basis: {
+      epfPart: slip.epfPart,
+      socsoCategory: slip.socsoCategory,
+      eisApplies: slip.eisApplies,
+      nonResident: slip.pcb.nonResident,
+      chargeableIncome: slip.pcb.chargeableIncome,
+    },
   };
 }

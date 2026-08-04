@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   accessTokenFor,
   call,
+  callRaw,
   createTestApi,
+  pdfText,
   makeUser,
   seedTenant,
   type TestApi,
@@ -242,5 +244,83 @@ describe('income tax over HTTP', () => {
     // tax profile does not pretend to know the take-home.
     expect(response.body).not.toHaveProperty('netPay');
     expect(response.body).toHaveProperty('wageAfterContributions');
+  });
+});
+
+describe('the printed payslip', () => {
+  const technician = {
+    wage: '6000.00',
+    asOf: '2026-08-01',
+    age: 35,
+    citizenship: 'CITIZEN' as const,
+    tax: { resident: true, category: 1, qualifyingChildren: 0 },
+    taxYearToDate: {
+      accumulatedGross: '42000.00',
+      accumulatedEpf: '4620.00',
+      accumulatedMtd: '1452.50',
+    },
+    employee: { name: 'Nurul Huda binti Ahmad', staffId: 'SGT-004', jobTitle: 'Technician' },
+  };
+
+  it('renders a PDF', async () => {
+    const response = await callRaw(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip/pdf'),
+      body: technician,
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.headers['content-type']).toContain('application/pdf');
+    expect(response.headers['content-disposition']).toContain('payslip-august-2026.pdf');
+    expect(response.body.startsWith('%PDF')).toBe(true);
+
+    // Assert what is ON the page, not merely that a PDF came back.
+    const text = pdfText(response.body);
+    expect(text).toContain('Nurul Huda binti Ahmad');
+    expect(text).toContain('August 2026');
+    expect(text).toContain('NET PAY');
+    expect(text).toContain('5,046.20');
+    // Both halves of SOCSO, separately — PERKESO's own statement splits them,
+    // and a combined figure could not be reconciled against it.
+    expect(text).toContain('SOCSO');
+    expect(text).toContain('SKBBK');
+    // Every deduction names the instrument it comes from, so the figure can be
+    // checked against the authority's table instead of taken on trust.
+    expect(text).toContain('Third Schedule, Part A');
+    // The employer's share is on the page and explicitly not deducted.
+    expect(text).toContain('NOT DEDUCTED FROM YOUR PAY');
+  });
+
+  it('refuses to print one without a tax profile', async () => {
+    // A document headed "net pay" that silently omitted income tax would be
+    // believed absolutely. The calculator may answer without a tax profile; a
+    // payslip may not.
+    const { tax: _omitted, ...withoutTax } = technician;
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip/pdf'),
+      body: withoutTax,
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it('requires a name — a payslip is addressed to someone', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip/pdf'),
+      body: { ...technician, employee: { name: '   ' } },
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it('refuses SALES, like every other payroll route', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      url: '/v1/payroll/payslip/pdf',
+      token: salesToken,
+      tenantId: tenant.tenantId,
+      body: technician,
+    });
+    expect(response.status).toBe(403);
   });
 });

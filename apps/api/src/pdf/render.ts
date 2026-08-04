@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
-import type { InvoiceDocument, ReceiptDocument } from '@emil/db';
+import type { InvoiceDocument, PayslipDocument, ReceiptDocument } from '@emil/db';
 
 /**
  * PDF rendering — presentation, nothing else.
@@ -104,7 +104,144 @@ export function renderReceiptPdf(doc: ReceiptDocument): Promise<Buffer> {
   });
 }
 
+
+/**
+ * A payslip.
+ *
+ * ---------------------------------------------------------------------------
+ * THIS IS A STATEMENT GIVEN TO A PERSON ABOUT THEIR OWN PAY.
+ *
+ * Which changes what the page owes the reader. Every deduction names the
+ * instrument it comes from — "Third Schedule, Part A", "Act 4, Category 1" —
+ * so the figure can be checked against the authority's own tables rather than
+ * taken on trust. SOCSO appears as two lines because it IS two contributions
+ * and PERKESO's statement shows them apart; a combined figure would be
+ * impossible to reconcile.
+ *
+ * The employer's contributions are printed too, under their own heading and
+ * explicitly NOT deducted. They are not the employee's money and never touch
+ * their pay, but they are part of what the job is worth, and a payslip that
+ * hides them understates it by several hundred ringgit a month.
+ * ---------------------------------------------------------------------------
+ */
+export function renderPayslipPdf(doc: PayslipDocument): Promise<Buffer> {
+  return build((pdf) => {
+    header(pdf, doc.employer, 'PAYSLIP');
+
+    // ---- Who and when ------------------------------------------------------
+    const topY = pdf.y;
+    pdf.font('Helvetica-Bold').fontSize(11).text(doc.employee.name, MARGIN, topY);
+    pdf.font('Helvetica').fontSize(9).fillColor('#555555');
+    if (doc.employee.jobTitle) pdf.text(doc.employee.jobTitle, MARGIN, pdf.y);
+    if (doc.employee.staffId) pdf.text(`Staff no: ${doc.employee.staffId}`, MARGIN, pdf.y);
+    if (doc.employee.idNumber) pdf.text(`ID: ${doc.employee.idNumber}`, MARGIN, pdf.y);
+    const leftBottom = pdf.y;
+
+    pdf.fillColor('#555555').fontSize(8);
+    pdf.text('PAY PERIOD', 380, topY, { width: 165, align: 'right', characterSpacing: 0.5 });
+    pdf.fillColor('#000000').font('Helvetica-Bold').fontSize(11);
+    pdf.text(doc.period, 380, pdf.y, { width: 165, align: 'right' });
+    pdf.font('Helvetica').fontSize(8).fillColor('#555555');
+    pdf.text(`Dated ${displayDate(doc.payDate)}`, 380, pdf.y + 1, { width: 165, align: 'right' });
+
+    pdf.fillColor('#000000');
+    pdf.y = Math.max(leftBottom, pdf.y) + 12;
+    rule(pdf);
+
+    // ---- Earnings ----------------------------------------------------------
+    sectionHeading(pdf, 'EARNINGS');
+    for (const line of doc.earnings) {
+      amountRow(pdf, line.label, undefined, line.amount);
+    }
+    subtotalRow(pdf, 'Gross pay', doc.grossPay);
+
+    // ---- Deductions --------------------------------------------------------
+    pdf.moveDown(0.6);
+    sectionHeading(pdf, 'DEDUCTIONS');
+    for (const line of doc.deductions) {
+      amountRow(pdf, line.label, line.note, line.amount);
+    }
+    subtotalRow(pdf, 'Total deductions', doc.totalDeductions);
+
+    // ---- Net pay -----------------------------------------------------------
+    pdf.moveDown(0.8);
+    const netY = pdf.y;
+    pdf.rect(MARGIN, netY, 495, 30).fill('#f4f4f5');
+    pdf.fillColor(BRAND).font('Helvetica-Bold').fontSize(11)
+      .text('NET PAY', MARGIN + 12, netY + 10);
+    pdf.fillColor('#000000').fontSize(14)
+      .text(`RM ${money(doc.netPay)}`, 300, netY + 8, { width: 233, align: 'right' });
+    pdf.font('Helvetica').fontSize(9);
+    pdf.y = netY + 42;
+
+    // ---- What the employer pays on top -------------------------------------
+    sectionHeading(pdf, 'EMPLOYER CONTRIBUTIONS — NOT DEDUCTED FROM YOUR PAY');
+    for (const line of doc.employerContributions) {
+      amountRow(pdf, line.label, undefined, line.amount);
+    }
+    subtotalRow(pdf, 'Paid by the employer', doc.totalEmployerContributions);
+
+    // ---- The basis, so every figure can be checked --------------------------
+    pdf.moveDown(0.8);
+    pdf.fontSize(7.5).fillColor('#555555');
+    const basis = [
+      `EPF: Employees Provident Fund Act 1991, Third Schedule, Part ${doc.basis.epfPart}.`,
+      `SOCSO: Employees' Social Security Act 1969 (Act 4), Category ${doc.basis.socsoCategory}, including SKBBK.`,
+      doc.basis.eisApplies
+        ? 'EIS: Employment Insurance System Act 2017 (Act 800).'
+        : 'EIS: not applicable to this employee under Act 800.',
+      doc.basis.nonResident
+        ? 'PCB: non-resident flat rate on gross remuneration.'
+        : `PCB: monthly tax deduction, computed on RM ${money(doc.basis.chargeableIncome)} of chargeable income projected for the year.`,
+    ];
+    for (const note of basis) {
+      pdf.text(note, MARGIN, pdf.y, { width: 495, lineGap: 1.5 });
+    }
+    pdf.fillColor('#000000');
+
+    footer(pdf);
+  });
+}
+
+function sectionHeading(pdf: PDFKit.PDFDocument, title: string): void {
+  pdf.font('Helvetica-Bold').fontSize(8).fillColor(BRAND)
+    .text(title, MARGIN, pdf.y, { characterSpacing: 0.6 });
+  pdf.fillColor('#000000').font('Helvetica').fontSize(9);
+  pdf.y += 3;
+}
+
+/** One label — optionally with the instrument it comes from — and one amount. */
+function amountRow(
+  pdf: PDFKit.PDFDocument,
+  label: string,
+  note: string | undefined,
+  amount: string,
+): void {
+  const y = pdf.y;
+  pdf.font('Helvetica').fontSize(9).text(label, MARGIN, y, { width: 200 });
+  if (note !== undefined) {
+    pdf.fontSize(7.5).fillColor('#777777')
+      .text(note, MARGIN + 205, y + 1.5, { width: 160 });
+    pdf.fillColor('#000000').fontSize(9);
+  }
+  pdf.text(money(amount), 430, y, { width: 115, align: 'right' });
+  pdf.y = y + LINE;
+}
+
+function subtotalRow(pdf: PDFKit.PDFDocument, label: string, amount: string): void {
+  pdf.strokeColor('#d4d4d8');
+  pdf.moveTo(MARGIN, pdf.y).lineTo(545, pdf.y).stroke();
+  pdf.strokeColor('#000000');
+  pdf.y += 4;
+  const y = pdf.y;
+  pdf.font('Helvetica-Bold').fontSize(9).text(label, MARGIN, y, { width: 300 });
+  pdf.text(`RM ${money(amount)}`, 430, y, { width: 115, align: 'right' });
+  pdf.font('Helvetica');
+  pdf.y = y + LINE;
+}
+
 // ------------------------------------------------------------------ helpers
+
 
 function build(draw: (pdf: PDFKit.PDFDocument) => void): Promise<Buffer> {
   return new Promise((resolve, reject) => {

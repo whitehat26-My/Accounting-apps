@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { call, callRaw, createTestApi, type TestApi } from './helpers.js';
+import { call, callRaw, createTestApi, pdfText, type TestApi } from './helpers.js';
 
 /**
  * The first run, end to end, with NOTHING seeded.
@@ -120,14 +120,6 @@ const as = (url: string) => ({ url, token: accessToken, tenantId });
  * what lets these tests assert the CONTENT of a page, not just its magic
  * bytes.
  */
-function pdfText(body: string): string {
-  // Joined with NOTHING: pdfkit splits a single phrase into several hex runs
-  // at kerning adjustments ("INV", "OICE (P", "AID)"), so any separator would
-  // break substring assertions on ordinary words.
-  return [...body.matchAll(/<([0-9a-fA-F]+)>/g)]
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-}
 
 describe('first trading day', () => {
   let itemId: string;

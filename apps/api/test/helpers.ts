@@ -190,24 +190,63 @@ export async function accessTokenFor(
 /**
  * The same request, without parsing the body as JSON.
  *
- * `call` assumes JSON, which is right for every route but the CSV exports —
- * and a test that ran those through `JSON.parse` would fail on the response
- * rather than on the assertion, hiding what actually broke.
+ * `call` assumes JSON, which is right for every route but the CSV exports and
+ * the PDFs — and a test that ran those through `JSON.parse` would fail on the
+ * response rather than on the assertion, hiding what actually broke.
+ *
+ * It sends a request body when given one, because not every non-JSON response
+ * comes from a GET: the payslip is rendered from figures that must travel in a
+ * body, since a salary in a query string ends up in every proxy's access log.
  */
 export async function callRaw(api: TestApi, options: Call) {
   const headers: Record<string, string> = {};
   if (options.token) headers['authorization'] = `Bearer ${options.token}`;
   if (options.tenantId) headers['x-tenant-id'] = options.tenantId;
+  if (options.body !== undefined) {
+    headers['content-type'] = 'application/json';
+    headers['idempotency-key'] = options.idempotencyKey ?? randomUUID();
+  }
 
   const response = await api.app.getHttpAdapter().getInstance().inject({
     method: options.method,
     url: options.url,
     headers,
+    // Stringified, exactly as `call` does. Passing the object widens the
+    // inject overload to a union and the whole helper stops type-checking.
+    ...(options.body !== undefined ? { payload: JSON.stringify(options.body) } : {}),
   });
 
   return {
     status: response.statusCode,
     headers: response.headers as Record<string, string>,
     body: response.body,
+    /*
+     * The UNDECODED bytes.
+     *
+     * `body` is a string decoded as UTF-8, which is fine for CSV and for
+     * asserting on the ASCII text inside a PDF — but it mangles every byte
+     * above 127, so writing it back out produces a PDF whose embedded images
+     * are corrupt while its text still reads correctly. That failure looks
+     * like a rendering bug and is not one. Anything that needs the real file
+     * takes this.
+     */
+    raw: response.rawPayload,
   };
+}
+
+/**
+ * The readable text of a rendered PDF.
+ *
+ * The renderer sets `compress: false` precisely so this is possible — it lets a
+ * test assert what is ON the page rather than only that some PDF came back,
+ * which is the difference between catching a blank payslip and shipping one.
+ *
+ * Joined with NOTHING: pdfkit splits a single phrase into several hex runs at
+ * kerning adjustments ("INV", "OICE (P", "AID)"), so any separator would break
+ * substring assertions on ordinary words.
+ */
+export function pdfText(body: string): string {
+  return [...body.matchAll(/<([0-9a-fA-F]+)>/g)]
+    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
+    .join('');
 }

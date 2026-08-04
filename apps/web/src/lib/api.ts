@@ -169,17 +169,29 @@ function refreshAccessToken(): Promise<boolean> {
  * object URL. A plain <a href> cannot carry the Authorization header, so
  * "Print receipt" fetches the bytes and opens the blob — same authentication
  * path as every other request, no token in any URL.
+ *
+ * Takes an optional body, because not every document is a stored one fetched
+ * by id: a payslip is rendered from figures that must travel in a POST body,
+ * since a salary in a query string ends up in every proxy's access log between
+ * here and the shop PC.
  */
-export async function apiBlobUrl(path: string): Promise<string> {
+export async function apiBlobUrl(path: string, body?: unknown): Promise<string> {
   if (DEMO) {
     const { DEMO_PDF_MESSAGE } = await import('./demo');
     throw new ApiError(501, { message: DEMO_PDF_MESSAGE });
   }
   const session = loadSession();
+  const headers: Record<string, string> = session
+    ? { authorization: `Bearer ${session.accessToken}`, 'x-tenant-id': session.tenantId }
+    : {};
+  if (body !== undefined) {
+    headers['content-type'] = 'application/json';
+    headers['idempotency-key'] = crypto.randomUUID();
+  }
   const response = await fetch(`/api${path}`, {
-    headers: session
-      ? { authorization: `Bearer ${session.accessToken}`, 'x-tenant-id': session.tenantId }
-      : {},
+    method: body === undefined ? 'GET' : 'POST',
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!response.ok) throw new ApiError(response.status, { message: `Document failed (${response.status})` });
   return URL.createObjectURL(await response.blob());

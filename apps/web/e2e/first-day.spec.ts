@@ -105,4 +105,22 @@ test('first day at the shop', async ({ page }) => {
   await expect(page.getByRole('cell', { name: 'RM 953.80' })).toBeVisible();
 
   await page.screenshot({ path: 'e2e-artifacts/payroll-with-tax.png', fullPage: true });
+
+  // ---- And print it -------------------------------------------------------
+  /*
+   * The button is disabled until a name is typed, because a payslip is a
+   * statement addressed to a person. Asserting the disabled state first is the
+   * point: it is the only thing standing between "calculator" and "document
+   * with somebody's pay on it and no name at the top".
+   */
+  const printButton = page.getByRole('button', { name: 'Print payslip' });
+  await expect(printButton).toBeDisabled();
+
+  await page.getByLabel('Staff name (to print a payslip)').fill('Nurul Huda binti Ahmad');
+  await expect(printButton).toBeEnabled();
+
+  // The PDF opens in a new tab, fetched with the session attached — a plain
+  // link could not carry the Authorization header.
+  const [slip] = await Promise.all([page.waitForEvent('popup'), printButton.click()]);
+  await expect.poll(() => slip.url()).toContain('blob:');
 });

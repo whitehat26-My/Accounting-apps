@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Inject, Post, Query, Req } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import { Body, Controller, Get, Inject, Post, Query, Req, Res } from '@nestjs/common';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { decimal, isoDate, positiveDecimal } from '@emil/contracts';
 import {
@@ -7,6 +7,7 @@ import {
   computePayslip,
   employmentCost,
   loadStatutorySchedules,
+  payslipDocument,
   withTenant,
   type Sql,
 } from '@emil/db';
@@ -15,6 +16,7 @@ import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
+import { renderPayslipPdf } from '../pdf/render.js';
 
 /**
  * Statutory payroll — EPF, SOCSO, EIS and PCB.
@@ -22,8 +24,10 @@ import { parse } from '../validation.js';
  * ---------------------------------------------------------------------------
  * A CALCULATOR, NOT A PAYROLL. THE DIFFERENCE IS DELIBERATE.
  *
- * There are no employee records here, no pay runs, no payslip documents and no
- * ledger postings. What exists is the part that must be RIGHT before any of
+ * There are no employee records here, no pay runs and no ledger postings. A
+ * payslip CAN be printed — `payslip/pdf` — but nothing about it is retained,
+ * because there is nowhere to retain it and pretending otherwise would be
+ * worse than the gap. What exists is the part that must be RIGHT before any of
  * that is worth building: all four statutory deductions, loaded from
  * effective-dated tables and applied by pure engines tested against the
  * published schedules — 1,203 EPF bands, and IRBM's own four-month worked
@@ -110,6 +114,58 @@ export class PayrollController {
         ...(input.taxYearToDate !== undefined ? { taxYearToDate: input.taxYearToDate } : {}),
       }),
     );
+  }
+
+  /**
+   * The payslip as a printable document.
+   *
+   * A POST that returns a PDF, which is unusual and deliberate: there is no
+   * stored payslip to GET by id, because this system keeps no employee records
+   * and no pay runs. Everything the page shows arrives in the body, is rendered,
+   * and is not retained — which is stated on the screen rather than left for
+   * someone to discover when they look for last month's copy.
+   */
+  @Requires('payroll.read')
+  @Doc({ request: () => payslipPdfSchema })
+  @Post('payslip/pdf')
+  async payslipPdf(
+    @Body() body: unknown,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const input = parse(payslipPdfSchema, body);
+    const ctx = tenantContextOf(request);
+    const doc = await withTenant(this.sql, ctx, (tx) =>
+      payslipDocument(tx, ctx, {
+        wage: input.wage,
+        asOf: input.asOf,
+        subject: subjectOf(input),
+        tax: {
+          resident: input.tax.resident,
+          category: input.tax.category,
+          qualifyingChildren: input.tax.qualifyingChildren,
+          ...(input.tax.disabled !== undefined ? { disabled: input.tax.disabled } : {}),
+          ...(input.tax.disabledSpouse !== undefined
+            ? { disabledSpouse: input.tax.disabledSpouse }
+            : {}),
+        },
+        employee: {
+          name: input.employee.name,
+          ...(input.employee.staffId !== undefined ? { staffId: input.employee.staffId } : {}),
+          ...(input.employee.jobTitle !== undefined ? { jobTitle: input.employee.jobTitle } : {}),
+          ...(input.employee.idNumber !== undefined ? { idNumber: input.employee.idNumber } : {}),
+        },
+        ...(input.bonus !== undefined ? { bonus: input.bonus } : {}),
+        ...(input.taxYearToDate !== undefined ? { taxYearToDate: input.taxYearToDate } : {}),
+      }),
+    );
+
+    const pdf = await renderPayslipPdf(doc);
+    const slug = doc.period.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    void reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="payslip-${slug}.pdf"`)
+      .send(pdf);
   }
 
   /**
@@ -226,4 +282,18 @@ const payslipSchema = contributionSchema.extend({
       zakatThisMonth: decimal.optional(),
     })
     .optional(),
+});
+
+const payslipPdfSchema = payslipSchema.extend({
+  employee: z.object({
+    /**
+     * Typed by the shop, not looked up — this system holds no employee records,
+     * and the payslip says so at the foot rather than implying a register that
+     * does not exist.
+     */
+    name: z.string().trim().min(1).max(120),
+    staffId: z.string().trim().max(40).optional(),
+    jobTitle: z.string().trim().max(80).optional(),
+    idNumber: z.string().trim().max(40).optional(),
+  }),
 });

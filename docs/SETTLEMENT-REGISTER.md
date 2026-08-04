@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0038` (statutory PCB), 1,499 tests
-(696 domain · 565 db · 200 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0038` (statutory PCB), 1,503 tests
+(696 domain · 565 db · 204 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`) — register, onboard,
 add an item, ring a cash sale, see the takings, and cost a hire with all four statutory
 deductions.
@@ -624,6 +624,19 @@ that remain. The db suite proves the consequence with two payslips that differ o
 year-to-date: the same RM6,000 wage in the same August deducts RM207.50 from someone paid
 since January and **nothing** from someone who started that month. An engine that taxed
 each month alone would over-collect from the new joiner every month to December.
+
+**The printed payslip — BUILT.** `POST /v1/payroll/payslip/pdf` renders a one-page A4
+payslip: earnings, the four deductions each naming the instrument it comes from, net pay,
+and the employer's contributions under their own heading marked *not deducted from your
+pay*. SOCSO appears as two lines because it is two contributions and PERKESO's statement
+splits them; a combined figure could not be reconciled against it.
+
+Two refusals are enforced rather than documented. It will not print without a tax profile —
+a document headed "net pay" that silently omitted income tax would be believed absolutely,
+and `computePayslip` will happily answer without one for a screen that is merely costing a
+hire. And it will not print without a name, because a payslip is a statement addressed to a
+person. The employee's name is typed by the shop and not retained, because there is nowhere
+to retain it; the document says so rather than implying a staff register that does not exist.
 
 **Deliberately absent.** The REP and Knowledge-Worker formulae (pages 13–18) — both need
 prior Ministerial approval that a computer shop will not have; `MtdCategory` has no code

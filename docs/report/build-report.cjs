@@ -27,31 +27,36 @@ const OUT = path.join(__dirname, 'Shah-G-Tech-Technical-Report.pdf');
 // place to correct, and none of them is an estimate.
 // ---------------------------------------------------------------------------
 const FACTS = {
-  migrations: 34,
-  tables: 82,
-  rlsTables: 70,
-  tenantTables: 69,
-  policies: 70,
-  policiesWithCheck: 70,
+  migrations: 38,
+  tables: 92,
+  rlsTables: 74,
+  tenantTables: 73,
+  policies: 74,
+  policiesWithCheck: 74,
   definerFns: 25,
   definerPinned: 25,
   definerPublic: 0,
-  numericCols: 111,
+  numericCols: 140,
   floatCols: 0,
-  triggers: 101,
-  indexes: 211,
+  triggers: 104,
+  indexes: 227,
   views: 2,
-  routes: 148,
-  tests: 1382,
-  testsDomain: 649,
-  testsDb: 518,
-  testsApi: 177,
+  routes: 162,
+  tests: 1499,
+  testsDomain: 696,
+  testsDb: 565,
+  testsApi: 200,
   testsWorker: 21,
   testsContracts: 17,
-  testFiles: 89,
-  locTs: 79628,
-  locSql: 7549,
+  testFiles: 97,
+  locTs: 85944,
+  locSql: 9414,
   invariants: 14,
+  // Statutory schedules carried as effective-dated data (migrations 0037-0038).
+  epfBands: 1203,
+  socsoBands: 65,
+  eisBands: 65,
+  mtdBands: 9,
 };
 
 let commit = 'unknown';
@@ -309,7 +314,7 @@ const coverRows = [
   ['Prepared for', 'Shah G Tech — computer sales, service and workshop'],
   ['System', 'Multi-tenant accounting, point of sale and workshop management'],
   ['Base currency', 'Malaysian Ringgit (MYR)'],
-  ['Date', '3 August 2026'],
+  ['Date', '4 August 2026'],
   ['Source revision', commit],
   ['Status', 'Built and verified; not yet deployed to a server'],
 ];
@@ -372,7 +377,7 @@ body('The system is complete enough to run the shop: users and roles, the double
   + 'the day’s takings.');
 
 body('It has not been deployed. The hosting kit is written and the runbook exists, but no server has '
-  + 'been provisioned, so nothing is running anywhere yet. Section 6 sets out what that needs.');
+  + 'been provisioned, so nothing is running anywhere yet. Section 7 sets out what that needs.');
 
 callout('The one-sentence summary',
   'The books are correct by construction rather than by discipline: the ledger cannot be edited, money '
@@ -809,17 +814,119 @@ body('The only part of the system that serves tenant data without authentication
 callout('What this review does not claim',
   'This was a review by the same party that wrote the system, which is a real limitation: it is much '
   + 'easier to find the mistakes you did not know you were making when somebody else looks. An '
-  + 'independent penetration test before the system holds real money is recommended in section 6, and '
+  + 'independent penetration test before the system holds real money is recommended in section 7, and '
   + 'nothing here should be read as a substitute for one.', WARN);
 
 // ---------------------------------------------------------------------------
-h1('6', 'What I would add next');
+h1('6', 'Statutory compliance');
+
+body('Malaysian payroll has four compulsory deductions, and every one of them is a lookup table '
+  + 'published by a different authority. This chapter is separate from the rest because the '
+  + 'engineering question it answers is different: everywhere else the risk is a bug, and here the '
+  + 'risk is being confidently, plausibly, quietly wrong.');
+
+callout('The single number that explains this chapter',
+  'The employer’s EPF contribution is thirteen percent of wages up to RM 5,000, and twelve percent '
+  + 'above it. Every summary, every forum answer and every spreadsheet template says "twelve". On a '
+  + 'RM 2,500 wage the published schedule says RM 325 and twelve percent says RM 300 — an '
+  + 'under-deduction of RM 25 a month that compounds silently for as long as nobody checks, and which '
+  + 'is the employer’s liability to make good, with penalty. Not the employee’s.',
+  WARN);
+
+body('That is why nothing in this system multiplies a wage by a percentage. All four schemes are '
+  + 'tables in law, the tables are transcribed from the legal instruments, and the instruments '
+  + 'themselves are committed into the repository beside the code so any figure can be traced to the '
+  + 'page it came from. The percentages people quote are a description of these tables, not the rule.');
+
+h2('6.1 What is carried, and from where');
+
+table(
+  [{ label: 'Deduction', width: 0.2 }, { label: 'Source instrument', width: 0.45 }, { label: 'Rows', width: 0.12, align: 'center' }, { label: 'Effective', width: 0.23 }],
+  [
+    [{ text: 'EPF', bold: true }, 'Employees Provident Fund Act 1991, Third Schedule — Parts A, C, E and F', { text: FACTS.epfBands.toLocaleString('en-GB'), bold: true }, '01/10/2025'],
+    [{ text: 'SOCSO', bold: true }, 'Employees’ Social Security Act 1969 (Act 4), including SKBBK', { text: String(FACTS.socsoBands), bold: true }, '01/06/2026'],
+    [{ text: 'EIS', bold: true }, 'Employment Insurance System Act 2017 (Act 800)', { text: String(FACTS.eisBands), bold: true }, '01/10/2024'],
+    [{ text: 'PCB', bold: true }, 'IRBM Specification for MTD Calculations using Computerized Calculation 2026', { text: String(FACTS.mtdBands), bold: true }, '01/01/2026'],
+  ],
+);
+
+body('None of these are constants in code. They are rows in effective-dated tables, read as at the '
+  + 'contribution month rather than as at today, and the distinction is not academic: SKBBK — the '
+  + '24-hour non-work accident scheme — began on 1 June 2026 and added an employee deduction to a '
+  + 'SOCSO category that previously took nothing. A system reading "the current rates" silently '
+  + 'restates every payslip it ever produced the first time a rate changes.');
+
+h2('6.2 Three findings worth recording');
+
+body('Each of these was found by checking the implementation against the published source, and each '
+  + 'would have produced figures that looked entirely reasonable.');
+
+bullets([
+  { title: 'The 60-and-over EPF rate is two different rates.',
+    text: 'Secondary sources disagree with each other about it, and the reason is that they are '
+      + 'quoting different Parts of the same Schedule without saying so. Part E covers Malaysian '
+      + 'citizens aged 60 and over — the employer contributes and the employee does not — while Part C '
+      + 'covers permanent residents of the same age, who still pay. The distinction is invisible in '
+      + 'every summary and is confirmed in the data itself.' },
+  { title: 'SOCSO Category 2 is no longer nil to the employee.',
+    text: 'Earlier research said an employee aged 60 or over contributed nothing. That was true and '
+      + 'is now out of date: from 1 June 2026 SKBBK applies to both categories. Category 1 also '
+      + 'carries two separate employee columns — Invalidity and SKBBK — which the payslip shows '
+      + 'separately, because PERKESO’s own statement does and a single combined figure cannot be '
+      + 'reconciled against it.' },
+  { title: 'Monthly tax deduction is not a tax on the month.',
+    text: 'PCB projects the whole year — this month’s pay is assumed to repeat, the year is taxed, '
+      + 'what has already been deducted is subtracted, and the remainder is spread over the months '
+      + 'remaining. The consequence is testable and counterintuitive: on the same wage in the same '
+      + 'month, someone paid since January owes RM 207.50 and someone who started that month owes '
+      + 'nothing, because a part year falls where the RM 400 individual rebate covers the tax.' },
+]);
+
+h2('6.3 How the figures are proved');
+
+body('Two independent checks, deliberately not sharing a source. The calculation engine is pure — it '
+  + 'touches no database — which is what makes the first one possible at all.');
+
+table(
+  [{ label: 'Check', width: 0.34 }, { label: 'What it does', width: 0.66 }],
+  [
+    ['Every published band', 'The contribution engine is run against all ' + FACTS.epfBands.toLocaleString('en-GB') + ' EPF bands and all ' + FACTS.socsoBands + ' SOCSO and EIS bands, twice per band, reading the same transcribed tables the migration was generated from. An engine that disagrees with the schedule anywhere fails here.'],
+    ['The authority’s own worked example', 'IRBM publishes a four-month calculation with its specification — January and February plain, March with optional reliefs, April with an RM 8,250 bonus. The tax engine reproduces all four exactly, month by month, including the accumulation between them.'],
+    ['The loader, separately', 'Against a real database: that the migration loaded the tables faithfully, and that a payroll dated to an earlier month gets that month’s schedule. Either check alone is a half-check.'],
+    ['Through the browser', 'The end-to-end journey costs a hire and produces a payslip against the real server and database, so a regression in the schedule, the loader or the formula fails the browser test too.'],
+  ],
+);
+
+callout('What the tests caught, in both directions',
+  'Reproducing the authority’s worked example found a genuine defect: one intermediate value must be '
+  + 'computed differently in two steps of the bonus formula, and computing it the same way in both '
+  + 'leaves each step individually plausible and the answer wrong. In the other direction, several of '
+  + 'my own test expectations turned out to be wrong where the engine was right — the RM 325 above was '
+  + 'one, and a rounding rule that truncates before it rounds up was another. Both are recorded as '
+  + 'tests now, with the reasoning, so the next reader does not re-derive them.');
+
+h2('6.4 What is deliberately not claimed');
+
+body('Two of the five tax formulae in the specification are not implemented: the Returning Expert '
+  + 'Programme and the Knowledge Worker rate both require prior Ministerial approval that a computer '
+  + 'shop will not hold, and there is no code path that quietly falls back to them. No year before '
+  + '2026 is carried — an earlier date raises an explicit error rather than applying this year’s '
+  + 'schedule backwards through a Budget.');
+
+body('And the whole of this is a calculator, not a payroll run. It keeps no employee records, files '
+  + 'nothing with any authority, and posts nothing to the accounts. That ordering was chosen: the '
+  + 'rates had to be demonstrably right before anything built on top of them was worth having, '
+  + 'because a pay run shipped first would have produced confident figures from day one that were '
+  + 'wrong by a few sen on most salaries.');
+
+// ---------------------------------------------------------------------------
+h1('7', 'What I would add next');
 
 body('This section is the honest list of what is missing, in the order I would do it. It is divided '
   + 'by what is stopping each item, because "not built" and "cannot be built yet" are different '
   + 'situations and mixing them hides the ones that need a decision from you.');
 
-h2('6.1 Before the system holds real money');
+h2('7.1 Before the system holds real money');
 
 table(
   [{ label: 'Item', width: 0.3 }, { label: 'Why it matters', width: 0.7 }],
@@ -833,7 +940,7 @@ table(
   ],
 );
 
-h2('6.2 Blocked on something only you or an outside party can supply');
+h2('7.2 Blocked on something only you or an outside party can supply');
 
 body('Each of these is built up to the boundary and stops where a credential or a document is '
   + 'required. None is blocked on engineering work.');
@@ -851,7 +958,7 @@ table(
   ],
 );
 
-h2('6.3 Worth doing soon after launch');
+h2('7.3 Worth doing soon after launch');
 
 bullets([
   { lead: 'Error tracking.', text: 'Automatic reporting when something fails in production, with financial details scrubbed before they leave the machine. At present a failure is visible only in the server log, if somebody looks.' },
@@ -862,7 +969,7 @@ bullets([
   { lead: 'A second server.', text: 'Today one machine failing takes the shop offline. Whether that matters is a business decision about how long the counter can run on paper.' },
 ]);
 
-h2('6.4 Later, and only when the size demands it');
+h2('7.4 Later, and only when the size demands it');
 
 bullets([
   { lead: 'A read replica', text: 'so heavy reports do not compete with the till. Not needed at this volume.' },
@@ -872,7 +979,7 @@ bullets([
   { lead: 'Malay and Chinese interfaces.', text: 'The interface is English today; the groundwork for translation is worth laying before there are hundreds of screens.' },
 ]);
 
-h2('6.5 One thing I would change about how it is built');
+h2('7.5 One thing I would change about how it is built');
 
 body('The rate limiter keeping its counters in memory is the clearest example of a decision that is '
   + 'correct today and wrong the moment there are two servers, and it is documented as such rather '
@@ -881,7 +988,7 @@ body('The rate limiter keeping its counters in memory is the clearest example of
   + 'the same memory and shares the same limitation.');
 
 // ---------------------------------------------------------------------------
-h1('7', 'Verification');
+h1('8', 'Verification');
 
 body('Everything asserted in this document is checked automatically. The figures below were produced '
   + 'by running the full suite immediately before this report was generated.');
@@ -928,9 +1035,11 @@ const SUB = {
     'The fourteen invariants', 'The audit trail'],
   '5': ['The approach', 'Tenant isolation, verified', 'Identity and access', 'The security review',
     'Attack surface'],
-  '6': ['Before the system holds real money', 'Blocked on outside input', 'Worth doing soon',
+  '6': ['What is carried, and from where', 'Three findings worth recording',
+    'How the figures are proved', 'What is deliberately not claimed'],
+  '7': ['Before the system holds real money', 'Blocked on outside input', 'Worth doing soon',
     'Later', 'One thing I would change'],
-  '7': [],
+  '8': [],
 };
 
 toc.forEach((entry) => {
@@ -972,7 +1081,7 @@ for (let i = range.start; i < range.start + range.count; i++) {
   pdf.moveTo(M, PAGE_H - 44).lineTo(M + CONTENT, PAGE_H - 44)
     .lineWidth(0.5).strokeColor(RULE).stroke();
   pdf.fillColor(LIGHT).font('Helvetica').fontSize(7.6)
-    .text('3 August 2026', M, PAGE_H - 36, { width: CONTENT / 2 });
+    .text('4 August 2026', M, PAGE_H - 36, { width: CONTENT / 2 });
   pdf.fillColor(MUTED).font('Helvetica-Bold').fontSize(8.4)
     .text(String(i + 1), M + CONTENT / 2, PAGE_H - 36, { width: CONTENT / 2, align: 'right' });
 }
