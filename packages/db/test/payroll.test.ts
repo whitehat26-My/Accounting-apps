@@ -3,7 +3,9 @@ import { withTenant, type Sql } from '../src/client.js';
 import {
   PayrollError,
   computeContributions,
+  computePayslip,
   employmentCost,
+  loadMtdSchedule,
   loadStatutorySchedules,
 } from '../src/payroll.js';
 import { createTestDatabase, seedTenant, type Tenant } from './helpers.js';
@@ -39,6 +41,26 @@ afterAll(async () => {
 });
 
 const TODAY = '2026-08-01';
+
+/**
+ * Seven months of a RM6,000 wage already paid this year.
+ *
+ * Every tax assertion below needs this, and the reason is the whole method: MTD
+ * projects the REST OF THE YEAR from this month's pay, so the same August
+ * payslip means something completely different with and without a year to date.
+ * With it, the employee has been on RM6,000 all year. Without it, they started
+ * in August.
+ *
+ * A January date would sidestep the question, and cannot be used: the SOCSO
+ * schedule this system carries takes effect on 1 June 2026, so there is no
+ * lawful January 2026 payslip to compute. Which is the honest position — the
+ * pre-SKBBK table is not in the repository and will not be guessed.
+ */
+const SEVEN_MONTHS_IN = {
+  accumulatedGross: '42000.00',
+  accumulatedEpf: '4620.00',
+  accumulatedMtd: '1452.50',
+} as const;
 
 // ---------------------------------------------------------------------------
 // The schedules loaded whole
@@ -333,5 +355,213 @@ describe('what it will not do', () => {
     // all, because it looks finished. The field is named for what it is.
     expect(result).not.toHaveProperty('netPay');
     expect(result).toHaveProperty('wageAfterContributions');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PCB, and the whole payslip
+// ---------------------------------------------------------------------------
+
+describe('income tax', () => {
+  it('loads Table 1 and the reliefs pinned to one effective date', async () => {
+    const schedule = await withTenant(sql, ctx, (tx) => loadMtdSchedule(tx, TODAY));
+
+    expect(schedule.bands).toHaveLength(9);
+    expect(schedule.reliefs).toEqual({
+      individual: '9000.0000',
+      spouse: '4000.0000',
+      perChild: '2000.0000',
+      disabledIndividual: '7000.0000',
+      disabledSpouse: '6000.0000',
+      epfAnnualLimit: '4000.0000',
+      nonResidentRateBp: 3000,
+    });
+
+    // B is NEGATIVE in the first two bands, and that is not a data-entry slip:
+    // it carries the individual rebate, and it is why a modest wage produces no
+    // deduction rather than a small one.
+    expect(Number(schedule.bands[0]!.bCategory13)).toBeLessThan(0);
+    expect(Number(schedule.bands[0]!.bCategory2)).toBeLessThan(0);
+    expect(schedule.bands[8]!.pTo).toBeNull();
+  });
+
+  it('refuses a year whose specification this system does not carry', async () => {
+    // The 2026 specification is loaded and no earlier one is. Applying it to
+    // 2025 would be applying a schedule backwards through a Budget.
+    await expect(
+      withTenant(sql, ctx, (tx) => loadMtdSchedule(tx, '2025-06-01')),
+    ).rejects.toMatchObject({ code: 'NO_SCHEDULE_IN_FORCE' });
+  });
+
+  it('deducts no tax from a RM2,500 counter assistant', async () => {
+    const slip = await withTenant(sql, ctx, (tx) =>
+      computePayslip(tx, {
+        wage: '2500.00',
+        subject: { age: 24, citizenship: 'CITIZEN' },
+        asOf: TODAY,
+        tax: { resident: true, category: 1, qualifyingChildren: 0 },
+      }),
+    );
+
+    expect(slip.pcb).not.toBeNull();
+    expect(slip.pcb!.deduction).toBe('0.0000');
+    // Not because there is no chargeable income — there is — but because the
+    // rebate baked into B exceeds the tax on it.
+    expect(Number(slip.pcb!.chargeableIncome)).toBeGreaterThan(0);
+    // Net pay is now a real figure: wage less EPF, SOCSO, EIS and nil tax.
+    expect(slip.netPay).toBe(slip.wageAfterContributions);
+  });
+
+  it('taxes a RM6,000 technician RM207.50 in August, seven months in', async () => {
+    const slip = await withTenant(sql, ctx, (tx) =>
+      computePayslip(tx, {
+        wage: '6000.00',
+        subject: { age: 35, citizenship: 'CITIZEN' },
+        asOf: TODAY,
+        tax: { resident: true, category: 1, qualifyingChildren: 0 },
+        taxYearToDate: SEVEN_MONTHS_IN,
+      }),
+    );
+
+    // P = 72,000 gross for the year, less the RM4,000 EPF relief cap and the
+    // RM9,000 individual relief. Exactly 59,000 — no truncation artefact,
+    // because by August the cap is fully used and K2 is nil.
+    expect(slip.pcb!.chargeableIncome).toBe('59000.0000');
+    // (59,000 - 50,000) x 11% + 1,500 = 2,490 for the year. RM1,452.50 has been
+    // deducted; the remaining RM1,037.50 spreads over the five months left.
+    expect(slip.pcb!.deduction).toBe('207.5000');
+    expect(Number(slip.netPay)).toBeLessThan(Number(slip.wageAfterContributions));
+  });
+
+  it('taxes a NEW JOINER on the same wage in the same month nothing at all', async () => {
+    /*
+     * The clearest demonstration that MTD is annualised, and the reason the
+     * year-to-date figures are not an optional refinement.
+     *
+     * Identical wage, identical month, identical person — the ONLY difference is
+     * that this one started in August. Five months of pay projects to RM30,000
+     * gross and RM17,700 chargeable, which lands where the RM400 rebate exceeds
+     * the tax. Nil deduction, against RM207.50 for the colleague beside them.
+     *
+     * Nothing is avoided: the tax on a part year genuinely is lower. But an
+     * engine that took this month's pay in isolation would deduct RM207.50 from
+     * both, and over-collect from the new joiner every month to December.
+     */
+    const newJoiner = await withTenant(sql, ctx, (tx) =>
+      computePayslip(tx, {
+        wage: '6000.00',
+        subject: { age: 35, citizenship: 'CITIZEN' },
+        asOf: TODAY,
+        tax: { resident: true, category: 1, qualifyingChildren: 0 },
+      }),
+    );
+
+    expect(newJoiner.pcb!.chargeableIncome).toBe('17700.0000');
+    expect(newJoiner.pcb!.deduction).toBe('0.0000');
+  });
+
+  it('gives a married sole earner with children a smaller deduction than a single filer', async () => {
+    const at = (
+      category: 1 | 2 | 3,
+      qualifyingChildren: number,
+    ): Promise<string> =>
+      withTenant(sql, ctx, (tx) =>
+        computePayslip(tx, {
+          wage: '6000.00',
+          subject: { age: 35, citizenship: 'CITIZEN' },
+          asOf: TODAY,
+          tax: { resident: true, category, qualifyingChildren },
+          taxYearToDate: SEVEN_MONTHS_IN,
+        }),
+      ).then((slip) => slip.pcb!.deduction);
+
+    const single = Number(await at(1, 0));
+    const soleEarnerWithTwo = Number(await at(2, 2));
+    expect(soleEarnerWithTwo).toBeLessThan(single);
+  });
+
+  it('uses the EPF figure the contributions engine looked up, not a percentage', async () => {
+    /*
+     * K1 in the tax formula is the employee's actual EPF for the month, and on
+     * a RM6,000 wage that is RM660 from the Third Schedule — not 11% of the
+     * wage computed a second time. One source for one number: if the schedule
+     * changed, the tax would follow automatically.
+     */
+    const slip = await withTenant(sql, ctx, (tx) =>
+      computePayslip(tx, {
+        wage: '6000.00',
+        subject: { age: 35, citizenship: 'CITIZEN' },
+        asOf: TODAY,
+        tax: { resident: true, category: 1, qualifyingChildren: 0 },
+        taxYearToDate: SEVEN_MONTHS_IN,
+      }),
+    );
+
+    // RM660 is the Third Schedule's figure for the 5,900.01-6,000.00 band, and
+    // it is the number the tax formula consumed as K1 — not 11% of the wage
+    // recomputed here. One source for one figure: change the schedule and the
+    // tax follows without anyone remembering to update it.
+    expect(slip.epf.employee).toBe('660.0000');
+    // 72,000 gross for the year, less the RM4,000 EPF relief cap and RM9,000.
+    // The cap is what binds: this employee contributes RM7,920 a year and gets
+    // relief on RM4,000 of it.
+    expect(Number(slip.pcb!.chargeableIncome)).toBe(72_000 - 4_000 - 9_000);
+  });
+
+  it('flattens a non-resident to 30% with no reliefs at all', async () => {
+    const slip = await withTenant(sql, ctx, (tx) =>
+      computePayslip(tx, {
+        wage: '3000.00',
+        subject: { age: 30, citizenship: 'NON_CITIZEN' },
+        asOf: TODAY,
+        tax: { resident: false, category: 1, qualifyingChildren: 0 },
+      }),
+    );
+    expect(slip.pcb!.nonResident).toBe(true);
+    expect(slip.pcb!.deduction).toBe('900.0000');
+  });
+
+  it('spreads a bonus over the year rather than taxing it in the month', async () => {
+    const december = await withTenant(sql, ctx, (tx) =>
+      computePayslip(tx, {
+        wage: '6000.00',
+        subject: { age: 35, citizenship: 'CITIZEN' },
+        asOf: '2026-11-01',
+        tax: { resident: true, category: 1, qualifyingChildren: 0 },
+        bonus: '12000.00',
+        taxYearToDate: {
+          accumulatedGross: '60000.00',
+          accumulatedEpf: '6600.00',
+          accumulatedMtd: '2000.00',
+        },
+      }),
+    );
+
+    expect(Number(december.pcb!.onBonus)).toBeGreaterThan(0);
+    // The bonus is taxed at the YEAR's rate. A flat marginal 19% on RM12,000
+    // would be RM2,280; the correct figure is the difference between two annual
+    // tax computations, and is lower.
+    expect(Number(december.pcb!.onBonus)).toBeLessThan(2280);
+    // Net pay covers the bonus too.
+    expect(Number(december.netPay)).toBeGreaterThan(6000);
+  });
+
+  it('returns netPay = null when nobody said who the employee is for tax', async () => {
+    /*
+     * The refusal that matters. Without a tax profile there is no lawful way to
+     * know the reliefs, and a "net pay" computed without PCB would be believed
+     * precisely because it looks finished. Null is the honest answer.
+     */
+    const slip = await withTenant(sql, ctx, (tx) =>
+      computePayslip(tx, {
+        wage: '6000.00',
+        subject: { age: 35, citizenship: 'CITIZEN' },
+        asOf: TODAY,
+      }),
+    );
+    expect(slip.pcb).toBeNull();
+    expect(slip.netPay).toBeNull();
+    // The contributions are still there — they never depended on the tax profile.
+    expect(Number(slip.totalEmployee)).toBeGreaterThan(0);
   });
 });

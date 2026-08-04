@@ -10,7 +10,7 @@ import {
 } from './helpers.js';
 
 /**
- * Statutory contributions over HTTP.
+ * Statutory payroll over HTTP — contributions and income tax.
  *
  * The permission boundary is the point of this file. A wage is the most
  * confidential figure in a five-person shop, and the person at the counter has
@@ -66,8 +66,10 @@ describe('contributions over HTTP', () => {
       epf: { employer: '325.0000', employee: '275.0000' },
     });
 
-    // No net pay. PCB is not implemented and a figure that quietly omits income
-    // tax would be trusted precisely because it looks finished.
+    // No net pay from THIS route: it was not told who the employee is for tax
+    // purposes, and a take-home figure that quietly omitted income tax would be
+    // trusted precisely because it looks finished. `/payslip` is where net pay
+    // lives, and it demands the tax profile before it will produce one.
     expect(response.body).not.toHaveProperty('netPay');
     expect(response.body).toHaveProperty('wageAfterContributions');
   });
@@ -161,5 +163,84 @@ describe('what it refuses to guess', () => {
     });
     expect(response.status).toBeGreaterThanOrEqual(400);
     expect(JSON.stringify(response.body)).toContain('NO_SCHEDULE_IN_FORCE');
+  });
+});
+
+describe('income tax over HTTP', () => {
+  /** Seven months of a RM6,000 wage already paid this year. */
+  const sevenMonthsIn = {
+    accumulatedGross: '42000.00',
+    accumulatedEpf: '4620.00',
+    accumulatedMtd: '1452.50',
+  };
+
+  const technician = {
+    wage: '6000.00',
+    asOf: '2026-08-01',
+    age: 35,
+    citizenship: 'CITIZEN' as const,
+  };
+
+  it('returns a real net pay once the tax profile is supplied', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip'),
+      body: {
+        ...technician,
+        tax: { resident: true, category: 1, qualifyingChildren: 0 },
+        taxYearToDate: sevenMonthsIn,
+      },
+    });
+
+    expect(response.status).toBe(201);
+    const body = response.body as {
+      pcb: { deduction: string; chargeableIncome: string } | null;
+      netPay: string | null;
+      totalEmployee: string;
+    };
+    expect(body.pcb?.deduction).toBe('207.5000');
+    expect(body.pcb?.chargeableIncome).toBe('59000.0000');
+    expect(body.netPay).not.toBeNull();
+    // Net pay is gross less contributions AND tax — strictly less than the
+    // contributions-only figure the other route returns.
+    expect(Number(body.netPay)).toBeLessThan(6000 - Number(body.totalEmployee));
+  });
+
+  it('refuses to invent a tax category', async () => {
+    // No default. Assuming "single" would over-deduct a married sole earner by
+    // RM4,000 of relief every year, and the client knows the answer.
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip'),
+      body: { ...technician, taxYearToDate: sevenMonthsIn },
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it('still refuses SALES — a payslip is not counter information', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      url: '/v1/payroll/payslip',
+      token: salesToken,
+      tenantId: tenant.tenantId,
+      body: {
+        ...technician,
+        tax: { resident: true, category: 1, qualifyingChildren: 0 },
+      },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it('leaves netPay null on the contributions route, which computes no tax', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/contributions'),
+      body: technician,
+    });
+    expect(response.status).toBe(201);
+    // Two routes, two different questions, and the one that does not know the
+    // tax profile does not pretend to know the take-home.
+    expect(response.body).not.toHaveProperty('netPay');
+    expect(response.body).toHaveProperty('wageAfterContributions');
   });
 });

@@ -1,9 +1,10 @@
 import { Body, Controller, Get, Inject, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { isoDate, positiveDecimal } from '@emil/contracts';
+import { decimal, isoDate, positiveDecimal } from '@emil/contracts';
 import {
   computeContributions,
+  computePayslip,
   employmentCost,
   loadStatutorySchedules,
   withTenant,
@@ -16,22 +17,22 @@ import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
 
 /**
- * Statutory contributions — EPF, SOCSO and EIS.
+ * Statutory payroll — EPF, SOCSO, EIS and PCB.
  *
  * ---------------------------------------------------------------------------
  * A CALCULATOR, NOT A PAYROLL. THE DIFFERENCE IS DELIBERATE.
  *
- * There are no employee records here, no pay runs, no payslips and no ledger
- * postings. What exists is the part that must be RIGHT before any of that is
- * worth building: the published schedules, loaded from effective-dated tables
- * and applied by a pure engine tested against all 1,203 EPF bands.
+ * There are no employee records here, no pay runs, no payslip documents and no
+ * ledger postings. What exists is the part that must be RIGHT before any of
+ * that is worth building: all four statutory deductions, loaded from
+ * effective-dated tables and applied by pure engines tested against the
+ * published schedules — 1,203 EPF bands, and IRBM's own four-month worked
+ * example for the tax.
  *
  * Building the pay run first and the rates later would have meant a payroll
  * that produced numbers from day one — plausible numbers, wrong by a few sen on
  * most salaries, which is the employer's liability and not the employee's. So
  * the order is rates, then runs.
- *
- * PCB is NOT here. See `docs/SETTLEMENT-REGISTER.md`.
  * ---------------------------------------------------------------------------
  */
 @Controller('v1/payroll')
@@ -55,19 +56,7 @@ export class PayrollController {
       computeContributions(tx, {
         wage: input.wage,
         asOf: input.asOf,
-        subject: {
-          age: input.age,
-          citizenship: input.citizenship,
-          ...(input.electedBefore1Aug1998 !== undefined
-            ? { electedBefore1Aug1998: input.electedBefore1Aug1998 }
-            : {}),
-          ...(input.onInvalidityPension !== undefined
-            ? { onInvalidityPension: input.onInvalidityPension }
-            : {}),
-          ...(input.hadEisContributionBefore57 !== undefined
-            ? { hadEisContributionBefore57: input.hadEisContributionBefore57 }
-            : {}),
-        },
+        subject: subjectOf(input),
       }),
     );
   }
@@ -83,19 +72,42 @@ export class PayrollController {
       employmentCost(tx, {
         wage: input.wage,
         asOf: input.asOf,
-        subject: {
-          age: input.age,
-          citizenship: input.citizenship,
-          ...(input.electedBefore1Aug1998 !== undefined
-            ? { electedBefore1Aug1998: input.electedBefore1Aug1998 }
-            : {}),
-          ...(input.onInvalidityPension !== undefined
-            ? { onInvalidityPension: input.onInvalidityPension }
-            : {}),
-          ...(input.hadEisContributionBefore57 !== undefined
-            ? { hadEisContributionBefore57: input.hadEisContributionBefore57 }
+        subject: subjectOf(input),
+      }),
+    );
+  }
+
+  /**
+   * The whole payslip: contributions AND income tax.
+   *
+   * Separate from `/contributions` rather than a flag on it, because the inputs
+   * are genuinely different — PCB needs to know who the employee is for tax
+   * purposes and where they are in the tax year, and a route that took all of
+   * that optionally would answer with a net pay that quietly omitted income tax
+   * whenever a caller left a field out.
+   */
+  @Requires('payroll.read')
+  @Doc({ request: () => payslipSchema })
+  @Post('payslip')
+  async payslip(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = parse(payslipSchema, body);
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      computePayslip(tx, {
+        wage: input.wage,
+        asOf: input.asOf,
+        subject: subjectOf(input),
+        tax: {
+          resident: input.tax.resident,
+          category: input.tax.category,
+          qualifyingChildren: input.tax.qualifyingChildren,
+          ...(input.tax.disabled !== undefined ? { disabled: input.tax.disabled } : {}),
+          ...(input.tax.disabledSpouse !== undefined
+            ? { disabledSpouse: input.tax.disabledSpouse }
             : {}),
         },
+        ...(input.bonus !== undefined ? { bonus: input.bonus } : {}),
+        ...(input.taxYearToDate !== undefined ? { taxYearToDate: input.taxYearToDate } : {}),
       }),
     );
   }
@@ -132,6 +144,29 @@ export class PayrollController {
 
 const partSchema = z.enum(['A', 'C', 'E', 'F']);
 
+/**
+ * The contribution subject, assembled once.
+ *
+ * `exactOptionalPropertyTypes` is on, so an absent flag must be OMITTED rather
+ * than passed as undefined — which is why this is a spread dance and not an
+ * object literal, and why it lives in one place instead of three.
+ */
+function subjectOf(input: z.infer<typeof contributionSchema>) {
+  return {
+    age: input.age,
+    citizenship: input.citizenship,
+    ...(input.electedBefore1Aug1998 !== undefined
+      ? { electedBefore1Aug1998: input.electedBefore1Aug1998 }
+      : {}),
+    ...(input.onInvalidityPension !== undefined
+      ? { onInvalidityPension: input.onInvalidityPension }
+      : {}),
+    ...(input.hadEisContributionBefore57 !== undefined
+      ? { hadEisContributionBefore57: input.hadEisContributionBefore57 }
+      : {}),
+  };
+}
+
 const contributionSchema = z.object({
   /** Monthly wage. A string, per rule 2 — a salary is money, and money is never a float. */
   wage: positiveDecimal,
@@ -146,4 +181,49 @@ const contributionSchema = z.object({
   electedBefore1Aug1998: z.boolean().optional(),
   onInvalidityPension: z.boolean().optional(),
   hadEisContributionBefore57: z.boolean().optional(),
+});
+
+/**
+ * Who the employee is for INCOME TAX purposes — a different question from who
+ * they are for contributions, which is why it is a different object.
+ */
+const taxProfileSchema = z.object({
+  resident: z.boolean(),
+  /**
+   * 1 single · 2 married with a non-working spouse · 3 married with a working
+   * spouse, divorced, widowed, or single with an adopted child. No default: a
+   * guess of "single" over-deducts a sole earner by RM4,000 of relief a year.
+   */
+  category: z.union([z.literal(1), z.literal(2), z.literal(3)]),
+  /**
+   * C, not the number of children. A child in tertiary education counts as
+   * FOUR and a disabled child in tertiary education as eight — the
+   * specification expresses the larger relief by inflating this count, and the
+   * client that knows the children's circumstances is the one that must do it.
+   */
+  qualifyingChildren: z.number().int().min(0).max(40),
+  disabled: z.boolean().optional(),
+  disabledSpouse: z.boolean().optional(),
+});
+
+const payslipSchema = contributionSchema.extend({
+  tax: taxProfileSchema,
+  /** A bonus or other additional remuneration paid this month. */
+  bonus: positiveDecimal.optional(),
+  /**
+   * Where the employee already is in the tax year. Optional so a single-month
+   * estimate is possible, but a real payroll run must send it: without it every
+   * month is computed as though it were January, which under-deducts all year.
+   */
+  taxYearToDate: z
+    .object({
+      accumulatedGross: decimal,
+      accumulatedEpf: decimal,
+      accumulatedMtd: decimal,
+      accumulatedOptionalDeductions: decimal.optional(),
+      optionalDeductionsThisMonth: decimal.optional(),
+      accumulatedZakat: decimal.optional(),
+      zakatThisMonth: decimal.optional(),
+    })
+    .optional(),
 });

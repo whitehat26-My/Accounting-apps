@@ -84,6 +84,8 @@ const AUDIT_EXEMPT: Record<string, string> = {
   statutory_epf_rule: 'global schedule; changed only by migration, which is the record',
   statutory_socso_band: 'global schedule; changed only by migration, which is the record',
   statutory_eis_band: 'global schedule; changed only by migration, which is the record',
+  statutory_mtd_band: 'global schedule; changed only by migration, which is the record',
+  statutory_mtd_relief: 'global schedule; changed only by migration, which is the record',
 };
 
 describe('audit coverage', () => {

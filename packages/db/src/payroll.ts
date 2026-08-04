@@ -27,12 +27,18 @@ import {
   Money,
   epfPart,
   monthlyContributions,
+  monthlyTaxDeduction,
   type ContributionSubject,
   type EisBand,
   type EpfBand,
   type EpfPart,
   type EpfRule,
   type MonthlyContributions,
+  type MtdBand,
+  type MtdEmployee,
+  type MtdMonth,
+  type MtdReliefs,
+  type MtdSchedule,
   type SocsoBand,
   type StatutorySchedules,
 } from '@emil/domain';
@@ -357,4 +363,210 @@ export async function employmentCost(
     .add(Money.fromDecimal(breakdown.totalEmployer, 'MYR'))
     .toDecimalString();
   return { breakdown, totalCost };
+}
+
+// ---------------------------------------------------------------------------
+// PCB / MTD — the fourth statutory deduction
+// ---------------------------------------------------------------------------
+
+/**
+ * Load Table 1 and the relief limits, as at a date.
+ *
+ * Both are pinned to the same `effective_from` for the same reason the EPF
+ * bands and their percentage tail are: a Budget changes the table and the
+ * limits together, and one year's bands applied with another year's reliefs
+ * would produce a figure that exists in no published schedule while looking
+ * entirely reasonable.
+ */
+export async function loadMtdSchedule(tx: Tx, asOf: string): Promise<MtdSchedule> {
+  const [reliefRow] = await tx<
+    {
+      individual: string;
+      spouse: string;
+      per_child: string;
+      disabled_individual: string;
+      disabled_spouse: string;
+      epf_annual_limit: string;
+      non_resident_rate_bp: number;
+      effective_from: Date;
+    }[]
+  >`
+      SELECT individual, spouse, per_child, disabled_individual, disabled_spouse,
+             epf_annual_limit, non_resident_rate_bp, effective_from
+        FROM statutory_mtd_relief
+       WHERE effective_from <= ${asOf}::date
+       ORDER BY effective_from DESC
+       LIMIT 1
+  `;
+
+  if (reliefRow === undefined) {
+    throw new PayrollError(
+      'NO_SCHEDULE_IN_FORCE',
+      `No PCB relief schedule is in force on ${asOf}. This system carries the 2026 ` +
+        'specification; an earlier year needs that year’s specification loaded as ' +
+        'its own effective-dated rows, not this one applied backwards.',
+      { asOf },
+    );
+  }
+
+  const bands = await tx<
+    {
+      p_from: string;
+      p_to: string | null;
+      m: string;
+      rate_bp: number;
+      b_category_1_3: string;
+      b_category_2: string;
+    }[]
+  >`
+      SELECT p_from, p_to, m, rate_bp, b_category_1_3, b_category_2
+        FROM statutory_mtd_band
+       WHERE effective_from = ${reliefRow.effective_from}
+       ORDER BY p_from
+  `;
+
+  if (bands.length === 0) {
+    throw new PayrollError(
+      'NO_SCHEDULE_IN_FORCE',
+      `PCB reliefs are in force on ${asOf} but Table 1 is empty for the same ` +
+        'effective date. Half a schedule cannot be applied.',
+      { asOf },
+    );
+  }
+
+  const reliefs: MtdReliefs = {
+    individual: reliefRow.individual,
+    spouse: reliefRow.spouse,
+    perChild: reliefRow.per_child,
+    disabledIndividual: reliefRow.disabled_individual,
+    disabledSpouse: reliefRow.disabled_spouse,
+    epfAnnualLimit: reliefRow.epf_annual_limit,
+    nonResidentRateBp: reliefRow.non_resident_rate_bp,
+  };
+
+  const loaded: MtdBand[] = bands.map((b) => ({
+    pFrom: b.p_from,
+    pTo: b.p_to,
+    m: b.m,
+    rateBp: b.rate_bp,
+    bCategory13: b.b_category_1_3,
+    bCategory2: b.b_category_2,
+  }));
+
+  return { bands: loaded, reliefs };
+}
+
+export interface PayslipQuery {
+  readonly wage: string;
+  readonly subject: ContributionSubject;
+  /** The contribution month, `YYYY-MM-DD`. Its MONTH drives the MTD projection. */
+  readonly asOf: string;
+  /** Who the employee is for tax purposes. Absent means PCB is not computed. */
+  readonly tax?: MtdEmployee;
+  /**
+   * Where the employee is in the tax year. Absent for a first estimate; a real
+   * payroll run must supply it or every month is computed as though it were the
+   * first, which under-deducts all year.
+   */
+  readonly taxYearToDate?: {
+    readonly accumulatedGross: string;
+    readonly accumulatedEpf: string;
+    readonly accumulatedMtd: string;
+    readonly accumulatedOptionalDeductions?: string;
+    readonly optionalDeductionsThisMonth?: string;
+    readonly accumulatedZakat?: string;
+    readonly zakatThisMonth?: string;
+  };
+  /** A bonus or other additional remuneration paid this month. */
+  readonly bonus?: string;
+}
+
+export interface Payslip extends ContributionBreakdown {
+  readonly pcb: {
+    /** P — total chargeable income for the year, on this month's projection. */
+    readonly chargeableIncome: string;
+    readonly deduction: string;
+    /** The portion attributable to a bonus, when there is one. */
+    readonly onBonus: string;
+    readonly nonResident: boolean;
+  } | null;
+  /**
+   * Wage + bonus, less EPF, SOCSO, EIS and PCB. This IS net pay when `pcb` is
+   * present — and is deliberately null when it is not, rather than falling back
+   * to a figure that omits income tax and looks the same.
+   */
+  readonly netPay: string | null;
+}
+
+/**
+ * The whole payslip: contributions and income tax together.
+ *
+ * ---------------------------------------------------------------------------
+ * `netPay` IS NULL UNLESS `tax` WAS SUPPLIED, AND THAT IS THE POINT.
+ *
+ * A net pay figure that silently omits PCB is worse than no figure, because it
+ * looks finished and will be believed. So the caller must say who the employee
+ * is for tax purposes — category, children, residence — before this will
+ * produce one. There is no default category: "single" is a guess that
+ * over-deducts a married sole earner by RM4,000 of relief a year.
+ * ---------------------------------------------------------------------------
+ */
+export async function computePayslip(tx: Tx, query: PayslipQuery): Promise<Payslip> {
+  const contributions = await computeContributions(tx, {
+    wage: query.wage,
+    subject: query.subject,
+    asOf: query.asOf,
+  });
+
+  if (query.tax === undefined) {
+    return { ...contributions, pcb: null, netPay: null };
+  }
+
+  const schedule = await loadMtdSchedule(tx, query.asOf);
+
+  // The MONTH, not the date. `n` — the balance of months in the year — is what
+  // the whole projection turns on, and taking it from the asOf date rather than
+  // asking for it separately means the two can never disagree.
+  const month = Number(query.asOf.slice(5, 7));
+
+  const ytd = query.taxYearToDate;
+  const mtdMonth: MtdMonth = {
+    month,
+    accumulatedGross: ytd?.accumulatedGross ?? '0',
+    accumulatedEpf: ytd?.accumulatedEpf ?? '0',
+    grossThisMonth: contributions.wage,
+    // K1 is the employee's EPF for the month — the figure the contributions
+    // engine just looked up, not a percentage recomputed here.
+    epfThisMonth: contributions.epf.employee,
+    ...(query.bonus !== undefined ? { additionalThisMonth: query.bonus } : {}),
+    ...(ytd?.accumulatedMtd !== undefined ? { accumulatedMtd: ytd.accumulatedMtd } : {}),
+    ...(ytd?.accumulatedOptionalDeductions !== undefined
+      ? { accumulatedOptionalDeductions: ytd.accumulatedOptionalDeductions }
+      : {}),
+    ...(ytd?.optionalDeductionsThisMonth !== undefined
+      ? { optionalDeductionsThisMonth: ytd.optionalDeductionsThisMonth }
+      : {}),
+    ...(ytd?.accumulatedZakat !== undefined ? { accumulatedZakat: ytd.accumulatedZakat } : {}),
+    ...(ytd?.zakatThisMonth !== undefined ? { zakatThisMonth: ytd.zakatThisMonth } : {}),
+  };
+
+  const result = monthlyTaxDeduction(query.tax, mtdMonth, schedule);
+
+  const gross = Money.fromDecimal(contributions.wage, 'MYR').add(
+    Money.fromDecimal(query.bonus ?? '0', 'MYR'),
+  );
+  const netPay = gross
+    .subtract(Money.fromDecimal(contributions.totalEmployee, 'MYR'))
+    .subtract(result.mtd);
+
+  return {
+    ...contributions,
+    pcb: {
+      chargeableIncome: result.chargeableIncome.toDecimalString(),
+      deduction: result.mtd.toDecimalString(),
+      onBonus: result.mtdOnAdditional.toDecimalString(),
+      nonResident: result.nonResident,
+    },
+    netPay: netPay.toDecimalString(),
+  };
 }

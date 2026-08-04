@@ -161,6 +161,10 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     statutory_epf_rule: 'global EPF above-ceiling rates, read-only',
     statutory_socso_band: 'global SOCSO Act 4 schedule, read-only',
     statutory_eis_band: 'global EIS Act 800 schedule, read-only',
+    // Same again for income tax: Table 1 and the relief limits from IRBM's MTD
+    // specification are national, published, and read identically by everyone.
+    statutory_mtd_band: 'global LHDN MTD Table 1, read-only',
+    statutory_mtd_relief: 'global LHDN MTD relief limits, read-only',
   };
 
   it('every tenant-owned table has RLS enabled AND forced with a policy', async () => {
