@@ -11,6 +11,7 @@ export * from './item.js';
 export * from './inventory.js';
 export * from './serials.js';
 export * from './repair.js';
+export * from './quote.js';
 export * from './dunning.js';
 export * from './cash-forecast.js';
 export * from './weekly-digest.js';
