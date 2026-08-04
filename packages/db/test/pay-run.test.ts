@@ -1,11 +1,9 @@
-import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Money } from '@emil/domain';
 import { withTenant, type Sql } from '../src/client.js';
 import { detectRollupDrift } from '../src/ledger.js';
 import { computePayslip } from '../src/payroll.js';
 import {
-  PayRunError,
   confirmPayRun,
   createEmployee,
   getPayRun,
