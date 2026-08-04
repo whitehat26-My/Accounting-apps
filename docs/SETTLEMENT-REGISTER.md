@@ -657,7 +657,7 @@ Named rather than attempted, for the same reason the withholding rates are:
 | --- | --- |
 | **Automatic bank feeds** | A bank or aggregator API agreement. This is Xero's single biggest daily time-saver, and Malaysian open-banking access is not available to a small shop today. Statement import is the honest substitute and is BUILT. |
 | **Receipt OCR** | An OCR key (Textract / Document AI). The capture and attachment half is buildable now — the repair-photo pipeline in `0035` is the same shape — and the reader is a port behind it. |
-| **Payroll (EPF/SOCSO/PCB/EIS)** | The published rate TABLES, not the percentages. Researched 04/08/2026 — see `docs/research/malaysian-payroll-rates.md`. The research found that EPF, SOCSO and EIS are all statutory lookup tables rather than percentage arithmetic, so the schema must hold effective-dated wage-band rows; and it left the EPF 60–75 rate unresolved because sources conflict. Every .gov.my site refuses automated download, so a person must save four PDFs into the repository before the tables can be transcribed. |
+| **Payroll (EPF/SOCSO/PCB/EIS)** | PARTLY UNBLOCKED. EPF is now **verified from the legal instrument** — the Third Schedule in force from 01/10/2025, transcribed to 1,203 validated wage bands at `docs/research/sources/`. EIS is verified from PERKESO including the age rules. Still needed: PERKESO's banded SOCSO table, LHDN's PCB specification, and confirmation of the YA 2026 bands. See `docs/research/malaysian-payroll-rates.md`. |
 | Emailed invoices and statements | An email service key. Already noted at §4.4. |
 
 ### 8.3 Not buildable, and worth being honest about

@@ -1,113 +1,134 @@
 # Malaysian statutory payroll — rate research
 
-**Researched 4 August 2026.** Read the caveat below before using any figure here.
+**Researched 4 August 2026. EPF and EIS updated the same day from primary documents
+supplied by the shop owner.**
 
-This exists because payroll is the one outstanding Xero-parity feature that cannot be
-built from a guess. EPF, SOCSO, EIS and PCB are statutory: an under-deduction is the
-employer's liability, not the employee's, and a rate that merely *looks* right is worse
-than an obvious gap. So the rates were researched rather than recalled, and everything
-below carries a confidence level and a source.
+This exists because payroll is the one outstanding Xero-parity feature that cannot be built
+from a guess. EPF, SOCSO, EIS and PCB are statutory: an under-deduction is the employer's
+liability, not the employee's, and a rate that merely *looks* right is worse than an obvious
+gap. Every figure below carries a source and a confidence level.
 
----
+## Status
 
-## ⚠️ The caveat that governs this whole document
-
-**Every Malaysian government site refused automated access.** `kwsp.gov.my`,
-`perkeso.gov.my` and `hasil.gov.my` all returned HTTP 403 to direct fetches, including
-the PDFs of the Third Schedule and the LHDN MTD specification.
-
-So the figures below come from **search-engine summaries that quote those official pages**,
-cross-checked against several independent payroll vendors. That is good corroboration and
-it is **not** the same as having read the legal instrument. Nothing here should be loaded
-into a production rate table until somebody has opened the primary documents listed at the
-bottom and confirmed it.
+| Scheme | State |
+| --- | --- |
+| **EPF** | ✅ **VERIFIED from the legal instrument.** Full Third Schedule transcribed — 1,203 wage bands. |
+| **EIS** | ✅ **VERIFIED from perkeso.gov.my**, including the age rules. |
+| **SOCSO** | ⚠️ Percentages corroborated; the **banded contribution table is still needed**. |
+| **PCB** | ⚠️ Method understood; the **LHDN specification and YA 2026 bands are still needed**. |
 
 ---
 
-## The finding that changes the design
+## The finding that shapes the design
 
-**EPF, SOCSO and EIS are lookup TABLES, not percentages.**
+**EPF and SOCSO are lookup TABLES, not percentages.**
 
-This is the single most important thing the research turned up, and it is easy to get
-wrong. For wages at or below RM20,000 a month, KWSP requires the employer to use the
-**exact fixed amounts in the Third Schedule** — not the percentage multiplied out. SOCSO
-and EIS work the same way: PERKESO publishes contribution tables in wage bands, and the
-statutory amount is the table cell, not `wage × rate`.
+For wages up to RM20,000 a month, EPF contributions are the **exact fixed amounts in the
+Third Schedule** — not a percentage multiplied out. The transcription below proves why this
+matters: the bands are RM20 wide at the bottom and RM100 wide at the top, and the amount is
+the band's cell. A payroll that multiplies percentages will disagree with the statutory
+figure on most salaries.
 
-The percentages below are therefore *descriptions of roughly what the tables do*, not the
-calculation. A payroll built by multiplying percentages will disagree with the statutory
-amount by a few sen on most salaries — which is precisely the plausible-but-wrong failure
-this project refuses elsewhere for SST and withholding.
+Above RM20,000 the schedule stops and a percentage applies, with the **total rounded up to
+the next ringgit** — itself a rule no naive calculation reproduces.
 
-**Design consequence:** the schema must be effective-dated **rate table rows** (wage band
-from, wage band to, employer amount, employee amount, category), loaded from the published
-tables — the same treatment `tax_rate_version` already gets. Not a percentage column.
+**Design consequence:** effective-dated **wage-band rows**, the same treatment
+`tax_rate_version` already has. Not a rate column.
 
 ---
 
-## EPF / KWSP — Employees Provident Fund Act 1991, Third Schedule
+## EPF / KWSP — ✅ verified
 
-| Employee | Employee share | Employer share | Confidence |
+**Source:** *Employees Provident Fund Act 1991, Third Schedule, in force from 1 October
+2025* — the PDF itself is committed at
+`docs/research/sources/epf-third-schedule-from-2025-10-01.pdf`.
+
+**Transcribed to** `docs/research/sources/epf-third-schedule-2025-10-01.csv` —
+1,203 rows (401 bands × 3 Parts), machine-extracted from the PDF text layer and validated:
+every row's employer + employee equals the stated total, and the bands are continuous from
+RM0.01 to RM20,000.00 with no gap or overlap in any Part.
+
+### Which Part applies to whom
+
+| Part | Applies to | Above RM20,000 |
+| --- | --- | --- |
+| **A** | Under 60: Malaysian citizens; PRs; non-citizens who elected before 1 Aug 1998 | employee **11%**, employer **12%** |
+| **B** | **Deleted by Act A1760/2025** | — |
+| **C** | Aged 60+: PRs, and non-citizens who elected before 1 Aug 1998 *(citizens removed by P.U.(A) 370/2018)* | employee **5.5%**, employer **6%** |
+| **D** | **Deleted by Act A1760/2025** | — |
+| **E** | Aged 60+: **Malaysian citizens** | employee **0.0%**, employer **4%** |
+| **F** | **Non-Malaysian citizens** | **2%** employer / **2%** employee — a flat percentage, no table |
+
+In every Part, the total including cents is **rounded up to the next ringgit**.
+
+### The conflict from the earlier research — resolved
+
+The secondary sources that disagreed about the 60-and-over rate were each quoting a
+different Part, and neither said so:
+
+- **Employer 4% / employee 0%** is **Part E** — Malaysian citizens aged 60+. Correct for
+  the staff this shop is likely to employ.
+- **Employee 5.5% / employer 6%** is **Part C** — permanent residents aged 60+. A different
+  population entirely.
+
+Verified against the table itself: Part E's RM19,900.01–20,000.00 band reads employer
+**800.00**, employee **0.00** — exactly 4% and 0% of RM20,000.
+
+The employer rate for the under-60 case is likewise visible in the data rather than assumed:
+at RM3,000 wages Part A reads employer **390.00** (13%) and employee **330.00** (11%); at
+RM20,000 it reads employer **2,400.00** (12%). The 13%-below-RM5,000 / 12%-above split is
+real and is baked into the band amounts.
+
+**Non-citizens (Part F) became mandatory from the October 2025 wage month.** Recent, and
+easy to miss — a system built on older assumptions under-contributes for foreign staff.
+
+---
+
+## EIS / SIP — ✅ verified
+
+**Source:** perkeso.gov.my, Employment Insurance System Act 2017 (Act 800), Second Schedule
+and section 18.
+
+| Employer | Employee | Total |
+| --- | --- | --- |
+| **0.2%** | **0.2%** | 0.4% |
+
+- **Capped at an assumed monthly salary of RM6,000.**
+- **Employees aged 18 to 60 must contribute.**
+- **Employees aged 57 and above who have no prior contribution before age 57 are exempt** —
+  this was the open question in the first draft, and it is now answered.
+- **Government employees, domestic workers and the self-employed are exempt.**
+
+---
+
+## SOCSO / PERKESO — ⚠️ percentages only
+
+**Employees' Social Security Act 1969 (Act 4).**
+
+| Category | Who | Employer | Employee |
 | --- | --- | --- | --- |
-| Malaysian citizen / PR, **under 60**, wages **≤ RM5,000** | 11% | **13%** | High — corroborated widely |
-| Malaysian citizen / PR, **under 60**, wages **> RM5,000** | 11% | **12%** | High |
-| Wages **above RM20,000/month** | 11% | 12% | High — percentages apply directly; the schedule tables stop here |
-| **Non-Malaysian citizen** | **2%** | **2%** | High — Third Schedule **Part F** |
-| Malaysian citizen, **aged 60–75** | ⚠️ **CONFLICTED** | ⚠️ **CONFLICTED** | **LOW — do not use** |
+| **Category 1** — Employment Injury **and** Invalidity | Under 60 | 1.75% | 0.5% |
+| **Category 2** — Employment Injury **only** | Aged 60+, or already receiving Invalidity Pension | 1.25% | nil |
 
-**Non-citizens became mandatory from the October 2025 wage month**, first payment due by
-15 November 2025. This matters for a shop employing foreign staff — it is recent, and a
-system built on older assumptions would under-contribute.
+**Wage ceiling RM6,000/month, effective 1 October 2024** (raised from RM5,000).
 
-### The unresolved conflict
-
-Sources disagree on the 60-and-over rate. Some state **employer 4% / employee 0%**; others
-state **employee 5.5%**. Both patterns have existed historically, which is likely why the
-secondary sources diverge. Contributions cease at age 75.
-
-**This must be read off the Third Schedule itself before anyone aged 60+ is paid through
-the system.** It is flagged rather than picked.
+**Still needed: the banded contribution table.** SOCSO works the same way EPF does — the
+statutory amount is a table cell, not the percentage. The percentages above describe the
+table; they are not the calculation.
 
 ---
 
-## SOCSO / PERKESO — Employees' Social Security Act 1969 (Act 4)
+## PCB / MTD — ⚠️ method understood, figures outstanding
 
-| Category | Who | Employer | Employee | Confidence |
-| --- | --- | --- | --- | --- |
-| **Category 1** — Employment Injury **and** Invalidity | Under 60 | **1.75%** | **0.5%** | High |
-| **Category 2** — Employment Injury **only** | Aged 60 and above, or already receiving Invalidity Pension | **1.25%** | **0%** | High |
+PCB is an algorithm, not a rate. LHDN publishes *Spesifikasi Kaedah Pengiraan Berkomputer
+PCB 2026*, defining **five formula categories** chosen by residence status. LHDN states
+there is **no amendment to the MTD formula for 2026** — the changes are to the TP1 and TP3
+relief-claim forms.
 
-**Wage ceiling: RM6,000/month, effective 1 October 2024** (raised from RM5,000). Wages above
-the ceiling contribute as if they were RM6,000.
+Method: estimate the year's tax on annualised income less reliefs, subtract PCB already
+deducted, spread the remainder over the remaining months.
 
----
-
-## EIS / SIP — Employment Insurance System Act 2017 (Act 800)
-
-| Employer | Employee | Total | Confidence |
-| --- | --- | --- | --- |
-| **0.2%** | **0.2%** | 0.4% | High |
-
-- **Wage ceiling: RM6,000/month**, same October 2024 change as SOCSO.
-- **Not payable for employees aged 60 and above** — they are SOCSO Category 2, and EIS does
-  not apply. A payroll that deducts EIS from a 60-year-old is over-deducting.
-- Age-of-first-entry rules (employees who first joined after a certain age) were **not
-  confirmed** in this research and need checking.
-
----
-
-## PCB / MTD — Monthly Tax Deduction, LHDN
-
-PCB is not a rate; it is an algorithm. LHDN publishes
-*Spesifikasi Kaedah Pengiraan Berkomputer PCB 2026*, which defines **five formula
-categories** selected by the employee's residence status and circumstances. The document
-states there is **no amendment to the MTD formula for 2026** — the changes are to the TP1
-and TP3 relief-claim forms, reflecting Budget 2025 and 2026 relief adjustments.
-
-The method: estimate the year's tax on annualised income less reliefs, subtract PCB already
-deducted, and spread the remainder over the remaining months.
-
-### Resident individual tax bands — YA 2025
+### Resident individual bands — YA 2025
 
 | Chargeable income | Rate |
 | --- | --- |
@@ -122,46 +143,36 @@ deducted, and spread the remainder over the remaining months.
 | RM600,001 – RM2,000,000 | 28% |
 | Above RM2,000,000 | 30% |
 
-⚠️ These are **YA 2025** bands (reported as unchanged from YA 2024). **The YA 2026 bands
-were not confirmed** and must be checked against the Budget 2026 announcement before PCB is
-computed for the 2026 year.
-
-Reliefs feed the formula (individual, spouse, children, EPF and life insurance caps) and
-are the part most likely to move year to year. They were not enumerated here because the
-TP1/TP3 forms are the authority and both changed for 2026.
+⚠️ These are **YA 2025** (reported unchanged from YA 2024). **YA 2026 is unconfirmed** and
+must be checked against Budget 2026 before PCB is computed for the 2026 year. The reliefs
+that feed the formula are on the TP1/TP3 forms, both of which changed for 2026.
 
 ---
 
-## What is still needed before payroll can be built
+## What is still needed
 
-1. **The EPF Third Schedule table itself** — every wage band, all Parts A–F. Percentages
-   are not sufficient; the fixed amounts are the law.
-2. **The PERKESO contribution tables** for SOCSO Category 1 and 2 and for EIS, in wage
-   bands, current as of the RM6,000 ceiling.
-3. **Resolution of the EPF 60–75 conflict** above.
-4. **The LHDN MTD specification PDF** — the five formulas, and the YA 2026 bands and
-   reliefs.
-5. Confirmation of **EIS age-of-entry** eligibility rules.
+1. **PERKESO's banded SOCSO contribution table** (Category 1 and 2), current at the RM6,000
+   ceiling — `perkeso.gov.my/en/rate-of-contribution.html`.
+2. **LHDN's PCB 2026 specification PDF** — the five formulas and the reliefs —
+   `hasil.gov.my` → Majikan → Spesifikasi Data.
+3. **Confirmation of the YA 2026 tax bands.**
 
-All five are downloadable by a human from the links below; they are refused to automated
-fetching. The fastest path is for the shop owner or their accountant to save the four PDFs
-and drop them into this repository, at which point the tables can be transcribed and
-property-tested against LHDN's own PCB calculator.
-
-## Primary sources — to be opened by a person
-
-- EPF Act 1991 Third Schedule — https://www.kwsp.gov.my/en/epf-act-1991-third-schedule
-- EPF employer mandatory contribution — https://www.kwsp.gov.my/en/employer/responsibilities/mandatory-contribution
-- EPF for non-Malaysian citizens — https://www.kwsp.gov.my/en/employer/responsibilities/non-malaysian-citizen-employees
-- PERKESO rate of contribution — https://www.perkeso.gov.my/en/rate-of-contribution.html
-- PERKESO contribution rate PDF (Act 4) — https://www.perkeso.gov.my/images/lindung/lindung-24-jam/NewContributionRateIncludingSKBBK.pdf
-- LHDN PCB 2026 specification — https://www.hasil.gov.my/media/arvlrzh5/spesifikasi-kaedah-pengiraan-berkomputer-pcb-2026.pdf
-- LHDN official PCB calculator (to test against) — https://calcpcbplus.hasil.gov.my/
+EPF needs nothing further. EIS needs nothing further.
 
 ## How this will be verified once built
 
 The PCB engine gets property tests against **LHDN's own calculator** at
-`calcpcbplus.hasil.gov.my` — generate salary and relief combinations, compare our figure to
-theirs, and fail on any disagreement. That is the only verification that means anything for
-a statutory calculation: agreeing with the authority's own arithmetic, not with our reading
-of a table.
+`calcpcbplus.hasil.gov.my`: generate salary and relief combinations, compare our figure to
+theirs, fail on any disagreement. Agreeing with the authority's own arithmetic is the only
+check worth anything on a statutory figure — agreeing with our reading of a table is not.
+
+The EPF tables get a cheaper but equally strict test: for every one of the 1,203 bands,
+assert the transcribed amount is what the engine returns, and assert the above-RM20,000
+percentage path rounds up to the next ringgit.
+
+## Sources
+
+- **EPF Third Schedule from 1 October 2025** — committed at `sources/epf-third-schedule-from-2025-10-01.pdf` (supplied by the shop owner; kwsp.gov.my refuses automated download)
+- PERKESO contribution rates and EIS eligibility — https://www.perkeso.gov.my/en/rate-of-contribution.html (read from screenshots, same reason)
+- LHDN PCB 2026 specification — https://www.hasil.gov.my/media/arvlrzh5/spesifikasi-kaedah-pengiraan-berkomputer-pcb-2026.pdf
+- LHDN PCB calculator — https://calcpcbplus.hasil.gov.my/
