@@ -80,6 +80,7 @@ export type Permission =
   | 'quote.read'
   | 'quote.write'
   | 'payroll.read'
+  | 'payroll.manage'
   | 'collections.chase'
   | 'org.manage'
   | 'org.delete';

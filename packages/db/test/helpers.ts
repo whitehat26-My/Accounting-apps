@@ -174,6 +174,15 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
       ['1300', 'Inventory on Hand', 'ASSET'],
       ['5100', 'Cost of Goods Sold', 'EXPENSE'],
       ['5900', 'Stock Shrinkage', 'EXPENSE'],
+      // Payroll (0039): wages, the employer's statutory share, and one payable
+      // per authority so each bank payment clears its own balance.
+      ['6200', 'Wages and Salaries', 'EXPENSE'],
+      ['6210', 'Employer Statutory Contributions', 'EXPENSE'],
+      ['2300', 'EPF Payable', 'LIABILITY'],
+      ['2310', 'SOCSO Payable', 'LIABILITY'],
+      ['2320', 'EIS Payable', 'LIABILITY'],
+      ['2330', 'PCB Payable', 'LIABILITY'],
+      ['2340', 'Net Wages Payable', 'LIABILITY'],
     ];
 
     const accounts: Record<string, string> = {};
@@ -219,7 +228,8 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                (${tenantId}, 'PAYMENT', 'PAY-', 1, 5),
                (${tenantId}, 'CREDIT_NOTE', 'CN-', 1, 5),
                (${tenantId}, 'BILL', 'BILL-', 1, 5),
-               (${tenantId}, 'DEBIT_NOTE', 'DN-', 1, 5)
+               (${tenantId}, 'DEBIT_NOTE', 'DN-', 1, 5),
+               (${tenantId}, 'PAY_RUN', 'RUN-', 1, 5)
     `;
 
     // Which account plays which structural role.
@@ -239,6 +249,13 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
                -- Where a closed year's profit is carried. In the CHECK since
                -- 0002 and mapped by nothing until the year-end close existed.
                (${tenantId}, 'RETAINED_EARNINGS', ${accounts['3000']!}),
+               (${tenantId}, 'WAGES_EXPENSE',              ${accounts['6200']!}),
+               (${tenantId}, 'EMPLOYER_STATUTORY_EXPENSE', ${accounts['6210']!}),
+               (${tenantId}, 'EPF_PAYABLE',   ${accounts['2300']!}),
+               (${tenantId}, 'SOCSO_PAYABLE', ${accounts['2310']!}),
+               (${tenantId}, 'EIS_PAYABLE',   ${accounts['2320']!}),
+               (${tenantId}, 'PCB_PAYABLE',   ${accounts['2330']!}),
+               (${tenantId}, 'NET_WAGES_PAYABLE', ${accounts['2340']!}),
                (${tenantId}, 'INVENTORY',       ${accounts['1300']!}),
                (${tenantId}, 'COGS',            ${accounts['5100']!}),
                (${tenantId}, 'STOCK_SHRINKAGE', ${accounts['5900']!})

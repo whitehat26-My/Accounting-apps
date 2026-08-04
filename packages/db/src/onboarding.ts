@@ -74,6 +74,11 @@ const DEFAULT_CHART: readonly {
   { code: '2090', name: 'AP Currency Revaluation', type: 'LIABILITY', role: 'AP_REVALUATION', tags: ['ap_revaluation'] },
   { code: '2100', name: 'SST Payable', type: 'LIABILITY', role: 'SST_PAYABLE', tags: ['trade_payables'] },
   { code: '2200', name: 'Withholding Tax Payable', type: 'LIABILITY', role: 'WHT_PAYABLE', tags: ['trade_payables'] },
+  { code: '2300', name: 'EPF Payable', type: 'LIABILITY', role: 'EPF_PAYABLE', tags: ['trade_payables'] },
+  { code: '2310', name: 'SOCSO Payable', type: 'LIABILITY', role: 'SOCSO_PAYABLE', tags: ['trade_payables'] },
+  { code: '2320', name: 'EIS Payable', type: 'LIABILITY', role: 'EIS_PAYABLE', tags: ['trade_payables'] },
+  { code: '2330', name: 'PCB Payable', type: 'LIABILITY', role: 'PCB_PAYABLE', tags: ['trade_payables'] },
+  { code: '2340', name: 'Net Wages Payable', type: 'LIABILITY', role: 'NET_WAGES_PAYABLE', tags: ['trade_payables'] },
   { code: '3000', name: 'Retained Earnings', type: 'EQUITY', role: 'RETAINED_EARNINGS' },
   { code: '3100', name: 'Opening Balances', type: 'EQUITY' },
   { code: '4000', name: 'Sales Revenue', type: 'INCOME' },
@@ -82,6 +87,12 @@ const DEFAULT_CHART: readonly {
   { code: '5900', name: 'Stock Shrinkage', type: 'EXPENSE', role: 'STOCK_SHRINKAGE' },
   { code: '6000', name: 'Operating Expenses', type: 'EXPENSE' },
   { code: '6100', name: 'Payment Gateway Fees', type: 'EXPENSE', role: 'GATEWAY_FEE' },
+  // Payroll (0039). Wages and the employer's statutory share are separate
+  // expenses because they answer different questions — "what do I pay my
+  // staff" and "what does employing them cost on top" — and each authority
+  // gets its own payable because each is settled by its own bank payment.
+  { code: '6200', name: 'Wages and Salaries', type: 'EXPENSE', role: 'WAGES_EXPENSE' },
+  { code: '6210', name: 'Employer Statutory Contributions', type: 'EXPENSE', role: 'EMPLOYER_STATUTORY_EXPENSE' },
   { code: '6900', name: 'Foreign Exchange Gain/Loss', type: 'EXPENSE', role: 'FX_GAIN_LOSS' },
   { code: '6910', name: 'Unrealised FX Gain/Loss', type: 'EXPENSE', role: 'UNREALISED_FX' },
 ];
@@ -94,6 +105,7 @@ const SEQUENCES: readonly [string, string][] = [
   ['BILL', 'BILL-'],
   ['DEBIT_NOTE', 'DN-'],
   ['REPAIR_JOB', 'JOB-'],
+  ['PAY_RUN', 'RUN-'],
 ];
 
 /** Generate the id BEFORE the transaction, so the caller can set the tenant context to it. */

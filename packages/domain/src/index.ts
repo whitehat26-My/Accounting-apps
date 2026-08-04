@@ -14,6 +14,7 @@ export * from './repair.js';
 export * from './quote.js';
 export * from './payroll.js';
 export * from './pcb.js';
+export * from './pay-run.js';
 export * from './dunning.js';
 export * from './cash-forecast.js';
 export * from './weekly-digest.js';
