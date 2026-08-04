@@ -324,3 +324,155 @@ describe('the printed payslip', () => {
     expect(response.status).toBe(403);
   });
 });
+
+describe('the pay run over HTTP', () => {
+  const employee = {
+    fullName: 'Nurul Huda binti Ahmad',
+    employeeNo: 'SGT-004',
+    idType: 'NRIC' as const,
+    idValue: '900101145566',
+    tin: '531367080',
+    dateOfBirth: '1991-04-12',
+    citizenship: 'CITIZEN' as const,
+    taxResident: true,
+    taxCategory: 1,
+    qualifyingChildren: 0,
+    monthlyWage: '6000.00',
+    jobTitle: 'Senior Technician',
+    hiredOn: '2026-08-01',
+    ytdYear: 2026,
+    ytdGrossBefore: '42000.00',
+    ytdEpfBefore: '4620.00',
+    ytdMtdBefore: '1452.50',
+  };
+
+  let runId: string;
+  let lineId: string;
+
+  it('registers staff, computes the month, and confirms it', async () => {
+    const added = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/employees'),
+      body: employee,
+    });
+    expect(added.status, JSON.stringify(added.body)).toBe(201);
+
+    const prepared = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/runs/prepare'),
+      body: { payMonth: '2026-08-01' },
+    });
+    expect(prepared.status, JSON.stringify(prepared.body)).toBe(201);
+    runId = prepared.body['id'] as string;
+    const lines = prepared.body['lines'] as { id: string; pcb: string; netPay: string }[];
+    lineId = lines[0]!.id;
+
+    // The pinned figures, now arriving over HTTP with the YTD read from the
+    // employee record rather than typed into a form.
+    expect(lines[0]!.pcb).toBe('207.5000');
+    expect(lines[0]!.netPay).toBe('5046.2000');
+
+    const confirmed = await call(api, {
+      method: 'POST',
+      ...asOwner(`/v1/payroll/runs/${runId}/confirm`),
+    });
+    expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(201);
+    expect(confirmed.body['status']).toBe('CONFIRMED');
+    expect(confirmed.body['journalEntryId']).toBeTruthy();
+  });
+
+  it('serves the payslip PDF from the confirmed snapshot', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${runId}/payslips/${lineId}/pdf`),
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.startsWith('%PDF')).toBe(true);
+
+    const text = pdfText(response.body);
+    expect(text).toContain('Nurul Huda binti Ahmad');
+    expect(text).toContain('August 2026');
+    expect(text).toContain('5,046.20');
+  });
+
+  it('exports the CP39 with the exhibit’s record lengths', async () => {
+    const noEmployerNo = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${runId}/cp39`),
+    });
+    // Refused until the employer number exists, naming where to set it.
+    expect(noEmployerNo.status).toBe(422);
+
+    const set = await call(api, {
+      method: 'PATCH',
+      ...asOwner('/v1/payroll/settings'),
+      body: { lhdnEmployerNo: '9012345678' },
+    });
+    expect(set.status).toBe(200);
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${runId}/cp39`),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers['content-disposition']).toContain('901234567808_2026.txt');
+
+    const records = response.body.split('\r\n').filter((l: string) => l.length > 0);
+    expect(records[0]).toHaveLength(57);
+    expect(records[1]).toHaveLength(136);
+    expect(records[1]).toContain('00531367080'); // the exhibit's own TIN padding
+  });
+
+  it('locks SALES out of the register — a salary is not counter information', async () => {
+    for (const url of ['/v1/payroll/employees', '/v1/payroll/runs']) {
+      const response = await call(api, {
+        method: 'GET',
+        url,
+        token: salesToken,
+        tenantId: tenant.tenantId,
+      });
+      expect(response.status, url).toBe(403);
+    }
+  });
+
+  it('needs payroll.manage to confirm, not just payroll.read', async () => {
+    // BOOKKEEPER holds payroll.read (can see) but not payroll.manage (cannot
+    // move money). The guard is the difference between a viewer and a payer.
+    const bookkeeper = await makeUser(api, { tenantId: tenant.tenantId, role: 'BOOKKEEPER' });
+    const { accessToken } = await accessTokenFor(api, bookkeeper.refreshToken, tenant.tenantId);
+
+    const read = await call(api, {
+      method: 'GET',
+      url: '/v1/payroll/runs',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(read.status).toBe(200);
+
+    const write = await call(api, {
+      method: 'POST',
+      url: '/v1/payroll/runs/prepare',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+      body: { payMonth: '2026-09-01' },
+    });
+    expect(write.status).toBe(403);
+  });
+
+  it('reverses with a reason and the month can run again', async () => {
+    const reversed = await call(api, {
+      method: 'POST',
+      ...asOwner(`/v1/payroll/runs/${runId}/reverse`),
+      body: { reason: 'wrong wages keyed' },
+    });
+    expect(reversed.status, JSON.stringify(reversed.body)).toBe(201);
+    expect(reversed.body['status']).toBe('REVERSED');
+
+    const again = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/runs/prepare'),
+      body: { payMonth: '2026-08-01' },
+    });
+    expect(again.status).toBe(201);
+  });
+});

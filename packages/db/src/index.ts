@@ -25,6 +25,7 @@ export * from './period.js';
 export * from './statutory.js';
 export * from './payroll.js';
 export * from './statement.js';
+export * from './pay-run.js';
 export * from './readiness.js';
 export * from './sandbox.js';
 export * from './tax-return.js';
