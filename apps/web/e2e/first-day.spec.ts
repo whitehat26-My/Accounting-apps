@@ -171,4 +171,69 @@ test('first day at the shop', async ({ page }) => {
   // link could not carry the Authorization header.
   const [slip] = await Promise.all([page.waitForEvent('popup'), printButton.click()]);
   await expect.poll(() => slip.url()).toContain('blob:');
+
+  // ---- She takes the job. Put her on the register -------------------------
+  /*
+   * The quick quote above needed the year-to-date figures TYPED, every month,
+   * forever — the exact clerical work a shop pays a firm for. The register
+   * holds them once (her TP3 from the old employer) and the runs carry them
+   * forward from there. Several labels below exist in the calculator too, so
+   * `.first()` picks the staff form's copy — it sits earlier in the DOM.
+   */
+  await page.getByRole('button', { name: 'Add a staff member' }).click();
+  await page.getByLabel('Full name (as on IC)').fill('Nurul Huda binti Ahmad');
+  await page.getByLabel('Job title').first().fill('Technician');
+  await page.getByLabel('Date of birth').fill('1991-03-15');
+  // Without a TIN the CP39 button below would refuse, by design — LHDN files
+  // by Tax Identification Number. This is the spec's own worked example.
+  await page.getByLabel('Income tax number (TIN)').fill('IG 531367080');
+  await page.getByLabel('Monthly wage (RM)').first().fill('6000.00');
+  await page.getByLabel('Hired on').fill('2026-08-01');
+  await page.getByLabel('Joined mid-year from another employer').check();
+  await page.getByLabel('Gross paid this year (RM)').fill('42000.00');
+  await page.getByLabel('EPF deducted this year (RM)').fill('4620.00');
+  await page.getByLabel('PCB deducted this year (RM)').fill('1452.50');
+  await page.getByRole('button', { name: 'Add to the register' }).click();
+
+  await expect(page.getByRole('cell', { name: 'Nurul Huda binti Ahmad' })).toBeVisible();
+
+  // ---- Run the month ------------------------------------------------------
+  /*
+   * The point of the whole slice, proven at the surface: the run must land on
+   * the SAME RM 5,046.20 the calculator produced from hand-typed figures —
+   * this time with nothing typed, because her TP3 is on the register. A cell
+   * locator, because the calculator's copy of the figure above is in prose.
+   */
+  await page.getByRole('button', { name: 'Compute the month' }).click();
+  await expect(page.getByText(/RUN-/)).toBeVisible();
+  await expect(page.getByRole('cell', { name: 'RM 5,046.20' })).toBeVisible();
+
+  // Nothing is in the books yet — the warning panel says exactly what posting
+  // means before the button is offered.
+  await page.getByRole('button', { name: 'Confirm the month' }).click();
+  await expect(page.getByText('This posts to the books')).toBeVisible();
+  await page.getByRole('button', { name: 'Post it' }).click();
+
+  // Confirmed: every row grows a payslip button, and the remittance panel says
+  // who is owed what. `exact` because "Payslip" is a substring of the
+  // calculator's "Print payslip" further down the page.
+  await expect(page.getByRole('button', { name: 'Payslip', exact: true })).toBeVisible();
+  await expect(page.getByText('Pay LHDN (PCB)')).toBeVisible();
+
+  // ---- The CP39 file, once LHDN's employer number is on record ------------
+  const cp39Button = page.getByRole('button', { name: 'CP39 file (LHDN)' });
+  await expect(cp39Button).toBeVisible();
+
+  await page.getByLabel('LHDN employer number').fill('9012345678');
+  // Wait for the PATCH to land before asking for the file — the save gives no
+  // visual confirmation, and a CP39 requested first would honestly 422.
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/v1/payroll/settings') && r.ok()),
+    page.getByRole('button', { name: 'Save number' }).click(),
+  ]);
+
+  await page.screenshot({ path: 'e2e-artifacts/payroll-run.png', fullPage: true });
+
+  const [cp39] = await Promise.all([page.waitForEvent('popup'), cp39Button.click()]);
+  await expect.poll(() => cp39.url()).toContain('blob:');
 });

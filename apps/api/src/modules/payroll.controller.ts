@@ -453,9 +453,9 @@ const payslipSchema = contributionSchema.extend({
 const payslipPdfSchema = payslipSchema.extend({
   employee: z.object({
     /**
-     * Typed by the shop, not looked up — this system holds no employee records,
-     * and the payslip says so at the foot rather than implying a register that
-     * does not exist.
+     * Typed by the shop, not looked up — this route is the quick one-off print
+     * for someone not on the books. Staff on the register get their payslips
+     * from the pay-run snapshot instead (`runs/:id/payslips/:lineId/pdf`).
      */
     name: z.string().trim().min(1).max(120),
     staffId: z.string().trim().max(40).optional(),

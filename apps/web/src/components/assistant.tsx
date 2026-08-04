@@ -195,10 +195,11 @@ const HELP: Record<string, { title: string; steps: string[] }> = {
   payroll: {
     title: 'Payroll',
     steps: [
-      'Type a monthly wage and it tells you three things: what the staff member takes home, what the shop pays on top, and the true total cost.',
-      'The figures are looked up in the EPF, SOCSO and EIS tables — not worked out from a percentage. The employer EPF rate is 13% up to RM 5,000 and 12% above, so the "12%" everyone quotes is wrong for most shop wages.',
-      'Set the contribution month if you are working out an earlier one. SKBBK changed the SOCSO deductions from 1 June 2026.',
-      'Tick "include income tax" for a real take-home figure. It needs the tax category and what has been paid this year — tax is worked out on the whole year, not the month, so someone who joined in August pays less than a colleague on the same wage since January.',
+      'Add each staff member once — wage, IC, date of birth, tax details. The date of birth matters: EPF and SOCSO rates change at 60, and the app works the age out fresh every month.',
+      'Then each month: prepare the run, check the table, confirm. Confirming posts wages to the books and locks the figures — a payslip button appears on every row.',
+      'The year-to-date figures for income tax carry forward from the confirmed months automatically. Someone hired mid-year: put their previous employer totals from the TP3 on their staff record.',
+      'After confirming, the remittance panel shows what to pay KWSP, PERKESO and LHDN, and the CP39 button downloads the PCB file for e-PCB Plus. Wrong month? Reverse it and run again — the reversal stays in the books.',
+      'The quick quote card at the bottom answers "what would a hire cost?" without touching the books — the figures come from the EPF, SOCSO and EIS tables, not a percentage.',
     ],
   },
   settings: {

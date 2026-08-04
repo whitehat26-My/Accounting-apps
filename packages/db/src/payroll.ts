@@ -598,10 +598,11 @@ export async function computePayslip(tx: Tx, query: PayslipQuery): Promise<Paysl
 /**
  * Who the payslip is FOR.
  *
- * Supplied by the caller, not looked up, because this system holds no employee
- * records — see the note on `computeContributions`. That is a real limitation
- * and it is better stated here than papered over: the shop types the name, and
- * nothing about the person is retained afterwards.
+ * Supplied by the caller as plain fields rather than an employee id, so the
+ * same document shape serves both callers: the pay run assembles it from the
+ * `pay_run_line` snapshot (`payRunPayslip` in pay-run.ts — the figures frozen
+ * at confirm, immune to later edits of the staff record), and the quick
+ * calculator's one-off print fills it from whatever the shop typed.
  */
 export interface PayslipEmployee {
   readonly name: string;

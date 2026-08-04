@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiBlobUrl } from '@/lib/api';
-import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { rm, todayIso } from '@/lib/display';
 
 /**
@@ -88,7 +88,7 @@ const TAX_CATEGORIES = [
   },
 ] as const;
 
-export default function PayrollPage() {
+function CalculatorSection() {
   const [wage, setWage] = useState('2500.00');
   const [age, setAge] = useState('24');
   const [citizenship, setCitizenship] =
@@ -173,9 +173,7 @@ export default function PayrollPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Payroll</h1>
-
-      <Card title="What does this wage cost?">
+      <Card title="Quick quote: what would a wage cost?">
         <form
           className="space-y-4"
           onSubmit={(event) => {
@@ -522,13 +520,694 @@ export default function PayrollPage() {
             alongside the code.
           </li>
           <li>
-            This is a calculator, not a payroll run: it keeps no employee records, files
-            nothing, and posts nothing to the accounts. A printed payslip is generated on
-            the spot and not stored — print it again next month from the same figures, or
-            keep the PDF.
+            This quick quote posts nothing and remembers nothing — it exists for
+            &ldquo;what would hiring at RM X cost?&rdquo;. The sections above are the real
+            payroll: staff on the register, months confirmed into the books, payslips kept.
           </li>
         </ul>
       </Card>
+    </div>
+  );
+}
+
+
+// ---------------------------------------------------------------------------
+// The payroll itself: the register, and the month
+// ---------------------------------------------------------------------------
+
+interface Employee {
+  id: string;
+  fullName: string;
+  employeeNo: string | null;
+  idType: string | null;
+  idValue: string | null;
+  tin: string | null;
+  dateOfBirth: string;
+  citizenship: 'CITIZEN' | 'PERMANENT_RESIDENT' | 'NON_CITIZEN';
+  taxResident: boolean;
+  taxCategory: 1 | 2 | 3;
+  qualifyingChildren: number;
+  monthlyWage: string;
+  jobTitle: string | null;
+  hiredOn: string;
+  leftOn: string | null;
+  active: boolean;
+  ytdYear: number | null;
+  ytdGrossBefore: string;
+  ytdEpfBefore: string;
+  ytdMtdBefore: string;
+}
+
+interface RunLine {
+  id: string;
+  employeeId: string;
+  fullName: string;
+  gross: string;
+  epfEmployee: string;
+  socsoEmployeeInvalidity: string;
+  socsoEmployeeSkbbk: string;
+  eisEmployee: string;
+  pcb: string;
+  totalDeducted: string;
+  netPay: string;
+}
+
+interface Run {
+  id: string;
+  runNo: string;
+  payMonth: string;
+  status: 'DRAFT' | 'CONFIRMED' | 'REVERSED';
+  lines: RunLine[];
+  totals: {
+    gross: string;
+    epf: string;
+    socso: string;
+    eis: string;
+    pcb: string;
+    netPay: string;
+    employerCost: string;
+  };
+}
+
+interface RunSummary {
+  id: string;
+  runNo: string;
+  payMonth: string;
+  status: string;
+}
+
+export default function PayrollPage() {
+  return (
+    <div className="space-y-4">
+      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Payroll</h1>
+      <RunCard />
+      <StaffCard />
+      <CalculatorSection />
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const EMPTY_FORM = {
+  fullName: '',
+  employeeNo: '',
+  jobTitle: '',
+  idType: 'NRIC' as 'NRIC' | 'PASSPORT',
+  idValue: '',
+  tin: '',
+  dateOfBirth: '',
+  citizenship: 'CITIZEN' as Employee['citizenship'],
+  taxResident: true,
+  taxCategory: 1 as 1 | 2 | 3,
+  qualifyingChildren: '0',
+  monthlyWage: '',
+  hiredOn: todayIso(),
+  leftOn: '',
+  midYear: false,
+  ytdGrossBefore: '0.00',
+  ytdEpfBefore: '0.00',
+  ytdMtdBefore: '0.00',
+};
+
+function StaffCard() {
+  const queryClient = useQueryClient();
+  const [editing, setEditing] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [form, setForm] = useState(EMPTY_FORM);
+
+  const staff = useQuery({
+    queryKey: ['employees'],
+    queryFn: () => api<{ employees: Employee[] }>('/v1/payroll/employees'),
+  });
+
+  const save = useMutation({
+    mutationFn: () => {
+      const body = {
+        fullName: form.fullName.trim(),
+        ...(form.employeeNo.trim() ? { employeeNo: form.employeeNo.trim() } : {}),
+        ...(form.jobTitle.trim() ? { jobTitle: form.jobTitle.trim() } : {}),
+        ...(form.idValue.trim()
+          ? { idType: form.idType, idValue: form.idValue.trim().replace(/-/g, '') }
+          : {}),
+        ...(form.tin.trim() ? { tin: form.tin.trim() } : {}),
+        dateOfBirth: form.dateOfBirth,
+        citizenship: form.citizenship,
+        taxResident: form.taxResident,
+        taxCategory: form.taxCategory,
+        qualifyingChildren: Number(form.qualifyingChildren),
+        monthlyWage: form.monthlyWage,
+        hiredOn: form.hiredOn,
+        leftOn: form.leftOn === '' ? null : form.leftOn,
+        // TP3: only sent when the joiner brought a year with them. The year is
+        // the hire year — figures from an earlier year are stale by law.
+        ...(form.midYear
+          ? {
+              ytdYear: Number(form.hiredOn.slice(0, 4)),
+              ytdGrossBefore: form.ytdGrossBefore,
+              ytdEpfBefore: form.ytdEpfBefore,
+              ytdMtdBefore: form.ytdMtdBefore,
+            }
+          : {}),
+      };
+      return editing === null
+        ? api('/v1/payroll/employees', { method: 'POST', body })
+        : api(`/v1/payroll/employees/${editing}`, { method: 'PATCH', body });
+    },
+    onSuccess: () => {
+      setForm(EMPTY_FORM);
+      setEditing(null);
+      setShowForm(false);
+      void queryClient.invalidateQueries({ queryKey: ['employees'] });
+    },
+  });
+
+  const startEdit = (employee: Employee) => {
+    setEditing(employee.id);
+    setShowForm(true);
+    setForm({
+      fullName: employee.fullName,
+      employeeNo: employee.employeeNo ?? '',
+      jobTitle: employee.jobTitle ?? '',
+      idType: (employee.idType as 'NRIC' | 'PASSPORT') ?? 'NRIC',
+      idValue: employee.idValue ?? '',
+      tin: employee.tin ?? '',
+      dateOfBirth: employee.dateOfBirth,
+      citizenship: employee.citizenship,
+      taxResident: employee.taxResident,
+      taxCategory: employee.taxCategory,
+      qualifyingChildren: String(employee.qualifyingChildren),
+      monthlyWage: employee.monthlyWage,
+      hiredOn: employee.hiredOn,
+      leftOn: employee.leftOn ?? '',
+      midYear: employee.ytdYear !== null,
+      ytdGrossBefore: employee.ytdGrossBefore,
+      ytdEpfBefore: employee.ytdEpfBefore,
+      ytdMtdBefore: employee.ytdMtdBefore,
+    });
+  };
+
+  const set = (patch: Partial<typeof EMPTY_FORM>) =>
+    setForm((current) => ({ ...current, ...patch }));
+
+  const ready =
+    form.fullName.trim() !== '' &&
+    form.dateOfBirth !== '' &&
+    form.monthlyWage.trim() !== '' &&
+    form.hiredOn !== '';
+
+  return (
+    <Card title="Staff">
+      {staff.data ? (
+        staff.data.employees.length > 0 ? (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-500">
+                <th className="pb-2">Name</th>
+                <th className="pb-2">Role</th>
+                <th className="pb-2 text-right">Monthly wage</th>
+                <th className="pb-2">Status</th>
+                <th className="pb-2" />
+              </tr>
+            </thead>
+            <tbody>
+              {staff.data.employees.map((employee) => (
+                <tr key={employee.id} className="border-t border-slate-100">
+                  <td className="py-2 font-medium">{employee.fullName}</td>
+                  <td className="py-2 text-slate-500">{employee.jobTitle ?? ''}</td>
+                  <td className="py-2 text-right">{rm(employee.monthlyWage)}</td>
+                  <td className="py-2">
+                    <Badge status={employee.active ? 'ACTIVE' : 'LEFT'} />
+                  </td>
+                  <td className="py-2 text-right">
+                    <Button variant="ghost" onClick={() => startEdit(employee)}>
+                      Edit
+                    </Button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : (
+          <p className="text-sm text-slate-500">
+            Nobody on the books yet. Add your staff once — the monthly run computes
+            everyone from here.
+          </p>
+        )
+      ) : (
+        <Skeleton />
+      )}
+
+      {!showForm ? (
+        <div className="mt-3">
+          <Button
+            variant="ghost"
+            onClick={() => {
+              setEditing(null);
+              setForm(EMPTY_FORM);
+              setShowForm(true);
+            }}
+          >
+            Add a staff member
+          </Button>
+        </div>
+      ) : (
+        <div className="mt-4 space-y-4 rounded-lg border border-slate-200 p-4">
+          <p className="text-sm font-medium text-slate-900">
+            {editing === null ? 'New staff member' : 'Edit staff member'}
+          </p>
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            <Field label="Full name (as on IC)">
+              <Input value={form.fullName} onChange={(e) => set({ fullName: e.target.value })} />
+            </Field>
+            <Field label="Staff number">
+              <Input value={form.employeeNo} onChange={(e) => set({ employeeNo: e.target.value })} />
+            </Field>
+            <Field label="Job title">
+              <Input value={form.jobTitle} onChange={(e) => set({ jobTitle: e.target.value })} />
+            </Field>
+            <Field label="ID type">
+              <select
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                value={form.idType}
+                onChange={(e) => set({ idType: e.target.value as 'NRIC' | 'PASSPORT' })}
+              >
+                <option value="NRIC">NRIC</option>
+                <option value="PASSPORT">Passport</option>
+              </select>
+            </Field>
+            <Field label="NRIC / passport number">
+              <Input value={form.idValue} onChange={(e) => set({ idValue: e.target.value })} />
+            </Field>
+            <Field label="Income tax number (TIN)">
+              <Input
+                value={form.tin}
+                onChange={(e) => set({ tin: e.target.value })}
+                placeholder="Needed for the CP39 filing"
+              />
+            </Field>
+            <Field label="Date of birth">
+              {/*
+                Age is computed from this at every run, never stored: EPF, SOCSO
+                and EIS all change at 60, and the month after a 60th birthday
+                must switch schedules with nobody remembering anything.
+              */}
+              <Input
+                type="date"
+                value={form.dateOfBirth}
+                onChange={(e) => set({ dateOfBirth: e.target.value })}
+              />
+            </Field>
+            <Field label="Status">
+              <select
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                value={form.citizenship}
+                onChange={(e) => set({ citizenship: e.target.value as Employee['citizenship'] })}
+              >
+                <option value="CITIZEN">Malaysian citizen</option>
+                <option value="PERMANENT_RESIDENT">Permanent resident</option>
+                <option value="NON_CITIZEN">Foreign worker</option>
+              </select>
+            </Field>
+            <Field label="Tax category">
+              <select
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                value={form.taxCategory}
+                onChange={(e) => set({ taxCategory: Number(e.target.value) as 1 | 2 | 3 })}
+              >
+                <option value={1}>Single</option>
+                <option value={2}>Married, spouse not working</option>
+                <option value={3}>Married (spouse works) / divorced / widowed</option>
+              </select>
+            </Field>
+            <Field label="Children claimed">
+              <Input
+                inputMode="numeric"
+                value={form.qualifyingChildren}
+                onChange={(e) => set({ qualifyingChildren: e.target.value })}
+              />
+            </Field>
+            <Field label="Monthly wage (RM)">
+              <Input
+                inputMode="decimal"
+                value={form.monthlyWage}
+                onChange={(e) => set({ monthlyWage: e.target.value })}
+              />
+            </Field>
+            <Field label="Hired on">
+              <Input
+                type="date"
+                value={form.hiredOn}
+                onChange={(e) => set({ hiredOn: e.target.value })}
+              />
+            </Field>
+            {editing !== null ? (
+              <Field label="Left on (blank = still employed)">
+                <Input
+                  type="date"
+                  value={form.leftOn}
+                  onChange={(e) => set({ leftOn: e.target.value })}
+                />
+              </Field>
+            ) : null}
+          </div>
+
+          <label className="flex items-start gap-2.5 text-sm">
+            <input
+              type="checkbox"
+              className="mt-0.5 h-4 w-4 rounded border-slate-300"
+              checked={form.midYear}
+              onChange={(e) => set({ midYear: e.target.checked })}
+            />
+            <span>
+              <span className="font-medium text-slate-900">
+                Joined mid-year from another employer
+              </span>
+              <span className="mt-0.5 block text-xs text-slate-500">
+                Their Form TP3 figures — what the old employer already paid and deducted
+                this year. Without them the tax formula treats the person as having no
+                income before joining, which under-deducts all year.
+              </span>
+            </span>
+          </label>
+
+          {form.midYear ? (
+            <div className="grid gap-4 sm:grid-cols-3">
+              <Field label="Gross paid this year (RM)">
+                <Input
+                  inputMode="decimal"
+                  value={form.ytdGrossBefore}
+                  onChange={(e) => set({ ytdGrossBefore: e.target.value })}
+                />
+              </Field>
+              <Field label="EPF deducted this year (RM)">
+                <Input
+                  inputMode="decimal"
+                  value={form.ytdEpfBefore}
+                  onChange={(e) => set({ ytdEpfBefore: e.target.value })}
+                />
+              </Field>
+              <Field label="PCB deducted this year (RM)">
+                <Input
+                  inputMode="decimal"
+                  value={form.ytdMtdBefore}
+                  onChange={(e) => set({ ytdMtdBefore: e.target.value })}
+                />
+              </Field>
+            </div>
+          ) : null}
+
+          <div className="flex flex-wrap gap-3">
+            <Button disabled={!ready || save.isPending} onClick={() => save.mutate()}>
+              {save.isPending ? 'Saving…' : editing === null ? 'Add to the register' : 'Save changes'}
+            </Button>
+            <Button
+              variant="ghost"
+              onClick={() => {
+                setShowForm(false);
+                setEditing(null);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+          <ErrorNote error={save.error} />
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+function RunCard() {
+  const queryClient = useQueryClient();
+  const [payMonth, setPayMonth] = useState(`${todayIso().slice(0, 7)}-01`);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  const [reversing, setReversing] = useState(false);
+  const [reverseReason, setReverseReason] = useState('');
+  const [employerNo, setEmployerNo] = useState('');
+  const [blobError, setBlobError] = useState<unknown>(null);
+
+  const runs = useQuery({
+    queryKey: ['pay-runs'],
+    queryFn: () => api<{ runs: RunSummary[] }>('/v1/payroll/runs'),
+  });
+
+  const detail = useQuery({
+    queryKey: ['pay-run', selectedRunId],
+    enabled: selectedRunId !== null,
+    queryFn: () => api<Run>(`/v1/payroll/runs/${selectedRunId}`),
+  });
+
+  const refresh = (runId?: string) => {
+    void queryClient.invalidateQueries({ queryKey: ['pay-runs'] });
+    if (runId !== undefined) setSelectedRunId(runId);
+    void queryClient.invalidateQueries({ queryKey: ['pay-run'] });
+  };
+
+  const prepare = useMutation({
+    mutationFn: () =>
+      api<Run>('/v1/payroll/runs/prepare', { method: 'POST', body: { payMonth } }),
+    onSuccess: (run) => refresh(run.id),
+  });
+
+  const confirm = useMutation({
+    mutationFn: () =>
+      api<Run>(`/v1/payroll/runs/${selectedRunId}/confirm`, { method: 'POST', body: {} }),
+    onSuccess: () => {
+      setConfirming(false);
+      refresh();
+    },
+  });
+
+  const reverse = useMutation({
+    mutationFn: () =>
+      api<Run>(`/v1/payroll/runs/${selectedRunId}/reverse`, {
+        method: 'POST',
+        body: { reason: reverseReason.trim() },
+      }),
+    onSuccess: () => {
+      setReversing(false);
+      setReverseReason('');
+      refresh();
+    },
+  });
+
+  const saveEmployerNo = useMutation({
+    mutationFn: () =>
+      api('/v1/payroll/settings', { method: 'PATCH', body: { lhdnEmployerNo: employerNo.trim() } }),
+  });
+
+  const openBlob = async (path: string) => {
+    setBlobError(null);
+    try {
+      const url = await apiBlobUrl(path);
+      window.open(url, '_blank');
+    } catch (error) {
+      setBlobError(error);
+    }
+  };
+
+  const run = detail.data ?? null;
+
+  return (
+    <Card title="Run the month">
+      <div className="flex flex-wrap items-end gap-3">
+        <div className="min-w-[180px]">
+          <Field label="Pay month">
+            <Input
+              type="date"
+              value={payMonth}
+              onChange={(e) => setPayMonth(`${e.target.value.slice(0, 7)}-01`)}
+            />
+          </Field>
+        </div>
+        <Button disabled={prepare.isPending} onClick={() => prepare.mutate()}>
+          {prepare.isPending ? 'Computing…' : 'Compute the month'}
+        </Button>
+        <p className="text-xs text-slate-500">
+          Computes everyone on the register with their year-to-date carried forward
+          automatically. Posts nothing until you confirm.
+        </p>
+      </div>
+      <ErrorNote error={prepare.error} />
+
+      {runs.data && runs.data.runs.length > 0 ? (
+        <div className="mt-4 flex flex-wrap gap-2">
+          {runs.data.runs.map((summary) => (
+            <button
+              key={summary.id}
+              onClick={() => setSelectedRunId(summary.id)}
+              className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset ${
+                summary.id === selectedRunId
+                  ? 'bg-slate-900 text-white ring-slate-900'
+                  : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'
+              }`}
+            >
+              {summary.payMonth.slice(0, 7)} · {summary.status}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
+      {run !== null ? (
+        <div className="mt-4 space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm">
+              <span className="font-semibold text-slate-900">{run.runNo}</span>{' '}
+              <span className="text-slate-500">· {run.payMonth.slice(0, 7)}</span>{' '}
+              <Badge status={run.status} />
+            </p>
+            {run.status === 'DRAFT' ? (
+              <Button onClick={() => setConfirming((open) => !open)}>Confirm the month</Button>
+            ) : null}
+            {run.status === 'CONFIRMED' ? (
+              <div className="flex flex-wrap gap-2">
+                <Button variant="ghost" onClick={() => void openBlob(`/v1/payroll/runs/${run.id}/cp39`)}>
+                  CP39 file (LHDN)
+                </Button>
+                <Button variant="ghost" onClick={() => setReversing((open) => !open)}>
+                  Reverse
+                </Button>
+              </div>
+            ) : null}
+          </div>
+
+          {confirming && run.status === 'DRAFT' ? (
+            <div className="rounded-lg bg-emerald-50 p-3">
+              <p className="text-xs text-slate-600">
+                This posts to the books: wages as an expense, and what is owed to KWSP,
+                PERKESO, LHDN and your staff as payables. It cannot be edited afterwards —
+                a mistake is corrected by reversing the whole month.
+              </p>
+              <div className="mt-2">
+                <Button disabled={confirm.isPending} onClick={() => confirm.mutate()}>
+                  {confirm.isPending ? 'Posting…' : 'Post it'}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+          <ErrorNote error={confirm.error} />
+
+          {reversing && run.status === 'CONFIRMED' ? (
+            <div className="flex flex-wrap items-end gap-3 rounded-lg bg-slate-50 p-3">
+              <div className="min-w-[240px] flex-1">
+                <Field label="Why? (kept on the record)">
+                  <Input
+                    value={reverseReason}
+                    onChange={(e) => setReverseReason(e.target.value)}
+                    placeholder="Wrong wages keyed for August"
+                  />
+                </Field>
+              </div>
+              <Button
+                disabled={reverse.isPending || reverseReason.trim() === ''}
+                onClick={() => reverse.mutate()}
+              >
+                Reverse the month
+              </Button>
+            </div>
+          ) : null}
+          <ErrorNote error={reverse.error} />
+          <ErrorNote error={blobError} />
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-slate-500">
+                  <th className="pb-2">Staff</th>
+                  <th className="pb-2 text-right">Gross</th>
+                  <th className="pb-2 text-right">EPF</th>
+                  <th className="pb-2 text-right">SOCSO</th>
+                  <th className="pb-2 text-right">EIS</th>
+                  <th className="pb-2 text-right">PCB</th>
+                  <th className="pb-2 text-right">Take-home</th>
+                  <th className="pb-2" />
+                </tr>
+              </thead>
+              <tbody>
+                {run.lines.map((line) => (
+                  <tr key={line.id} className="border-t border-slate-100">
+                    <td className="py-2 font-medium">{line.fullName}</td>
+                    <td className="py-2 text-right">{rm(line.gross)}</td>
+                    <td className="py-2 text-right">{rm(line.epfEmployee)}</td>
+                    <td className="py-2 text-right">
+                      {/* Shown combined on the review row; the payslip splits it. */}
+                      {rm(line.socsoEmployeeInvalidity)}+{rm(line.socsoEmployeeSkbbk)}
+                    </td>
+                    <td className="py-2 text-right">{rm(line.eisEmployee)}</td>
+                    <td className="py-2 text-right">{rm(line.pcb)}</td>
+                    <td className="py-2 text-right font-medium">{rm(line.netPay)}</td>
+                    <td className="py-2 text-right">
+                      {run.status === 'CONFIRMED' ? (
+                        <Button
+                          variant="ghost"
+                          onClick={() =>
+                            void openBlob(`/v1/payroll/runs/${run.id}/payslips/${line.id}/pdf`)
+                          }
+                        >
+                          Payslip
+                        </Button>
+                      ) : null}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+
+          <div className="grid gap-3 rounded-lg bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-5">
+            <RemitFigure label="Pay your staff" amount={run.totals.netPay} />
+            <RemitFigure label="Pay KWSP (EPF)" amount={run.totals.epf} />
+            <RemitFigure label="Pay PERKESO (SOCSO)" amount={run.totals.socso} />
+            <RemitFigure label="Pay PERKESO (EIS)" amount={run.totals.eis} />
+            <RemitFigure label="Pay LHDN (PCB)" amount={run.totals.pcb} />
+          </div>
+          <p className="text-xs text-slate-500">
+            Statutory payments are generally due by the 15th of the following month —
+            confirm the current due dates with each authority. Match the bank payments to
+            the payable accounts (2300–2340) in Banking and each balance clears itself.
+          </p>
+
+          {run.status === 'CONFIRMED' ? (
+            <div className="flex flex-wrap items-end gap-3">
+              <div className="min-w-[220px]">
+                <Field label="LHDN employer number (E no.) — needed for the CP39 file">
+                  <Input
+                    value={employerNo}
+                    inputMode="numeric"
+                    onChange={(e) => setEmployerNo(e.target.value)}
+                    placeholder="e.g. 9012345678"
+                  />
+                </Field>
+              </div>
+              <Button
+                variant="ghost"
+                disabled={saveEmployerNo.isPending || employerNo.trim() === ''}
+                onClick={() => saveEmployerNo.mutate()}
+              >
+                Save number
+              </Button>
+              <ErrorNote error={saveEmployerNo.error} />
+            </div>
+          ) : null}
+        </div>
+      ) : selectedRunId !== null ? (
+        <div className="mt-4">
+          <Skeleton />
+        </div>
+      ) : null}
+    </Card>
+  );
+}
+
+function RemitFigure({ label, amount }: { label: string; amount: string }) {
+  return (
+    <div>
+      <p className="text-xs text-slate-500">{label}</p>
+      <p className="text-sm font-semibold text-slate-900">{rm(amount)}</p>
     </div>
   );
 }
