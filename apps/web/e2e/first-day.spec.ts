@@ -30,16 +30,28 @@ test('first day at the shop', async ({ page }) => {
 
   // ---- Add a sellable service (no stock needed for the first sale) --------
   await page.getByRole('link', { name: 'Items' }).click();
-  await page.getByLabel('Code').fill('SETUP');
+  // `exact` because "Code" is a substring of "Barcode (optional)".
+  await page.getByLabel('Code', { exact: true }).fill('SETUP');
   await page.getByLabel('Name').fill('PC setup service');
   await page.getByLabel('Selling price (RM)').fill('150.00');
   await page.getByRole('button', { name: 'Service', exact: true }).click();
   await page.getByRole('button', { name: 'Add item' }).click();
   await expect(page.getByRole('cell', { name: 'PC setup service' })).toBeVisible();
 
-  // ---- Ring it at the till ------------------------------------------------
+  // ---- Ring it at the till, THROUGH THE SCANNER LANE ----------------------
+  /*
+   * Typed exactly as a keyboard-wedge scanner delivers it: the code, then
+   * Enter. The item lands in the sale with no mouse — and a wrong code must
+   * say so rather than add the wrong thing.
+   */
   await page.getByRole('link', { name: 'Point of sale' }).click();
-  await page.getByText('PC setup service').click();
+  await page.getByLabel('Scan barcode').fill('NO-SUCH-CODE');
+  await page.getByLabel('Scan barcode').press('Enter');
+  await expect(page.getByText(/Nothing on the shelf answers/)).toBeVisible();
+
+  await page.getByLabel('Scan barcode').fill('SETUP');
+  await page.getByLabel('Scan barcode').press('Enter');
+  await expect(page.getByText('PC setup service').first()).toBeVisible();
   await page.getByLabel('Cash tendered (for change)').fill('200.00');
   await page.getByRole('button', { name: 'Ring sale' }).click();
 

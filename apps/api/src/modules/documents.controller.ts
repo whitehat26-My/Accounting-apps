@@ -1,10 +1,10 @@
-import { Controller, Get, Inject, Param, Req, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Param, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { invoiceDocumentData, receiptDocumentData, withTenant, type Sql } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
-import { renderInvoicePdf, renderReceiptPdf } from '../pdf/render.js';
+import { renderInvoicePdf, renderReceiptPdf, renderThermalReceiptPdf } from '../pdf/render.js';
 
 /**
  * Printed documents.
@@ -35,16 +35,23 @@ export class DocumentsController {
       .send(pdf);
   }
 
+  /**
+   * `?format=thermal` renders the same receipt on 80mm roll paper — what the
+   * till actually prints. The A4 default stays for the emailed/filed copy.
+   * Same stored data either way; only the garment changes.
+   */
   @Requires('invoice.read')
   @Get('receipts/:id/pdf')
   async receiptPdf(
     @Param('id') id: string,
+    @Query('format') format: string | undefined,
     @Req() request: FastifyRequest,
     @Res() reply: FastifyReply,
   ) {
     const ctx = tenantContextOf(request);
     const data = await withTenant(this.sql, ctx, (tx) => receiptDocumentData(tx, ctx, id));
-    const pdf = await renderReceiptPdf(data);
+    const pdf =
+      format === 'thermal' ? await renderThermalReceiptPdf(data) : await renderReceiptPdf(data);
 
     void reply
       .header('content-type', 'application/pdf')

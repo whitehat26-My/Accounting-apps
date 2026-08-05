@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0042` (bank feeds), 1,586 tests
-(714 domain · 608 db · 226 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0043` (the till: barcodes + thermal receipts),
+1,589 tests (714 domain · 609 db · 228 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`) — register, onboard,
 add an item, ring a cash sale, see the takings, quote a job and convert it, run a customer
 statement, cost a hire with all four statutory deductions, then hire her: onto the staff
@@ -436,9 +436,27 @@ takings by method and landing account for the drawer count, plus the day's COGS 
 profit. Under a dedicated `pos.sale` permission that SALES holds — deliberately narrower
 than `receipt.create`, which stays with the bookkeeping roles.
 
-Not in the slice: receipt PRINTING (a rendering concern, waits with PDF in §4.5), held
-orders/quotes, split tender (half cash half card), and cash-drawer float tracking. Split
-tender is the first of these a real counter misses.
+**The till hardware slice — BUILT (`0043`).** Two additions that turn the screen into a
+counter:
+
+- **Barcodes.** `item.barcode`, nullable, one-per-item enforced by a partial unique
+  index, with a friendly refusal that names the other item. The lookup is EXACT —
+  `GET /v1/items?barcode=` returns one hit or none, never a substring guess, because a
+  scanner types the whole code and a near-match would put the wrong thing in a sale.
+  The POS screen grew a scanner lane: an always-focused input that answers Enter
+  (which is all a keyboard-wedge scanner is) by adding the item and keeping focus —
+  sale to sale, no mouse. A miss says so in red and clears. The browser journey rings
+  its sale through the lane, including the wrong-code refusal.
+- **Thermal receipts.** `GET /v1/receipts/:id/pdf?format=thermal` renders the same
+  stored receipt on 80mm roll paper — computed page height (a roll cuts where the page
+  ends; a fixed A4 height would feed blank paper), no logo raster (203dpi thermal heads
+  turn scaled PNGs to mud; the shop's name is set in text), and the LINES of the sale on
+  the slip: `receiptDocumentData` now carries the invoice's lines when the receipt
+  settles exactly one invoice, which is every till sale. The A4 route stays for the
+  emailed copy; same data, different garment, asserted equal in the e2e suite.
+
+Still not in the slice: held orders, split tender (half cash half card), and cash-drawer
+float tracking. Split tender is the first of these a real counter misses.
 
 ### 5.2 Serial number tracking — BUILT (`0028`, `packages/domain/src/serials.ts`)
 

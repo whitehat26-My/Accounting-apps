@@ -111,6 +111,107 @@ export function renderReceiptPdf(doc: ReceiptDocument): Promise<Buffer> {
 
 
 /**
+ * The till receipt, on the paper tills actually use.
+ *
+ * ---------------------------------------------------------------------------
+ * 80mm THERMAL, NOT A4.
+ *
+ * 80mm of printable width is ~227 PostScript points. The page HEIGHT is
+ * computed from the content before drawing, because thermal paper is a roll:
+ * the driver cuts where the page ends, and a fixed A4 height would feed half
+ * a metre of blank paper after every sale.
+ *
+ * Same stored data as the A4 receipt — this is a different garment on the
+ * same body, never a different document. No logo raster: a 203dpi thermal
+ * head turns a scaled PNG into grey mud, so the shop's name is set in text,
+ * which such printers render crisply.
+ * ---------------------------------------------------------------------------
+ */
+export function renderThermalReceiptPdf(doc: ReceiptDocument): Promise<Buffer> {
+  const WIDTH = 227; // 80mm
+  const M = 10; // roll paper has no real margin to give
+  const W = WIDTH - M * 2;
+
+  /*
+   * Height, estimated line-by-line BEFORE drawing. Generous rather than
+   * exact — an extra 20pt of roll is invisible, a clipped total is a defect.
+   */
+  const lineCount =
+    7 + // header block
+    (doc.lines?.length ?? 0) * 2 + // description + qty/amount rows
+    4 + // totals
+    doc.allocations.length +
+    6; // method, footer, breathing room
+  const height = Math.max(280, 90 + lineCount * 12);
+
+  return new Promise((resolve, reject) => {
+    const pdf = new PDFDocument({ size: [WIDTH, height], margin: M, compress: false });
+    const chunks: Buffer[] = [];
+    pdf.on('data', (chunk: Buffer) => chunks.push(chunk));
+    pdf.on('end', () => resolve(Buffer.concat(chunks)));
+    pdf.on('error', reject);
+
+    const centre = (text: string) => pdf.text(text, M, pdf.y, { width: W, align: 'center' });
+    const row = (label: string, value: string) => {
+      const y = pdf.y;
+      pdf.text(label, M, y, { width: W - 70 });
+      pdf.text(value, WIDTH - M - 70, y, { width: 70, align: 'right' });
+    };
+    const dashed = () => {
+      centre('- '.repeat(22).trim());
+    };
+
+    // ---- Shop ---------------------------------------------------------------
+    pdf.font('Helvetica-Bold').fontSize(10);
+    centre(doc.seller.name);
+    pdf.font('Helvetica').fontSize(7);
+    if (doc.seller.ssmRegistrationNo) centre(`SSM: ${doc.seller.ssmRegistrationNo}`);
+    if (doc.seller.sstNo) centre(`SST No: ${doc.seller.sstNo}`);
+    pdf.moveDown(0.4);
+    dashed();
+
+    pdf.fontSize(8);
+    row(`Receipt ${doc.paymentNo}`, displayDate(doc.paymentDate));
+    if (doc.customer.name !== 'Walk-in customer') row('Customer', '');
+    if (doc.customer.name !== 'Walk-in customer') {
+      pdf.text(doc.customer.name, M, pdf.y, { width: W });
+    }
+    dashed();
+
+    // ---- What was bought ----------------------------------------------------
+    if (doc.lines !== undefined && doc.lines.length > 0) {
+      for (const line of doc.lines) {
+        pdf.text(line.description, M, pdf.y, { width: W });
+        row(`  ${trimQty(line.quantity)} x`, money(line.lineTotal));
+      }
+      dashed();
+      if (doc.subtotal !== undefined) row('Subtotal', money(doc.subtotal));
+      if (doc.taxTotal !== undefined) row('SST', money(doc.taxTotal));
+    } else {
+      // A settlement receipt: name the invoices it pays instead.
+      for (const allocation of doc.allocations) {
+        row(allocation.invoiceNo, money(allocation.amount));
+      }
+      dashed();
+    }
+
+    pdf.font('Helvetica-Bold').fontSize(10);
+    row('TOTAL', `RM ${money(doc.amount)}`);
+    pdf.font('Helvetica').fontSize(8);
+    row('Paid by', doc.method);
+    if (doc.reference) row('Ref', doc.reference);
+
+    pdf.moveDown(0.6);
+    dashed();
+    pdf.fontSize(7);
+    centre('Thank you!');
+    centre('Computer-generated receipt.');
+
+    pdf.end();
+  });
+}
+
+/**
  * A payslip.
  *
  * ---------------------------------------------------------------------------

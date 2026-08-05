@@ -119,6 +119,19 @@ export interface ReceiptDocument {
     readonly invoiceNo: string;
     readonly amount: string;
   }[];
+  /**
+   * What was bought, when this receipt settles exactly ONE invoice — the till
+   * case. A thermal receipt without its lines is a card slip, not a receipt.
+   * Absent when a payment settles several invoices at once: those lines would
+   * be three documents' worth, and the A4 layout lists the invoices instead.
+   */
+  readonly lines?: readonly {
+    readonly description: string;
+    readonly quantity: string;
+    readonly lineTotal: string;
+  }[];
+  readonly subtotal?: string;
+  readonly taxTotal?: string;
 }
 
 export async function receiptDocumentData(
@@ -151,6 +164,34 @@ export async function receiptDocumentData(
        ORDER BY i.invoice_no
   `;
 
+  // The till case: one payment, one invoice — carry its lines so the printed
+  // receipt can say what was bought.
+  let saleDetail: Pick<ReceiptDocument, 'lines' | 'subtotal' | 'taxTotal'> = {};
+  if (allocations.length === 1) {
+    const [invoice] = await tx<{ id: string; subtotal: string; tax_total: string }[]>`
+        SELECT i.id, i.subtotal, i.tax_total
+          FROM payment_allocation a
+          JOIN invoice i ON i.tenant_id = a.tenant_id AND i.id = a.invoice_id
+         WHERE a.tenant_id = ${ctx.tenantId} AND a.payment_id = ${paymentId}
+    `;
+    if (invoice) {
+      const lines = await tx<{ description: string; quantity: string; line_total: string }[]>`
+          SELECT description, quantity, line_total FROM invoice_line
+           WHERE tenant_id = ${ctx.tenantId} AND invoice_id = ${invoice.id}
+           ORDER BY line_no
+      `;
+      saleDetail = {
+        lines: lines.map((l) => ({
+          description: l.description,
+          quantity: l.quantity,
+          lineTotal: l.line_total,
+        })),
+        subtotal: invoice.subtotal,
+        taxTotal: invoice.tax_total,
+      };
+    }
+  }
+
   return {
     seller: await sellerBlock(tx, ctx),
     paymentNo: payment.payment_no,
@@ -161,6 +202,7 @@ export async function receiptDocumentData(
     amount: payment.amount,
     customer: { name: payment.customer_name },
     allocations: allocations.map((a) => ({ invoiceNo: a.invoice_no, amount: a.amount })),
+    ...saleDetail,
   };
 }
 

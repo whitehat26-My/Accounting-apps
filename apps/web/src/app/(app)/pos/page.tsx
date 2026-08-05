@@ -54,6 +54,8 @@ export default function PosPage() {
   const [result, setResult] = useState<SaleResult | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [scan, setScan] = useState('');
+  const [scanMiss, setScanMiss] = useState<string | null>(null);
 
   const items = useQuery({
     queryKey: ['items', search],
@@ -72,6 +74,37 @@ export default function PosPage() {
     if (method === 'CASH') return all.find((a) => a.code === '1000')?.id ?? all[0]?.id;
     return (all.find((a) => a.code === '1200') ?? all.find((a) => a.code === '1000'))?.id;
   })();
+
+  /*
+   * The scanner lane. A keyboard-wedge scanner is a keyboard: it types the
+   * barcode and presses Enter. So this is just an input that answers Enter
+   * with an EXACT lookup — barcode first, then item code — adds the hit to
+   * the sale, and keeps focus so the next beep lands here too. Sale-to-sale,
+   * no mouse.
+   */
+  async function scanEnter() {
+    const code = scan.trim();
+    if (code === '') return;
+    setScanMiss(null);
+    try {
+      const byBarcode = await api<Item[]>(
+        `/v1/items?direction=SALE&barcode=${encodeURIComponent(code)}`,
+      );
+      const hit =
+        byBarcode[0] ??
+        (
+          await api<Item[]>(`/v1/items?direction=SALE&search=${encodeURIComponent(code)}`)
+        ).find((i) => i.code.toUpperCase() === code.toUpperCase());
+      if (hit) {
+        add(hit);
+      } else {
+        setScanMiss(code);
+      }
+    } catch {
+      setScanMiss(code);
+    }
+    setScan('');
+  }
 
   function add(item: Item) {
     setResult(null);
@@ -137,10 +170,32 @@ export default function PosPage() {
       <div className="space-y-3">
         <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Point of sale</h1>
         <Input
+          placeholder="Scan barcode or type code, then Enter"
+          value={scan}
+          onChange={(e) => {
+            setScan(e.target.value);
+            if (scanMiss !== null) setScanMiss(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void scanEnter();
+            }
+          }}
+          aria-label="Scan barcode"
+          autoFocus
+          className={scanMiss !== null ? 'ring-2 ring-red-500' : ''}
+        />
+        {scanMiss !== null ? (
+          <p className="text-sm text-red-600" role="alert">
+            Nothing on the shelf answers to “{scanMiss}”. Check the item has its barcode
+            saved under Items.
+          </p>
+        ) : null}
+        <Input
           placeholder="Search items…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          autoFocus
         />
         <div className="grid grid-cols-2 gap-2">
           {(items.data ?? []).map((item) => (
@@ -264,7 +319,7 @@ export default function PosPage() {
                 variant="ghost"
                 className="w-full"
                 onClick={() =>
-                  void apiBlobUrl(`/v1/receipts/${result.receiptId}/pdf`)
+                  void apiBlobUrl(`/v1/receipts/${result.receiptId}/pdf?format=thermal`)
                     .then((url) => window.open(url, '_blank'))
                     .catch((e: Error) => window.alert(e.message))
                 }

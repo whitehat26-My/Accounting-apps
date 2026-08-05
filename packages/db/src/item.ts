@@ -27,6 +27,7 @@ export class ItemError extends Error {
       | 'ITEM_NOT_FOUND'
       | 'ITEM_INVALID'
       | 'DUPLICATE_CODE'
+      | 'DUPLICATE_BARCODE'
       | 'ACCOUNT_NOT_FOUND'
       | 'UNKNOWN_UOM_CODE'
       | 'ITEM_IN_USE'
@@ -44,6 +45,8 @@ export interface ItemView {
   readonly code: string;
   readonly name: string;
   readonly description: string | null;
+  /** What the scanner reads off the shelf. Null for services and odd lots. */
+  readonly barcode: string | null;
   readonly itemType: ItemType;
   readonly unitOfMeasure: string;
   readonly uomCode: string | null;
@@ -65,6 +68,7 @@ export interface UpsertItemInput {
   readonly code: string;
   readonly name: string;
   readonly description?: string;
+  readonly barcode?: string;
   readonly itemType?: ItemType;
   readonly unitOfMeasure?: string;
   readonly uomCode?: string;
@@ -82,7 +86,7 @@ export interface UpsertItemInput {
 // ---------------------------------------------------------------------------
 
 const SELECT_COLUMNS = `
-    i.id, i.code, i.name, i.description, i.item_type, i.unit_of_measure,
+    i.id, i.code, i.name, i.description, i.barcode, i.item_type, i.unit_of_measure,
     i.uom_code, i.classification_code, i.is_sold, i.is_purchased, i.is_tracked,
     i.is_serialised, i.is_active,
     i.sale_unit_price, i.sale_account_id, i.sale_tax_code_id,
@@ -91,6 +95,7 @@ const SELECT_COLUMNS = `
 
 interface ItemRow {
   id: string; code: string; name: string; description: string | null;
+  barcode: string | null;
   item_type: ItemType; unit_of_measure: string; uom_code: string | null;
   classification_code: string | null;
   is_sold: boolean; is_purchased: boolean; is_tracked: boolean; is_serialised: boolean;
@@ -103,6 +108,12 @@ interface ItemRow {
 export interface ListItemsOptions {
   /** Substring match on code or name. */
   readonly search?: string;
+  /**
+   * EXACT match on the barcode — the scanner lane's lookup. Exact, not
+   * substring: a scanner types the whole code, and "8888" matching four
+   * different EANs by substring would add the wrong item to a sale.
+   */
+  readonly barcode?: string;
   readonly direction?: TradeDirection;
   readonly includeInactive?: boolean;
   readonly limit?: number;
@@ -127,6 +138,7 @@ export async function listItems(
          AND (${search ?? null}::text IS NULL
               OR i.code ILIKE ${'%' + (search ?? '') + '%'}
               OR i.name ILIKE ${'%' + (search ?? '') + '%'})
+         AND (${options.barcode ?? null}::text IS NULL OR i.barcode = ${options.barcode ?? null})
        ORDER BY i.code
        LIMIT ${Math.min(options.limit ?? 200, 500)}
   `;
@@ -173,15 +185,17 @@ export async function createItem(
         'sales across two lines of every report that groups by item.',
     );
   }
+  await assertBarcodeFree(tx, ctx, input.barcode);
 
   const [row] = await tx<ItemRow[]>`
       INSERT INTO item (
-          tenant_id, code, name, description, item_type, unit_of_measure, uom_code,
+          tenant_id, code, name, description, barcode, item_type, unit_of_measure, uom_code,
           classification_code, is_sold, is_purchased, is_tracked, is_serialised,
           sale_unit_price, sale_account_id, sale_tax_code_id,
           purchase_unit_price, purchase_account_id, purchase_tax_code_id
       ) VALUES (
           ${ctx.tenantId}, ${code}, ${input.name}, ${input.description ?? null},
+          ${input.barcode ?? null},
           ${input.itemType ?? 'SERVICE'}, ${input.unitOfMeasure ?? 'UNIT'},
           ${input.uomCode ?? null}, ${input.classificationCode ?? null},
           ${draft.isSold}, ${draft.isPurchased}, ${input.isTracked ?? false},
@@ -279,11 +293,14 @@ export async function updateItem(
     if (clash) throw new ItemError('DUPLICATE_CODE', `An item with code ${code} already exists`);
   }
 
+  await assertBarcodeFree(tx, ctx, input.barcode, id);
+
   const [row] = await tx<ItemRow[]>`
       UPDATE item
          SET code                 = ${code},
              name                 = ${input.name},
              description          = ${input.description ?? null},
+             barcode              = ${input.barcode ?? null},
              item_type            = ${input.itemType ?? current.itemType},
              unit_of_measure      = ${input.unitOfMeasure ?? current.unitOfMeasure},
              uom_code             = ${input.uomCode ?? null},
@@ -434,6 +451,32 @@ function draftFrom(
  * constraints — the point of doing them here is a message naming the item and
  * the field, rather than a constraint violation naming neither.
  */
+/**
+ * Friendlier than the partial unique index it duplicates — the index still
+ * catches the concurrent race; this catches the common case with a message
+ * that names the OTHER item, which is what the person at the form needs.
+ */
+async function assertBarcodeFree(
+  tx: Tx,
+  ctx: TenantContext,
+  barcode: string | undefined,
+  excludeId?: string,
+): Promise<void> {
+  if (barcode === undefined) return;
+  const [taken] = await tx<{ code: string; name: string }[]>`
+      SELECT code, name FROM item
+       WHERE tenant_id = ${ctx.tenantId} AND barcode = ${barcode}
+         AND (${excludeId ?? null}::uuid IS NULL OR id <> ${excludeId ?? null})
+  `;
+  if (taken) {
+    throw new ItemError(
+      'DUPLICATE_BARCODE',
+      `Barcode ${barcode} is already on ${taken.code} — ${taken.name}. One barcode, ` +
+        'one item: a scanner cannot ask which of two you meant.',
+    );
+  }
+}
+
 async function validate(
   tx: Tx,
   ctx: TenantContext,
@@ -547,6 +590,7 @@ function toView(row: ItemRow, baseCurrency: string): ItemView {
     code: row.code,
     name: row.name,
     description: row.description,
+    barcode: row.barcode,
     itemType: row.item_type,
     unitOfMeasure: row.unit_of_measure,
     uomCode: row.uom_code,

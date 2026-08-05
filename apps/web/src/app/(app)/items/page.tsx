@@ -38,6 +38,7 @@ export default function ItemsPage() {
   const queryClient = useQueryClient();
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
+  const [barcode, setBarcode] = useState('');
   const [price, setPrice] = useState('');
   const [kind, setKind] = useState<'GOODS' | 'SERVICE'>('GOODS');
   const [tracked, setTracked] = useState(true);
@@ -68,6 +69,7 @@ export default function ItemsPage() {
         body: {
           code,
           name,
+          ...(barcode.trim() !== '' ? { barcode: barcode.trim() } : {}),
           itemType: kind,
           isSold: true,
           isPurchased: kind === 'GOODS',
@@ -83,6 +85,7 @@ export default function ItemsPage() {
     onSuccess: () => {
       setCode('');
       setName('');
+      setBarcode('');
       setPrice('');
       void queryClient.invalidateQueries({ queryKey: ['items'] });
     },
@@ -129,6 +132,14 @@ export default function ItemsPage() {
             </Field>
             <Field label="Name">
               <Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="1TB NVMe SSD" />
+            </Field>
+            <Field label="Barcode (optional)">
+              {/* Click here, scan the product, done — the scanner types it. */}
+              <Input
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value)}
+                placeholder="Scan or type the EAN"
+              />
             </Field>
             <Field label="Selling price (RM)">
               <Input
