@@ -64,6 +64,7 @@ const SECTIONS: { label: string | null; items: NavItem[] }[] = [
     items: [
       { href: '/team', label: 'Team', icon: 'team', needs: 'user.read' },
       { href: '/payroll', label: 'Payroll', icon: 'payroll', needs: 'payroll.read' },
+      { href: '/compliance', label: 'Compliance', icon: 'compliance', needs: 'compliance.read' },
       { href: '/audit', label: 'Audit', icon: 'audit', needs: 'audit.read' },
       { href: '/settings', label: 'Settings', icon: 'settings', needs: 'tax.read' },
     ],

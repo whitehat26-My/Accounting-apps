@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0043` (the till + owner insights),
-1,599 tests (719 domain · 613 db · 229 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0044` (compliance calendar),
+1,617 tests (729 domain · 618 db · 232 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`) — register, onboard,
 add an item, ring a cash sale, see the takings, quote a job and convert it, run a customer
 statement, cost a hire with all four statutory deductions, then hire her: onto the staff
@@ -492,6 +492,38 @@ told the cache the day had changed — a cashier flipping to Today saw pre-sale 
 to a minute, which reads as "the sale didn't record", which reads as ring it again. The
 till now invalidates the takings and stock queries on every sale; the journey asserts the
 post-sale figure and would catch a regression.
+
+### 5.14 The compliance calendar — BUILT (`0044`)
+
+Every Malaysian statutory deadline on one screen, computed from THIS shop's data —
+the "remembering" a monthly retainer mostly buys.
+
+- **Deadlines are rows, not constants** (rule 7): `statutory_deadline_rule`, global like
+  the contribution schedules, effective-dated, `legislation_ref NOT NULL`, seeded with:
+  EPF, SOCSO/EIS and PCB/CP39 by the 15th of the following month; SST-02 by the last day
+  of the month after each bi-monthly taxable period; EA forms to staff by the last day of
+  February; Form E + C.P.8D by 31 March. The pure expansion (bi-monthly boundaries,
+  leap-February month-ends, annual-covers-last-year, December-lands-in-January) is
+  unit-tested branch by branch.
+- **Provenance, honestly graded and SHOWN.** Every rule carries PRIMARY (stated by a
+  document committed under `docs/research/sources/` — the LHDN Navigasi HASiL 2026 guide
+  covers CP39, Form E and EA verbatim) or SECONDARY (the agency's own page, confirmed by
+  excerpt; kwsp/perkeso/mysst were 403 through this environment's proxy, so the URLs to
+  promote them sit in `compliance-deadlines-provenance.md`). A SECONDARY deadline wears a
+  ⚠ on the screen — the system must not look equally sure of everything.
+- **Statuses read the books.** A payroll deadline knows whether the pay run it depends on
+  is CONFIRMED: "Ready to file" means the CP39 exists, "Needs attention" means the month
+  ended with nothing to file FROM, OVERDUE outranks both, and the integration test proves
+  confirming July flips all three of its deadlines without anyone typing.
+- **"Filed" is an auditable act**: `compliance_tick`, RLS'd and audit-triggered, one per
+  rule+period, idempotent, undoable by DELETE (the trigger records both directions). New
+  `compliance.read` / `compliance.manage` permissions; SALES sees nothing, a BOOKKEEPER
+  looks but cannot tick.
+- The browser journey ends here now: after confirming August's run it opens Compliance,
+  sees "Ready to file", marks EPF done, and screenshots the year.
+
+Payroll deadlines appear only when staff exist; SST rows only when the organisation holds
+an SST number — and the screen SAYS why a family is absent rather than showing nothing.
 
 ### 5.2 Serial number tracking — BUILT (`0028`, `packages/domain/src/serials.ts`)
 

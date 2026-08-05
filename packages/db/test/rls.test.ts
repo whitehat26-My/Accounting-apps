@@ -165,6 +165,10 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     // specification are national, published, and read identically by everyone.
     statutory_mtd_band: 'global LHDN MTD Table 1, read-only',
     statutory_mtd_relief: 'global LHDN MTD relief limits, read-only',
+    // National filing deadlines are as global as the rates: which deadlines
+    // exist is not a tenant opinion. The tenant-owned half (compliance_tick)
+    // carries RLS like everything else.
+    statutory_deadline_rule: 'global statutory filing deadlines, read-only',
   };
 
   it('every tenant-owned table has RLS enabled AND forced with a policy', async () => {

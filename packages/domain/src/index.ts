@@ -30,6 +30,7 @@ export * from './matching.js';
 export * from './statement-import.js';
 export * from './bank-feed.js';
 export * from './insights.js';
+export * from './compliance.js';
 export * from './reconciliation.js';
 export * from './rbac.js';
 export * from './approval.js';

@@ -194,6 +194,16 @@ const HELP: Record<string, { title: string; steps: string[] }> = {
       'Roles decide what each person sees — the cashier sees the till, not the books.',
     ],
   },
+  compliance: {
+    title: 'Compliance',
+    steps: [
+      'Every statutory deadline for the year, in one list: EPF, SOCSO/EIS and PCB by the 15th, SST returns, EA forms, Form E.',
+      'Payroll rows read the real pay-run state — "Ready to file" means the month is confirmed and its CP39 exists.',
+      '"Needs attention" means a month ended with no confirmed run: there is nothing to file FROM yet.',
+      'Mark done when you have filed and paid; the mark records who and when, and can be undone.',
+      'A ⚠ means the deadline is confirmed from the agency\u2019s page but the primary document is not yet on file.',
+    ],
+  },
   payroll: {
     title: 'Payroll',
     steps: [

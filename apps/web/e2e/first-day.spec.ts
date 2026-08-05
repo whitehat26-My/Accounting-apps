@@ -301,4 +301,24 @@ test('first day at the shop', async ({ page }) => {
   await expect(page.getByText(/Received 0 new lines — \d+ already held/)).toBeVisible();
 
   await page.screenshot({ path: 'e2e-artifacts/bank-feed.png', fullPage: true });
+
+  // ---- And nobody forgets a deadline again --------------------------------
+  /*
+   * The calendar reads the REAL state this journey created: August's pay run
+   * was confirmed minutes ago, so its three statutory payments stand at
+   * "Ready to file" — the CP39 exists, go pay. Marking EPF done and undoing
+   * it proves the tick round-trips through the audit trail.
+   */
+  await page.getByRole('link', { name: 'Compliance' }).click();
+  await expect(page.getByText('PCB (income tax) — CP39').first()).toBeVisible();
+  await expect(page.getByText('Ready to file').first()).toBeVisible();
+
+  const augustEpfRow = page
+    .getByRole('row')
+    .filter({ hasText: 'EPF contributions' })
+    .filter({ hasText: 'August 2026' });
+  await augustEpfRow.getByRole('button', { name: 'Mark done' }).click();
+  await expect(augustEpfRow.getByText('Done')).toBeVisible();
+
+  await page.screenshot({ path: 'e2e-artifacts/compliance.png', fullPage: true });
 });

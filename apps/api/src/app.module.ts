@@ -15,6 +15,7 @@ import { AuditController } from './modules/audit.controller.js';
 import { LedgerController } from './modules/ledger.controller.js';
 import { BankingController } from './modules/banking.controller.js';
 import { FeedsController } from './modules/feeds.controller.js';
+import { ComplianceController } from './modules/compliance.controller.js';
 import { ConfigurationController } from './modules/configuration.controller.js';
 import { EInvoiceController } from './modules/einvoice.controller.js';
 import { ReportsController } from './modules/reports.controller.js';
@@ -58,6 +59,7 @@ export const API_CONTROLLERS = [
   LedgerController,
   BankingController,
   FeedsController,
+  ComplianceController,
   ConfigurationController,
   EInvoiceController,
   ReportsController,

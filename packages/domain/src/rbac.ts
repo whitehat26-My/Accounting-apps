@@ -56,6 +56,8 @@ export type Permission =
   | 'journal.post'
   | 'period.lock'
   | 'period.override'
+  | 'compliance.read'
+  | 'compliance.manage'
   | 'bank.read'
   | 'bank.import'
   | 'bank.reconcile'
