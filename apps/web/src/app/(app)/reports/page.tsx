@@ -24,6 +24,17 @@ interface StatementLine {
   amount: string;
 }
 
+interface MarginRow {
+  itemId: string | null;
+  code: string;
+  name: string;
+  quantitySold: string;
+  revenue: string;
+  cost: string;
+  margin: string;
+  marginBp: number | null;
+}
+
 interface TrialBalance {
   rows: { code: string; name: string; debit: string; credit: string }[];
   totalDebit: string;
@@ -79,6 +90,10 @@ export default function ReportsPage() {
     queryKey: ['cash-flow', from, to],
     queryFn: () => api<CashFlow>(`/v1/reports/cash-flow?from=${from}&to=${to}`),
   });
+  const margins = useQuery({
+    queryKey: ['item-margins', from, to],
+    queryFn: () => api<{ rows: MarginRow[] }>(`/v1/reports/item-margins?from=${from}&to=${to}`),
+  });
   const equity = useQuery({
     queryKey: ['equity', from, to],
     queryFn: () => api<Equity>(`/v1/reports/changes-in-equity?from=${from}&to=${to}`),
@@ -128,6 +143,69 @@ export default function ReportsPage() {
           {sofp.data ? <Statement lines={sofp.data.lines} /> : <Loading />}
         </Card>
       </div>
+
+      {/*
+        Worst margin FIRST — the question this table answers is "what am I
+        selling for nothing", and burying the giveaway under the good news
+        would defeat it. Blank % means zero revenue, not 0%.
+      */}
+      <Card title="Margin by item — worst first">
+        {margins.data && margins.data.rows.length > 0 ? (
+          <>
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-xs text-slate-500">
+                  <th className="pb-2">Item</th>
+                  <th className="pb-2 text-right">Qty sold</th>
+                  <th className="pb-2 text-right">Revenue</th>
+                  <th className="pb-2 text-right">Cost</th>
+                  <th className="pb-2 text-right">Margin</th>
+                  <th className="pb-2 text-right">%</th>
+                </tr>
+              </thead>
+              <tbody>
+                {margins.data.rows.map((row) => (
+                  <tr key={row.itemId ?? 'free-text'} className="border-t border-slate-100">
+                    <td className="py-2">
+                      <span className="text-xs text-slate-500">{row.code}</span> {row.name}
+                    </td>
+                    <td className="py-2 text-right">{row.quantitySold}</td>
+                    <td className="py-2 text-right">{rm(row.revenue)}</td>
+                    <td className="py-2 text-right">{rm(row.cost)}</td>
+                    <td
+                      className={`py-2 text-right font-medium ${
+                        row.margin.startsWith('-') ? 'text-red-600' : ''
+                      }`}
+                    >
+                      {rm(row.margin)}
+                    </td>
+                    <td className="py-2 text-right">
+                      {row.marginBp === null ? '—' : `${(row.marginBp / 100).toFixed(1)}%`}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {can(me.data, 'report.read') ? (
+              <div className="mt-2">
+                <Button
+                  variant="ghost"
+                  onClick={() =>
+                    void exportCsv(
+                      `/v1/reports/item-margins/csv?from=${from}&to=${to}`,
+                      `item-margins-${from}-to-${to}.csv`,
+                    )
+                  }
+                >
+                  CSV
+                </Button>
+              </div>
+            ) : null}
+          </>
+        ) : (
+          <p className="text-sm text-slate-500">No sales in this period.</p>
+        )}
+      </Card>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card

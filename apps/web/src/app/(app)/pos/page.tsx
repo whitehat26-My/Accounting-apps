@@ -1,6 +1,6 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, apiBlobUrl } from '@/lib/api';
 import { qty, rm, todayIso } from '@/lib/display';
@@ -47,6 +47,7 @@ interface SaleResult {
 }
 
 export default function PosPage() {
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [method, setMethod] = useState<'CASH' | 'CARD' | 'DUITNOW'>('CASH');
@@ -158,6 +159,14 @@ export default function PosPage() {
       setResult(sale);
       setCart([]);
       setTendered('');
+      /*
+       * The sale just changed the day's takings and the shelf. Say so to the
+       * cache, or a cashier who rings and flips straight to Today sees the
+       * PRE-sale numbers for up to a minute (staleTime + refetchInterval) —
+       * which reads as "the sale didn't record", which reads as ring it again.
+       */
+      void queryClient.invalidateQueries({ queryKey: ['takings'] });
+      void queryClient.invalidateQueries({ queryKey: ['stock'] });
     } catch (e) {
       setError(e);
     } finally {

@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0043` (the till: barcodes + thermal receipts),
-1,589 tests (714 domain · 609 db · 228 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0043` (the till + owner insights),
+1,599 tests (719 domain · 613 db · 229 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`) — register, onboard,
 add an item, ring a cash sale, see the takings, quote a job and convert it, run a customer
 statement, cost a hire with all four statutory deductions, then hire her: onto the staff
@@ -457,6 +457,41 @@ counter:
 
 Still not in the slice: held orders, split tender (half cash half card), and cash-drawer
 float tracking. Split tender is the first of these a real counter misses.
+
+### 5.13 Owner insights — BUILT (no migration; every figure derived)
+
+Three reports and one form, all reading tables that already carry the truth — no new
+state, because a report keeping its own copy of the facts eventually disagrees with them:
+
+- **Stock ageing** (`GET /v1/reports/stock-ageing` + CSV): every tracked item still on
+  the shelf, oldest silence first, bucketed FRESH ≤30d / SLOWING ≤90d / STALE ≤180d /
+  DEAD beyond. Idleness runs from the last ISSUE, or for never-sold stock from its
+  delivery — shown separately, so a slow shelf and a new delivery do not look alike.
+  On the Stock screen with its own colour language.
+- **Margin by item** (`GET /v1/reports/item-margins` + CSV): revenue is the tax-exclusive
+  `taxable_amount` frozen on invoice lines; cost is the WAC relief the SAME sales posted,
+  so the report cannot disagree with the P&L — the integration test asserts equality with
+  the movement rows, not approximation. WORST first, because the question is "what am I
+  selling for nothing". Margin in basis points, truncated, and NULL (shown as —) on zero
+  revenue rather than a neutral-looking 0%.
+- **Repair profitability** (`GET /v1/reports/repair-profit`): collected jobs — billed
+  ex-tax, parts at true WAC, contribution left for labour. Labour deliberately NOT
+  costed per job: the wage is payroll's fixed cost, and spreading it per-job would
+  manufacture precision the data does not hold. On the Repairs board.
+  Technician productivity was CUT from this slice, by decision — it needs time-on-job
+  data nobody records yet, and inferring it from timestamps would be a guess in a suit.
+- **The stock-count form**: the Stock screen can now file a count (absolute shelf
+  quantity + reason) through the existing `POST /v1/stock/counts`, showing the variance
+  BEFORE submitting — "you are about to write off 3" is a sentence to read while still
+  holding the clipboard. The screen remains otherwise read-only: stock moves through
+  documents.
+
+**A real till defect found by the browser journey getting FASTER:** the scanner lane made
+ring-to-Today quicker than the query cache's staleTime, exposing that ringing a sale never
+told the cache the day had changed — a cashier flipping to Today saw pre-sale zeros for up
+to a minute, which reads as "the sale didn't record", which reads as ring it again. The
+till now invalidates the takings and stock queries on every sale; the journey asserts the
+post-sale figure and would catch a regression.
 
 ### 5.2 Serial number tracking — BUILT (`0028`, `packages/domain/src/serials.ts`)
 

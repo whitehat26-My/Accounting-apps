@@ -290,6 +290,37 @@ describe('GET /v1/reports/general-ledger/:accountId', () => {
   });
 });
 
+describe('the owner-insight reports', () => {
+  it('serve shape and CSV under report.read, and refuse SALES', async () => {
+    for (const url of [
+      '/v1/reports/stock-ageing',
+      '/v1/reports/item-margins?from=2026-01-01&to=2026-12-31',
+      '/v1/reports/repair-profit?from=2026-01-01&to=2026-12-31',
+    ]) {
+      const ok = await call(api, { method: 'GET', ...as(url) });
+      expect(ok.status, url).toBe(200);
+    }
+
+    const csv = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/stock-ageing/csv'),
+    });
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-disposition']).toContain('stock-ageing.csv');
+    expect(csv.body).toContain('Days idle');
+
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const refused = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/stock-ageing',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(refused.status).toBe(403);
+  });
+});
+
 describe('GET /v1/reports/journal', () => {
   it('returns both sides of every entry', async () => {
     const response = await call(api, {

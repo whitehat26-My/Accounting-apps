@@ -59,6 +59,14 @@ test('first day at the shop', async ({ page }) => {
   await expect(page.getByText(/Done — INV-/)).toBeVisible();
 
   // ---- The day knows ------------------------------------------------------
+  /*
+   * This assertion once relied on luck: the journey used to amble slowly
+   * enough that the dashboard's cached zeros were stale by the time it came
+   * back. The scanner lane made the till fast enough to arrive INSIDE the
+   * staleTime — which exposed that ringing a sale never told the cache the
+   * day had changed. The fix is in the till (it invalidates takings), and
+   * this line is now asserting that fix.
+   */
   await page.getByRole('link', { name: 'Today' }).click();
   await expect(page.getByText('RM 150.00').first()).toBeVisible();
 

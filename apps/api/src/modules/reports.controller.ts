@@ -28,6 +28,9 @@ import {
   trialBalanceReport,
   withTenant,
   type Sql,
+  itemMargins,
+  repairProfitability,
+  stockAgeing,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
@@ -164,6 +167,96 @@ export class ReportsController {
       statementOfProfitOrLoss(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
     );
     return renderReport(report);
+  }
+
+  /**
+   * What is sitting on the shelf and for how long — the dead-stock report.
+   * Derived entirely from the append-only movement history; no new state.
+   */
+  @Requires('report.read')
+  @Get('reports/stock-ageing')
+  async stockAgeingReport(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { rows: await withTenant(this.sql, ctx, (tx) => stockAgeing(tx, ctx)) };
+  }
+
+  @Requires('report.read')
+  @Get('reports/stock-ageing/csv')
+  async stockAgeingCsv(@Req() request: FastifyRequest, @Res() reply: FastifyReply) {
+    const ctx = this.ctx(request);
+    const rows = await withTenant(this.sql, ctx, (tx) => stockAgeing(tx, ctx));
+    send(
+      reply,
+      'stock-ageing.csv',
+      toCsv([
+        ['Code', 'Item', 'On hand', 'Value (RM)', 'Last sold', 'Last received', 'Days idle', 'Bucket'],
+        ...rows.map((r) => [
+          r.code, r.name, r.quantityOnHand, r.stockValue,
+          r.lastSoldOn === null ? 'never' : display(r.lastSoldOn),
+          r.lastReceivedOn === null ? '' : display(r.lastReceivedOn),
+          String(r.daysIdle), r.bucket,
+        ]),
+      ]),
+    );
+  }
+
+  /**
+   * Margin by item, WORST first — "what am I selling for nothing". Reads the
+   * frozen invoice lines and the perpetual-inventory reliefs those same sales
+   * posted, so it cannot disagree with the P&L.
+   */
+  @Requires('report.read')
+  @Get('reports/item-margins')
+  async itemMarginsReport(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    return {
+      rows: await withTenant(this.sql, ctx, (tx) =>
+        itemMargins(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
+      ),
+    };
+  }
+
+  @Requires('report.read')
+  @Get('reports/item-margins/csv')
+  async itemMarginsCsv(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const rows = await withTenant(this.sql, ctx, (tx) =>
+      itemMargins(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
+    );
+    send(
+      reply,
+      `item-margins-${from}-to-${to}.csv`,
+      toCsv([
+        ['Code', 'Item', 'Qty sold', 'Revenue (RM)', 'Cost (RM)', 'Margin (RM)', 'Margin %'],
+        ...rows.map((r) => [
+          r.code, r.name, r.quantitySold, r.revenue, r.cost, r.margin,
+          r.marginBp === null ? '' : (r.marginBp / 100).toFixed(2),
+        ]),
+      ]),
+    );
+  }
+
+  /** Collected repairs: billed, parts off the shelf, and what was left. */
+  @Requires('report.read')
+  @Get('reports/repair-profit')
+  async repairProfitReport(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      repairProfitability(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
+    );
   }
 
   @Requires('report.read')

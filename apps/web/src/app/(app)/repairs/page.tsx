@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
 import { api } from '@/lib/api';
-import { displayDate, todayIso } from '@/lib/display';
+import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 
 /**
@@ -118,6 +118,7 @@ export default function RepairsPage() {
             </div>
           </Card>
         ) : null}
+        <BenchProfitCard />
       </div>
 
       <div className="space-y-3">
@@ -163,5 +164,85 @@ export default function RepairsPage() {
         </Card>
       </div>
     </div>
+  );
+}
+
+interface RepairProfit {
+  jobs: {
+    jobNo: string;
+    device: string;
+    customerName: string;
+    collectedOn: string;
+    revenue: string;
+    partsCost: string;
+    margin: string;
+    marginBp: number | null;
+  }[];
+  totals: { revenue: string; partsCost: string; margin: string };
+}
+
+/**
+ * Is the bench earning its space? Collected jobs for the last 30 days: what
+ * each billed ex-tax, what the parts cost off the shelf, and the
+ * contribution left for labour. Labour itself is deliberately not costed —
+ * the wage is payroll's fixed cost, and per-job spreading would manufacture
+ * precision the data does not hold.
+ */
+function BenchProfitCard() {
+  const to = todayIso();
+  const from = (() => {
+    const d = new Date(`${to}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 30);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const profit = useQuery({
+    queryKey: ['repair-profit', from, to],
+    queryFn: () => api<RepairProfit>(`/v1/reports/repair-profit?from=${from}&to=${to}`),
+  });
+  const data = profit.data;
+  if (!data || data.jobs.length === 0) return null;
+
+  return (
+    <Card title="The bench, last 30 days">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-slate-500">
+            <th className="pb-2">Job</th>
+            <th className="pb-2 text-right">Billed</th>
+            <th className="pb-2 text-right">Parts</th>
+            <th className="pb-2 text-right">Left over</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.jobs.slice(0, 8).map((job) => (
+            <tr key={job.jobNo} className="border-t border-slate-100">
+              <td className="py-2">
+                <span className="text-xs text-slate-500">{job.jobNo}</span> {job.device}
+              </td>
+              <td className="py-2 text-right">{rm(job.revenue)}</td>
+              <td className="py-2 text-right">{rm(job.partsCost)}</td>
+              <td
+                className={`py-2 text-right font-medium ${
+                  job.margin.startsWith('-') ? 'text-red-600' : ''
+                }`}
+              >
+                {rm(job.margin)}
+              </td>
+            </tr>
+          ))}
+          <tr className="border-t-2 border-slate-200 font-medium">
+            <td className="py-2">All collected jobs</td>
+            <td className="py-2 text-right">{rm(data.totals.revenue)}</td>
+            <td className="py-2 text-right">{rm(data.totals.partsCost)}</td>
+            <td className="py-2 text-right">{rm(data.totals.margin)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="mt-2 text-xs text-slate-500">
+        Ex-tax billing minus parts at their real weighted-average cost. What is left pays
+        for the technician's time — the wage itself lives in Payroll.
+      </p>
+    </Card>
   );
 }
