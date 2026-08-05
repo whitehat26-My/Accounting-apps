@@ -473,6 +473,7 @@ describe('GET /v1/system/queues', () => {
 
     const jobs = response.body['scheduledJobs'] as { name: string }[];
     expect(jobs.map((j) => j.name).sort()).toEqual([
+      'audit-anchor',
       'einvoice-retry',
       'outbox-sweep',
       'payment-reminders',

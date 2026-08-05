@@ -1,10 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate } from '@/lib/display';
-import { Badge, Card, Input, Skeleton } from '@/components/ui';
+import { Badge, Button, Card, ErrorNote, Input, Skeleton } from '@/components/ui';
 
 /**
  * The audit trail: who changed what, when, from where.
@@ -70,6 +70,8 @@ export default function AuditPage() {
             : 'THE HASH CHAIN IS BROKEN — the log has been tampered with. Preserve the database and involve your accountant immediately.'}
         </p>
       ) : null}
+
+      <ProofPackCard />
 
       <Card
         title="Every change, newest first"
@@ -139,5 +141,160 @@ export default function AuditPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+interface Anchor {
+  seq: number;
+  entryCount: number;
+  anchoredAt: string;
+  reason: string;
+  anchorHash: string;
+}
+
+/**
+ * Proof packs — the half of tamper-evidence that has to leave the building.
+ *
+ * The hash chain alone cannot survive an attacker with database owner rights
+ * who edits a row and recomputes every hash forward; `audit.ts` has said so
+ * since the chain was built. What defeats that is a copy of the anchors in
+ * somebody else's hands. So this card's real instruction is the one at the
+ * bottom: DOWNLOAD IT AND SEND IT SOMEWHERE.
+ */
+function ProofPackCard() {
+  const queryClient = useQueryClient();
+  const [issued, setIssued] = useState<string | null>(null);
+  const [checked, setChecked] = useState<{ verdict: string; detail: string } | null>(null);
+  const [error, setError] = useState<unknown>(null);
+
+  const anchors = useQuery({
+    queryKey: ['audit-anchors'],
+    queryFn: () => api<{ anchors: Anchor[] }>('/v1/audit-chain/anchors'),
+  });
+
+  const anchorNow = useMutation({
+    mutationFn: () => api('/v1/audit-chain/anchors', { method: 'POST', body: {} }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ['audit-anchors'] });
+      void queryClient.invalidateQueries({ queryKey: ['audit-verify'] });
+    },
+  });
+
+  const download = async () => {
+    setError(null);
+    try {
+      const pack = await api<Record<string, unknown>>('/v1/audit-chain/proof');
+      const blob = new Blob([JSON.stringify(pack, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `proof-pack-${new Date().toISOString().slice(0, 10)}.json`;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+      setIssued(String(pack['packHash']).slice(0, 16));
+    } catch (e) {
+      setError(e);
+    }
+  };
+
+  const check = async (file: File) => {
+    setError(null);
+    setChecked(null);
+    try {
+      const pack = JSON.parse(await file.text()) as unknown;
+      const result = await api<{ verdict: string; divergedAt: { reason: string } | null }>(
+        '/v1/audit-chain/proof/verify',
+        { method: 'POST', body: pack },
+      );
+      setChecked({
+        verdict: result.verdict,
+        detail:
+          result.verdict === 'CONFIRMED'
+            ? 'Every anchor in this pack still matches the books. Nothing was rewritten after it was issued.'
+            : result.verdict === 'PACK_ALTERED'
+              ? 'This FILE was edited after it was issued — its own hash no longer fits its contents.'
+              : (result.divergedAt?.reason ??
+                'The books no longer agree with this pack.'),
+      });
+    } catch (e) {
+      setError(e);
+    }
+  };
+
+  const list = anchors.data?.anchors ?? [];
+  const latest = list[list.length - 1];
+
+  return (
+    <Card title="Proof pack — books somebody else can check">
+      <div className="space-y-3">
+        <p className="text-sm text-slate-600">
+          A proof pack contains your trial balance and every anchor taken on the audit
+          chain. Give one to your accountant, your bank or a grant assessor. Months later,
+          feeding that same file back here proves nothing in between was rewritten — and
+          they can check it themselves, without an account on this system.
+        </p>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <Button onClick={() => void download()}>Download proof pack</Button>
+          <label className="cursor-pointer rounded-lg px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+            Check a pack…
+            <input
+              type="file"
+              accept="application/json"
+              className="hidden"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) void check(file);
+              }}
+            />
+          </label>
+          <Button
+            variant="ghost"
+            disabled={anchorNow.isPending}
+            onClick={() => anchorNow.mutate()}
+          >
+            Pin the chain now
+          </Button>
+          <span className="text-xs text-slate-500">
+            {latest
+              ? `${list.length} anchor(s); last ${displayDate(latest.anchoredAt.slice(0, 10))} at ${latest.entryCount} records`
+              : 'No anchors yet — the nightly job takes one, or press “Pin the chain now”.'}
+          </span>
+        </div>
+
+        {issued ? (
+          <p className="text-sm text-emerald-700">
+            Pack issued, hash {issued}… — <strong>now send it somewhere</strong>. A pack
+            that only ever lives on this machine proves nothing extra.
+          </p>
+        ) : null}
+
+        {checked ? (
+          <p
+            className={`rounded-lg px-3 py-2 text-sm ring-1 ring-inset ${
+              checked.verdict === 'CONFIRMED'
+                ? 'bg-emerald-50 text-emerald-900 ring-emerald-200'
+                : 'bg-red-50 text-red-800 ring-red-300'
+            }`}
+          >
+            <strong>{checked.verdict}</strong> — {checked.detail}
+          </p>
+        ) : null}
+
+        <p className="text-xs text-slate-500">
+          Anyone can verify a pack with{' '}
+          <code className="rounded bg-slate-100 px-1">
+            node scripts/verify-proof-pack.mjs march.json september.json
+          </code>{' '}
+          — no dependencies, no access to this system, and the hashing algorithm is
+          printed inside the pack itself.
+        </p>
+        <ErrorNote error={error} />
+      </div>
+    </Card>
   );
 }

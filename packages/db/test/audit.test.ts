@@ -63,6 +63,10 @@ async function tamper(fn: () => Promise<unknown>): Promise<void> {
  */
 const AUDIT_EXEMPT: Record<string, string> = {
   audit_log: 'auditing the audit log recurses without end',
+  audit_anchor:
+    'the anchors ARE evidence about the audit log, and auditing them would ' +
+    'recurse for the same reason audit_log does. They are append-only by ' +
+    'trigger and every insert is itself the record.',
   financial_event_log: 'already append-only evidence, and already the high-signal log',
   outbox_event: 'delivery-mechanism state; the business fact was audited at its source',
   account_period_balance: 'a derived cache of journal_line, which is itself audited',

@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0044`; free cash added without one,
-1,633 tests (736 domain · 625 db · 234 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0045` (audit anchors + proof packs),
+1,641 tests (736 domain · 632 db · 235 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`) — register, onboard,
 add an item, ring a cash sale, see the takings, quote a job and convert it, run a customer
 statement, cost a hire with all four statutory deductions, then hire her: onto the staff
@@ -576,6 +576,37 @@ EPF and PCB.
 
 ⚠️ SST is shown GROSS. Input tax is not netted off, because the SST-02 box mapping is
 still blocked (§3.6) — stated on the line itself rather than silently assumed either way.
+
+### 5.17 Provable books — audit anchors + proof packs — BUILT (`0045`)
+
+**This closes an admission the codebase has carried since `0016`.** `audit.ts` said, in
+its own comment: the hash chain does not defend against an attacker with owner rights who
+edits a row and recomputes every hash forward; the defence is an anchor outside the
+database; *"⚠️ That anchor is NOT implemented."* It is now.
+
+- **`audit_anchor`** — a per-tenant chain of anchors, each pinning the audit log's entry
+  count and head hash at a moment, and hashed into the anchor before it. Append-only by
+  trigger (owner included), taken nightly by a new `audit-anchor` scheduled job and on
+  demand from the Audit screen.
+- **The proof pack** (`GET /v1/audit-chain/proof`) — trial balance + the whole anchor
+  chain + the live head, under a canonical SHA-256. **The point is that it LEAVES:** an
+  anchor stored only here proves nothing extra, because whoever can rewrite the log can
+  rewrite the anchors beside it. The evidence is the copy in the accountant's inbox.
+- **Handing one back** (`POST /v1/audit-chain/proof/verify`) checks each anchor against
+  the **live log** — not merely against the stored anchor row, which would prove nothing
+  since an attacker need not touch the anchors at all. It re-reads the log at the row the
+  anchor pinned and compares hashes and counts. Verdicts: CONFIRMED, PACK_ALTERED (the
+  file was edited after issue) and TAMPERED (the books changed underneath it), the last
+  naming the exact anchor where the histories part.
+- **`scripts/verify-proof-pack.mjs`** — ninety dependency-free lines a bank, auditor or
+  grant assessor runs themselves. One pack: internal consistency. Two packs: every anchor
+  in both must be identical, which is the real test. The hashing algorithm is printed
+  INSIDE each pack, so nobody needs this repository.
+
+`proof.test.ts` performs the attack in full — disables the append-only triggers as a real
+attacker with owner rights would, edits an audit row, re-chains every hash forward — then
+asserts the system's own check reports "intact" (as documented) **while a pack issued
+beforehand refuses to agree**. That test is the feature.
 
 ### 5.2 Serial number tracking — BUILT (`0028`, `packages/domain/src/serials.ts`)
 

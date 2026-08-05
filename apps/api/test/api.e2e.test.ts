@@ -738,3 +738,50 @@ function billBody(tenant: Tenant) {
     ],
   };
 }
+
+describe('proof packs over HTTP', () => {
+  it('issues, confirms, and refuses a doctored pack', async () => {
+    const owner = await makeUser(api, { tenantId: alpha.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, owner.refreshToken, alpha.tenantId);
+    const as = (url: string) => ({ url, token: accessToken, tenantId: alpha.tenantId });
+
+    const anchored = await call(api, {
+      method: 'POST',
+      ...as('/v1/audit-chain/anchors'),
+      body: {},
+    });
+    expect(anchored.status, JSON.stringify(anchored.body)).toBe(201);
+
+    const pack = await call(api, { method: 'GET', ...as('/v1/audit-chain/proof') });
+    expect(pack.status).toBe(200);
+    expect(pack.body['format']).toBe('emil-proof-pack/1');
+    // The algorithm travels WITH the pack, so a third party needs nothing else.
+    expect(String(pack.body['algorithm'])).toContain('SHA-256');
+
+    const confirmed = await call(api, {
+      method: 'POST',
+      ...as('/v1/audit-chain/proof/verify'),
+      body: pack.body,
+    });
+    expect(confirmed.status).toBe(201);
+    expect(confirmed.body['verdict']).toBe('CONFIRMED');
+
+    const doctored = {
+      ...pack.body,
+      organisation: { id: alpha.tenantId, name: 'Nicer Name Sdn Bhd' },
+    };
+    const refused = await call(api, {
+      method: 'POST',
+      ...as('/v1/audit-chain/proof/verify'),
+      body: doctored,
+    });
+    /*
+     * A successful HTTP answer carrying a damning verdict. "Your books were
+     * tampered with" IS the answer to the question asked; an error status
+     * would be indistinguishable from the endpoint being down, which is the
+     * one thing a monitor must not confuse it with.
+     */
+    expect(refused.status).toBe(201);
+    expect(refused.body['verdict']).toBe('PACK_ALTERED');
+  });
+});
