@@ -2,6 +2,7 @@ import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
 import type {
   CustomerStatement,
+  EaDocument,
   InvoiceDocument,
   PayslipDocument,
   ReceiptDocument,
@@ -209,6 +210,94 @@ export function renderThermalReceiptPdf(doc: ReceiptDocument): Promise<Buffer> {
 
     pdf.end();
   });
+}
+
+/**
+ * The EA data sheet — every figure the C.P.8A needs, from the year's
+ * confirmed snapshots, and an honest banner about what it is not.
+ *
+ * The official form's PDF could not be retrieved in this environment, and
+ * guessing an official layout is how forms end up rejected (or worse,
+ * accepted with fields transposed). So this document states plainly that it
+ * is the PREPARATION SHEET: the numbers, each labelled with where it goes,
+ * to be transcribed onto the official C.P.8A / keyed into e-Filing.
+ */
+export function renderEaPdf(doc: EaDocument): Promise<Buffer> {
+  return build((pdf) => drawEa(pdf, doc));
+}
+
+/** One employee per page — printed once, handed out with February's payslips. */
+export function renderEaBookPdf(docs: readonly EaDocument[]): Promise<Buffer> {
+  return build((pdf) => {
+    docs.forEach((doc, index) => {
+      if (index > 0) pdf.addPage();
+      drawEa(pdf, doc);
+    });
+  });
+}
+
+function drawEa(pdf: PDFKit.PDFDocument, doc: EaDocument): void {
+  header(pdf, doc.employer, `REMUNERATION ${doc.year}`);
+
+  // ---- The banner: what this is, and is not ------------------------------
+  const bannerY = pdf.y;
+  pdf.rect(MARGIN, bannerY, 495, 30).fill('#FEF3C7');
+  pdf.fillColor('#92400E').font('Helvetica-Bold').fontSize(8);
+  pdf.text('PREPARATION SHEET FOR FORM C.P.8A (EA) — NOT THE OFFICIAL LHDN FORM', MARGIN + 10, bannerY + 6, { width: 475 });
+  pdf.font('Helvetica').fontSize(7);
+  pdf.text('Transcribe these figures onto the official C.P.8A or into MyTax e-Filing. Every amount is summed from this employer\u2019s confirmed pay runs.', MARGIN + 10, pdf.y + 1, { width: 475 });
+  pdf.fillColor('#000000').fontSize(9);
+  pdf.y = bannerY + 40;
+
+  // ---- Part A-equivalent: who ---------------------------------------------
+  sectionHeading(pdf, 'EMPLOYEE');
+  const employee = doc.employee;
+  pair(pdf, 'Name', employee.fullName);
+  if (employee.employeeNo) pair(pdf, 'Staff no', employee.employeeNo);
+  if (employee.idValue) pair(pdf, employee.idType === 'PASSPORT' ? 'Passport' : 'NRIC', employee.idValue);
+  if (employee.tin) pair(pdf, 'Income tax no (TIN)', employee.tin);
+  if (employee.jobTitle) pair(pdf, 'Position', employee.jobTitle);
+  pair(
+    pdf,
+    'Employed (this year)',
+    `${displayDate(employee.employedFrom)} \u2013 ${displayDate(employee.employedTo)} (${employee.monthsPaid} month${employee.monthsPaid === 1 ? '' : 's'} paid)`,
+  );
+  if (doc.lhdnEmployerNo) pair(pdf, 'Employer\u2019s E no', doc.lhdnEmployerNo);
+
+  // ---- Part B-equivalent: gross remuneration ------------------------------
+  pdf.moveDown(0.6);
+  sectionHeading(pdf, 'GROSS REMUNERATION FROM THIS EMPLOYMENT');
+  amountRow(pdf, 'Gross salary / wages', undefined, employee.wage);
+  if (employee.bonus !== '0.0000') {
+    amountRow(pdf, 'Bonus / additional remuneration', undefined, employee.bonus);
+  }
+  subtotalRow(pdf, 'Total gross remuneration', employee.grossRemuneration);
+
+  // ---- Part D-equivalent: tax deducted ------------------------------------
+  pdf.moveDown(0.6);
+  sectionHeading(pdf, 'INCOME TAX DEDUCTED AND REMITTED (PCB / MTD)');
+  amountRow(pdf, 'Monthly tax deductions for the year', 'via CP39', employee.pcb);
+
+  // ---- Part E-equivalent: contributions -----------------------------------
+  pdf.moveDown(0.6);
+  sectionHeading(pdf, 'EMPLOYEE CONTRIBUTIONS DEDUCTED');
+  amountRow(pdf, 'EPF (KWSP)', 'Third Schedule', employee.epfEmployee);
+  amountRow(pdf, 'SOCSO (PERKESO)', 'incl. SKBBK', employee.socsoEmployee);
+  amountRow(pdf, 'EIS', 'Act 800', employee.eisEmployee);
+
+  // ---- What this sheet does not carry -------------------------------------
+  if (pdf.y > 690) pdf.addPage();
+  pdf.moveDown(0.8);
+  pdf.fontSize(7.5).fillColor('#555555');
+  for (const note of [
+    'Not recorded by this system and therefore NOT included: benefits in kind, value of living accommodation, CP38 instalments, zakat paid through salary, tax-exempt allowances. If any apply, add them on the official form.',
+    'Figures cover employment with the employer named above only. A previous employer issues their own statement for their part of the year.',
+  ]) {
+    pdf.text(note, MARGIN, pdf.y, { width: 495, lineGap: 1.5 });
+  }
+  pdf.fillColor('#000000');
+
+  footer(pdf);
 }
 
 /**

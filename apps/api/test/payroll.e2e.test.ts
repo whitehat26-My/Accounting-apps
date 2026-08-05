@@ -475,6 +475,46 @@ describe('the pay run over HTTP', () => {
     expect(response.status).toBe(422);
   });
 
+  it('issues the EA sheets and the Form E figures from the year', async () => {
+    const book = await callRaw(api, {
+      method: 'GET',
+      ...asOwner('/v1/payroll/years/2026/ea/pdf'),
+    });
+    expect(book.status).toBe(200);
+    expect(book.headers['content-disposition']).toContain('ea-sheets-2026.pdf');
+
+    const text = pdfText(book.body);
+    // Both people, one page each — and the banner that keeps it honest.
+    expect(text).toContain('Nurul Huda binti Ahmad');
+    expect(text).toContain('Azlan bin Musa');
+    expect(text).toContain('NOT THE OFFICIAL LHDN FORM');
+    const pages = book.body.match(/\/Type\s*\/Page[^s]/g) ?? [];
+    expect(pages).toHaveLength(2);
+
+    const formE = await call(api, { method: 'GET', ...asOwner('/v1/payroll/years/2026/form-e') });
+    expect(formE.status).toBe(200);
+    expect(formE.body['employeeCount']).toBe(2);
+    const totals = formE.body['totals'] as { grossRemuneration: string; pcb: string };
+    expect(totals.grossRemuneration).toBe('8500.0000'); // 6000 + 2500
+    expect(totals.pcb).toBe('207.5000'); // only Nurul pays tax
+
+    const csv = await callRaw(api, {
+      method: 'GET',
+      ...asOwner('/v1/payroll/years/2026/form-e/csv'),
+    });
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-disposition']).toContain('cp8d-rows-2026.csv');
+    expect(csv.body).toContain('Nurul Huda binti Ahmad');
+    expect(csv.body).toContain('Total PCB');
+
+    // An empty year refuses loudly rather than issuing a zero-page book.
+    const empty = await callRaw(api, {
+      method: 'GET',
+      ...asOwner('/v1/payroll/years/2024/ea/pdf'),
+    });
+    expect(empty.status).toBe(404);
+  });
+
   it('exports the CP39 with the exhibit’s record lengths', async () => {
     const noEmployerNo = await callRaw(api, {
       method: 'GET',

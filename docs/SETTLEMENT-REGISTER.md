@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0044` (compliance calendar),
-1,617 tests (729 domain · 618 db · 232 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0044` (compliance + year-end payroll),
+1,621 tests (729 domain · 621 db · 233 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`) — register, onboard,
 add an item, ring a cash sale, see the takings, quote a job and convert it, run a customer
 statement, cost a hire with all four statutory deductions, then hire her: onto the staff
@@ -524,6 +524,30 @@ the "remembering" a monthly retainer mostly buys.
 
 Payroll deadlines appear only when staff exist; SST rows only when the organisation holds
 an SST number — and the screen SAYS why a family is absent rather than showing nothing.
+
+### 5.15 Year-end payroll — EA sheets + Form E figures — BUILT (no migration)
+
+`GET /v1/payroll/years/:year/ea/pdf` issues every employee's **EA data sheet** as one
+book (one per page, `renderPayslipBookPdf` discipline), plus a single-employee route,
+`GET …/form-e` for the employer totals (count, gross, PCB) and `…/form-e/csv` for the
+C.P.8D-shaped per-employee rows. A "Year-end" card on the Payroll screen serves all
+three, and the EA/Form E deadlines were already on the Compliance calendar (§5.14).
+
+**What is honestly claimed, and what is not:**
+
+- Every figure sums CONFIRMED `pay_run_line` snapshots — the same rows the ledger posted
+  and the payslips printed, pinned in tests to the monthly figures the suite already
+  proves, with a REVERSED run explicitly excluded. TP3 openings from a previous employer
+  are **excluded by design**: that employment's EA belongs to that employer, and a test
+  guards the boundary.
+- ⚠️ **The output is a PREPARATION SHEET, not the official C.P.8A.** The official form
+  PDF (and the e-CP8D TXT spec) could not be retrieved through this environment's proxy —
+  hasil.gov.my answers 403; the attempt and the exact documents that promote this are in
+  `docs/research/sources/compliance-deadlines-provenance.md`. The sheet says so in an
+  amber banner on its own face, lists what this system does not record (BIK, VOLA, CP38,
+  zakat-through-salary, exempt allowances), and is designed for transcription onto the
+  official form / into MyTax. Guessing an official layout was the alternative, and a
+  wrong guess accepted by e-Filing is worse than an honest sheet.
 
 ### 5.2 Serial number tracking — BUILT (`0028`, `packages/domain/src/serials.ts`)
 

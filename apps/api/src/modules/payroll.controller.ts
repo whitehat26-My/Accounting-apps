@@ -2,6 +2,7 @@ import { Body, Controller, Get, Headers, Inject, Param, Patch, Post, Query, Req,
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { decimal, isoDate, positiveDecimal, uuid } from '@emil/contracts';
+import { toCsv } from '@emil/domain';
 import {
   computeContributions,
   computePayslip,
@@ -15,6 +16,9 @@ import {
   payRunCp39,
   payRunPayslip,
   payRunPayslips,
+  eaDocument,
+  eaDocuments,
+  formESummary,
   payslipDocument,
   preparePayRun,
   reversePayRun,
@@ -28,7 +32,7 @@ import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
-import { renderPayslipBookPdf, renderPayslipPdf } from '../pdf/render.js';
+import { renderEaBookPdf, renderEaPdf, renderPayslipBookPdf, renderPayslipPdf } from '../pdf/render.js';
 
 /**
  * Statutory payroll — the rates, and now the runs.
@@ -395,6 +399,93 @@ export class PayrollController {
       .send(pdf);
   }
 
+  /**
+   * Year-end: every EA data sheet for the year as one file, one person per
+   * page — printed once and handed out with February's payslips. See the
+   * renderer for why this is a PREPARATION SHEET and not the official form.
+   */
+  @Requires('payroll.read')
+  @Get('years/:year/ea/pdf')
+  async eaBookPdf(
+    @Param('year') year: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = tenantContextOf(request);
+    const parsed = parse(yearSchema, year);
+    const documents = await withTenant(this.sql, ctx, (tx) => eaDocuments(tx, ctx, parsed));
+    const pdf = await renderEaBookPdf(documents);
+    void reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `attachment; filename="ea-sheets-${parsed}.pdf"`)
+      .send(pdf);
+  }
+
+  @Requires('payroll.read')
+  @Get('years/:year/ea/:employeeId/pdf')
+  async eaPdf(
+    @Param('year') year: string,
+    @Param('employeeId') employeeId: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = tenantContextOf(request);
+    const parsed = parse(yearSchema, year);
+    const doc = await withTenant(this.sql, ctx, (tx) =>
+      eaDocument(tx, ctx, parsed, parse(uuid, employeeId)),
+    );
+    const pdf = await renderEaPdf(doc);
+    void reply
+      .header('content-type', 'application/pdf')
+      .header(
+        'content-disposition',
+        `attachment; filename="${filename(`ea-${slug(doc.employee.fullName)}-${parsed}.pdf`)}"`,
+      )
+      .send(pdf);
+  }
+
+  /** Form E's asks: employee count, gross and PCB totals, per-person rows. */
+  @Requires('payroll.read')
+  @Get('years/:year/form-e')
+  async formE(@Param('year') year: string, @Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => formESummary(tx, ctx, parse(yearSchema, year)));
+  }
+
+  /**
+   * The C.P.8D-shaped rows as CSV — one line per employee with the columns
+   * the e-CP8D upload wants, in spreadsheet form until the official TXT
+   * specification is on file (see the provenance note in docs/research).
+   */
+  @Requires('payroll.read')
+  @Get('years/:year/form-e/csv')
+  async formECsv(
+    @Param('year') year: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = tenantContextOf(request);
+    const parsed = parse(yearSchema, year);
+    const summary = await withTenant(this.sql, ctx, (tx) => formESummary(tx, ctx, parsed));
+    const body = toCsv([
+      ['Name', 'TIN', 'ID no', 'Staff no', 'Months paid', 'Gross remuneration (RM)', 'PCB (RM)', 'EPF (RM)', 'SOCSO (RM)', 'EIS (RM)'],
+      ...summary.rows.map((r) => [
+        r.fullName, r.tin ?? '', r.idValue ?? '', r.employeeNo ?? '',
+        String(r.monthsPaid), r.grossRemuneration, r.pcb,
+        r.epfEmployee, r.socsoEmployee, r.eisEmployee,
+      ]),
+      [],
+      ['Employees', String(summary.employeeCount)],
+      ['Total gross', summary.totals.grossRemuneration],
+      ['Total PCB', summary.totals.pcb],
+    ]);
+    void reply
+      .header('content-type', 'text/csv; charset=utf-8')
+      .header('content-disposition', `attachment; filename="cp8d-rows-${parsed}.csv"`)
+      .header('x-content-type-options', 'nosniff')
+      .send(body);
+  }
+
   /** The LHDN employer number the CP39 carries. */
   @Requires('payroll.manage')
   @Doc({ request: () => settingsSchema })
@@ -419,6 +510,8 @@ function slug(name: string): string {
 function filename(name: string): string {
   return name.replace(/[^\w.@-]/g, '_');
 }
+
+const yearSchema = z.coerce.number().int().min(2020).max(2100);
 
 const partSchema = z.enum(['A', 'C', 'E', 'F']);
 

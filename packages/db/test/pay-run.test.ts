@@ -3,6 +3,7 @@ import { Money } from '@emil/domain';
 import { withTenant, type Sql } from '../src/client.js';
 import { detectRollupDrift } from '../src/ledger.js';
 import { computePayslip } from '../src/payroll.js';
+import { eaDocuments, formESummary } from '../src/year-end-payroll.js';
 import {
   confirmPayRun,
   createEmployee,
@@ -576,3 +577,52 @@ describe('what it refuses', () => {
     ).rejects.toMatchObject({ code: 'NOT_CONFIRMED' });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Year-end: EA sheets and Form E, from the same snapshots
+// ---------------------------------------------------------------------------
+
+describe('year-end aggregation', () => {
+  it('sums CONFIRMED months only, and pins to the figures already proven', async () => {
+    /*
+     * By this point the suite has confirmed August, REVERSED it, and
+     * confirmed it again — so 2026 holds exactly ONE confirmed month, and the
+     * reversed run must not double it. Every figure below is one the monthly
+     * tests already pinned: the annual statement cannot disagree with the
+     * months it is made of.
+     */
+    const documents = await withTenant(sql, ctx(), (tx) => eaDocuments(tx, ctx(), 2026));
+    const nurul = documents.find((d) => d.employee.employeeNo === 'SGT-004')!.employee;
+
+    expect(nurul.monthsPaid).toBe(1); // the REVERSED August is not a paid month
+    expect(nurul.grossRemuneration).toBe('6000.0000');
+    expect(nurul.pcb).toBe('207.5000');
+    expect(nurul.epfEmployee).toBe('660.0000');
+    expect(nurul.socsoEmployee).toBe('74.4000'); // 29.75 invalidity + 44.65 SKBBK
+    expect(nurul.eisEmployee).toBe('11.9000');
+
+    /*
+     * The TP3 openings (42,000 gross from a previous employer) are NOT in the
+     * gross: that employment's EA is the previous employer's to issue. If
+     * this figure ever reads 48,000, the employer boundary broke.
+     */
+    expect(nurul.grossRemuneration).not.toBe('48000.0000');
+  });
+
+  it('Form E carries the count and the totals the e-Filing form asks for', async () => {
+    const summary = await withTenant(sql, ctx(), (tx) => formESummary(tx, ctx(), 2026));
+    expect(summary.employeeCount).toBe(2); // Nurul + Azlan
+    const nurul = summary.rows.find((r) => r.employeeNo === 'SGT-004')!;
+    const azlan = summary.rows.find((r) => r.employeeNo === 'SGT-001')!;
+    // The employer totals are exactly the sum of the rows beneath them.
+    const gross = (Number(nurul.grossRemuneration) + Number(azlan.grossRemuneration)).toFixed(4);
+    expect(summary.totals.grossRemuneration).toBe(gross);
+  });
+
+  it('an empty year refuses rather than issuing zero-page books', async () => {
+    await expect(
+      withTenant(sql, ctx(), (tx) => eaDocuments(tx, ctx(), 2024)),
+    ).rejects.toMatchObject({ code: 'RUN_NOT_FOUND' });
+  });
+});
+

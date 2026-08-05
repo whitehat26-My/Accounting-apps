@@ -30,3 +30,19 @@ Statutory anchors (for `legislation_ref`, not asserted beyond the agency stateme
 above): EPF Act 1991 + EPF Regulations; Employees' Social Security (General)
 Regulations 1971 reg. 33 and EIS Act 800; Income Tax (Deduction from Remuneration)
 Rules 1994 r.10 and ITA 1967 s.83; Sales Tax Act / Service Tax Act 2018 s.26.
+
+## Year-end payroll forms (attempted 2026-08-05)
+
+The official C.P.8A (EA) layout and Form E / C.P.8D sample PDFs live on
+hasil.gov.my / phl.hasil.gov.my, both 403 through this environment's proxy (as are the
+mirrors tried). The overall structure — Parts A–F: employee particulars, gross
+remuneration items, benefits in kind / accommodation, MTD+CP38+zakat deductions,
+EPF/SOCSO contributions, tax-exempt allowances — is consistently described across LHDN's
+own guide-note references and multiple payroll-vendor mirrors, but the exact field
+numbering has NOT been transcribed from an official document here.
+
+Consequence: the app generates an **EA data sheet** carrying every figure from the
+confirmed pay-run snapshots, clearly labelled as NOT the official form. **Promote by
+saving here:** `borang_ea__c.p.8a_-_pin._2023_.pdf` (hasil.gov.my → Forms), the Form E
+sample, and the e-CP8D TXT specification — then reshape the output onto the official
+layout.

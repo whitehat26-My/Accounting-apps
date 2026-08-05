@@ -604,6 +604,7 @@ export default function PayrollPage() {
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Payroll</h1>
       <RunCard />
+      <YearEndCard />
       <StaffCard />
       <CalculatorSection />
     </div>
@@ -1292,5 +1293,98 @@ function RemitFigure({ label, amount }: { label: string; amount: string }) {
       <p className="text-xs text-slate-500">{label}</p>
       <p className="text-sm font-semibold text-slate-900">{rm(amount)}</p>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+interface FormE {
+  year: number;
+  employeeCount: number;
+  totals: { grossRemuneration: string; pcb: string };
+  rows: { employeeId: string; fullName: string; monthsPaid: number; grossRemuneration: string; pcb: string }[];
+}
+
+/**
+ * Year-end: the EA sheets and the Form E figures, from the confirmed runs.
+ *
+ * The EA download is a PREPARATION SHEET — every figure the C.P.8A needs,
+ * labelled as not the official form (the official layout is not on file; the
+ * provenance note names the exact document that promotes it). Form E's asks
+ * are shown on screen because the e-Filing form wants them typed in anyway.
+ */
+function YearEndCard() {
+  const [showYear, setShowYear] = useState(new Date().getFullYear());
+  const [error, setError] = useState<unknown>(null);
+
+  const formE = useQuery({
+    queryKey: ['form-e', showYear],
+    queryFn: () => api<FormE>(`/v1/payroll/years/${showYear}/form-e`),
+  });
+
+  const data = formE.data;
+  if (!data || data.employeeCount === 0) return null;
+
+  const download = async (path: string, fallbackName: string) => {
+    setError(null);
+    try {
+      await apiDownload(path, fallbackName);
+    } catch (e) {
+      setError(e);
+    }
+  };
+
+  return (
+    <Card title={`Year-end — ${showYear}`}>
+      <div className="space-y-3">
+        <div className="flex flex-wrap items-center gap-4 text-sm">
+          <span>
+            <span className="font-semibold">{data.employeeCount}</span> staff paid
+          </span>
+          <span>
+            Gross <span className="font-semibold">{rm(data.totals.grossRemuneration)}</span>
+          </span>
+          <span>
+            PCB remitted <span className="font-semibold">{rm(data.totals.pcb)}</span>
+          </span>
+          <Button variant="ghost" onClick={() => setShowYear((y) => y - 1)}>
+            ← {showYear - 1}
+          </Button>
+          {showYear < new Date().getFullYear() ? (
+            <Button variant="ghost" onClick={() => setShowYear((y) => y + 1)}>
+              {showYear + 1} →
+            </Button>
+          ) : null}
+        </div>
+
+        <div className="flex flex-wrap gap-2">
+          <Button
+            onClick={() =>
+              void download(`/v1/payroll/years/${showYear}/ea/pdf`, `ea-sheets-${showYear}.pdf`)
+            }
+          >
+            EA sheets for everyone
+          </Button>
+          <Button
+            variant="ghost"
+            onClick={() =>
+              void download(
+                `/v1/payroll/years/${showYear}/form-e/csv`,
+                `cp8d-rows-${showYear}.csv`,
+              )
+            }
+          >
+            C.P.8D rows (CSV)
+          </Button>
+        </div>
+
+        <p className="text-xs text-slate-500">
+          The EA download is a preparation sheet for the official C.P.8A — every figure,
+          summed from the confirmed runs, ready to transcribe. EA to staff by end of
+          February; Form E to LHDN by 31 March (both tracked under Compliance).
+        </p>
+        <ErrorNote error={error} />
+      </div>
+    </Card>
   );
 }
