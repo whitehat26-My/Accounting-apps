@@ -14,6 +14,15 @@ import { can, useMe } from '@/lib/me';
  * what the day actually made.
  */
 
+interface FreeCash {
+  bankBalance: string;
+  totalHeld: string;
+  freeCash: string;
+  verdict: 'COMFORTABLE' | 'TIGHT' | 'SHORT';
+  held: { key: string; label: string; owedTo: string; amount: string; dueDate: string | null; note?: string }[];
+  soonest: { label: string; amount: string; dueDate: string | null } | null;
+}
+
 interface Forecast {
   openingCash: string;
   horizons: { days: number; until: string; inflows: string; outflows: string; closing: string }[];
@@ -66,6 +75,13 @@ export default function TodayPage() {
     enabled: seesMoney,
   });
 
+  const free = useQuery({
+    queryKey: ['free-cash'],
+    queryFn: () => api<FreeCash>('/v1/reports/free-cash'),
+    refetchInterval: 300_000,
+    enabled: seesMoney,
+  });
+
   const digests = useQuery({
     queryKey: ['weekly-digests'],
     queryFn: () => api<DigestList>('/v1/reports/weekly-digests?limit=1'),
@@ -75,6 +91,7 @@ export default function TodayPage() {
 
   const t = takings.data;
   const f = forecast.data;
+  const fc = free.data;
   const d = digests.data?.digests[0];
 
   return (
@@ -97,6 +114,8 @@ export default function TodayPage() {
           </p>
         </Card>
       ) : null}
+
+      {seesMoney && fc ? <FreeCashCard position={fc} /> : null}
 
       {seesMoney ? (
       <Card title="Cash — today and ahead">
@@ -240,5 +259,112 @@ function Stat({ label, value, highlight }: { label: string; value: string; highl
         {value}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const VERDICT: Record<
+  FreeCash['verdict'],
+  { tone: string; band: string; headline: string; advice: string }
+> = {
+  COMFORTABLE: {
+    tone: 'text-emerald-700',
+    band: 'bg-emerald-50 ring-emerald-200',
+    headline: 'yours to spend',
+    advice: 'Everything you are holding for other people is covered, with room left over.',
+  },
+  TIGHT: {
+    tone: 'text-amber-700',
+    band: 'bg-amber-50 ring-amber-200',
+    headline: 'yours to spend',
+    advice:
+      'Most of the money in the bank is not yours. It will cover what is owed — but a big purchase now would be spending other people’s money.',
+  },
+  SHORT: {
+    tone: 'text-red-700',
+    band: 'bg-red-50 ring-red-300',
+    headline: 'short of what you are holding',
+    advice:
+      'The money you are holding for staff and the government is MORE than what is in the bank. Some of it has already been spent. The next deadline will overdraw you unless money comes in first.',
+  },
+};
+
+/**
+ * The bank balance, minus what isn't yours.
+ *
+ * Placed above the forecast deliberately: the forecast answers "will money
+ * arrive", and this answers "is the money already here even mine". A shop
+ * that reads the second number wrongly buys stock with the staff's EPF and
+ * finds out on the 15th.
+ *
+ * Every figure is a real ledger balance — EPF_PAYABLE, PCB_PAYABLE and the
+ * rest — so this cannot drift from the balance sheet.
+ */
+function FreeCashCard({ position }: { position: FreeCash }) {
+  const style = VERDICT[position.verdict];
+  const short = position.verdict === 'SHORT';
+
+  return (
+    <Card>
+      <div className={`rounded-lg p-4 ring-1 ring-inset ${style.band}`}>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              Actually yours
+            </p>
+            <p className={`text-3xl font-bold ${style.tone}`}>
+              {rm(position.freeCash)}
+            </p>
+            <p className="text-xs text-slate-600">{style.headline}</p>
+          </div>
+          <div className="text-right text-sm">
+            <p className="text-slate-600">
+              In the bank <span className="font-semibold">{rm(position.bankBalance)}</span>
+            </p>
+            <p className="text-slate-600">
+              Held for others{' '}
+              <span className="font-semibold">{rm(position.totalHeld)}</span>
+            </p>
+          </div>
+        </div>
+        <p className={`mt-2 text-sm ${short ? 'font-medium text-red-700' : 'text-slate-600'}`}>
+          {style.advice}
+        </p>
+      </div>
+
+      {position.held.length > 0 ? (
+        <table className="mt-3 w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-slate-500">
+              <th className="pb-1">Not yours</th>
+              <th className="pb-1 text-right">Amount</th>
+              <th className="pb-1 text-right">Leaves by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {position.held.map((line) => (
+              <tr key={line.key} className="border-t border-slate-100 align-top">
+                <td className="py-1.5">
+                  <div className="font-medium text-slate-900">{line.label}</div>
+                  <div className="text-xs text-slate-500">{line.owedTo}</div>
+                  {line.note ? (
+                    <div className="text-xs text-amber-700">{line.note}</div>
+                  ) : null}
+                </td>
+                <td className="py-1.5 text-right font-medium">{rm(line.amount)}</td>
+                <td className="py-1.5 text-right text-xs text-slate-500">
+                  {line.dueDate === null ? 'no fixed date' : displayDate(line.dueDate)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="mt-3 text-sm text-slate-500">
+          You are not holding anything for anyone right now — the whole balance is yours.
+        </p>
+      )}
+    </Card>
   );
 }

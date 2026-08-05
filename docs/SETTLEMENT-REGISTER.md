@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0044` (compliance + year-end payroll),
-1,621 tests (729 domain · 621 db · 233 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0044`; free cash added without one,
+1,633 tests (736 domain · 625 db · 234 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`) — register, onboard,
 add an item, ring a cash sale, see the takings, quote a job and convert it, run a customer
 statement, cost a hire with all four statutory deductions, then hire her: onto the staff
@@ -548,6 +548,34 @@ three, and the EA/Form E deadlines were already on the Compliance calendar (§5.
   zakat-through-salary, exempt allowances), and is designed for transcription onto the
   official form / into MyTax. Guessing an official layout was the alternative, and a
   wrong guess accepted by e-Filing is worse than an honest sheet.
+
+### 5.16 Free cash — the bank balance minus what isn't yours — BUILT (no migration)
+
+The most misread number in a small business is the bank balance, because it contains
+money the shop is only HOLDING: EPF and SOCSO deducted from staff, PCB deducted on
+LHDN's behalf, SST charged to customers, and net wages a confirmed run has not yet paid
+out. It looks exactly like takings. On the 15th it leaves — and the shop that spent it
+on stock finds out with a penalty attached.
+
+`GET /v1/reports/free-cash` subtracts them and leads the dashboard with the remainder.
+**Nothing is estimated:** every held amount is the closing balance of a real liability
+account (`EPF_PAYABLE`, `PCB_PAYABLE`, `SST_PAYABLE`, `NET_WAGES_PAYABLE` …), negated
+from the debit-positive rollup and clamped at zero, so this can never drift from the
+balance sheet. The integration test confirms a pay run and asserts the bank is unmoved
+while the whole change lands in "not yours", with EPF at RM 1,380 and PCB at the RM
+207.50 the suite already pins three ways.
+
+Each holding carries the deadline the owner actually faces — the NEXT date money of that
+kind must leave, read from the compliance calendar's own rule rows (§5.14), not the
+month the balance accrued in: a payable is a running total, and last month's unpaid EPF
+sits in the same account as this month's. Three verdicts, in the order an owner needs
+them: **SHORT** (the holdings exceed the bank — it has already been spent, and the next
+deadline will overdraw), **TIGHT** (payable, but most of the bank is not the shop's), and
+**COMFORTABLE**. The browser journey confirms August and then asserts the panel names
+EPF and PCB.
+
+⚠️ SST is shown GROSS. Input tax is not netted off, because the SST-02 box mapping is
+still blocked (§3.6) — stated on the line itself rather than silently assumed either way.
 
 ### 5.2 Serial number tracking — BUILT (`0028`, `packages/domain/src/serials.ts`)
 

@@ -321,4 +321,19 @@ test('first day at the shop', async ({ page }) => {
   await expect(augustEpfRow.getByText('Done')).toBeVisible();
 
   await page.screenshot({ path: 'e2e-artifacts/compliance.png', fullPage: true });
+
+  // ---- And the number nobody else shows you --------------------------------
+  /*
+   * Back to Today. August's pay run was confirmed a few steps ago, so the
+   * shop is now HOLDING EPF, SOCSO/EIS and PCB for other people — and the
+   * dashboard must say so, subtracted from the bank balance rather than
+   * blended into it. This is the assertion that the takings and the
+   * statutory float are told apart.
+   */
+  await page.getByRole('link', { name: 'Today' }).click();
+  await expect(page.getByText('Actually yours')).toBeVisible();
+  await expect(page.getByText('EPF (KWSP)')).toBeVisible();
+  await expect(page.getByText('Income tax (PCB)')).toBeVisible();
+
+  await page.screenshot({ path: 'e2e-artifacts/free-cash.png', fullPage: true });
 });

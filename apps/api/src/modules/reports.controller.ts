@@ -31,6 +31,7 @@ import {
   itemMargins,
   repairProfitability,
   stockAgeing,
+  freeCash,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
@@ -167,6 +168,32 @@ export class ReportsController {
       statementOfProfitOrLoss(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
     );
     return renderReport(report);
+  }
+
+  /**
+   * How much of the bank balance is actually the shop's.
+   *
+   * The most misread number in a small business is the bank balance: it
+   * contains the EPF, SOCSO, PCB and SST the shop is HOLDING for other
+   * people. This subtracts them and reports what is left, with a verdict
+   * loud enough to stop a stock purchase that would spend the float.
+   */
+  @Requires('report.read')
+  @Get('reports/free-cash')
+  async freeCashReport(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    const position = await withTenant(this.sql, ctx, (tx) => freeCash(tx, ctx));
+    return {
+      ...position,
+      bankBalance: position.bankBalance.toDecimalString(),
+      totalHeld: position.totalHeld.toDecimalString(),
+      freeCash: position.freeCash.toDecimalString(),
+      held: position.held.map((h) => ({ ...h, amount: h.amount.toDecimalString() })),
+      soonest:
+        position.soonest === null
+          ? null
+          : { ...position.soonest, amount: position.soonest.amount.toDecimalString() },
+    };
   }
 
   /**

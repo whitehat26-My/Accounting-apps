@@ -321,6 +321,27 @@ describe('the owner-insight reports', () => {
   });
 });
 
+describe('free cash — what of the balance is actually the shop’s', () => {
+  it('reports the split with a verdict, and refuses SALES', async () => {
+    const response = await call(api, { method: 'GET', ...as('/v1/reports/free-cash') });
+    expect(response.status).toBe(200);
+    expect(response.body['bankBalance']).toBeDefined();
+    expect(['COMFORTABLE', 'TIGHT', 'SHORT']).toContain(response.body['verdict']);
+    // Money crosses the wire as decimal STRINGS, never JSON numbers (rule 2).
+    expect(typeof response.body['freeCash']).toBe('string');
+
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const refused = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/free-cash',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(refused.status).toBe(403);
+  });
+});
+
 describe('GET /v1/reports/journal', () => {
   it('returns both sides of every entry', async () => {
     const response = await call(api, {
