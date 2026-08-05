@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, loadSession } from '@/lib/api';
 import { displayDate, rm } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
@@ -177,6 +177,7 @@ export default function BankingPage() {
       {selected ? (
         <>
           <ImportCard account={selected} onImported={refresh} />
+          <FeedsCard account={selected} onChanged={refresh} />
           <ToSortCard
             account={selected}
             glAccounts={glAccounts.data?.accounts ?? []}
@@ -927,6 +928,237 @@ function RulesCard({
         {create.isError ? <ErrorNote error={create.error} /> : null}
         {run.isError ? <ErrorNote error={run.error} /> : null}
       </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+interface FeedConnection {
+  id: string;
+  bankAccountId: string;
+  bankAccountName: string;
+  provider: 'SANDBOX' | 'API_PUSH';
+  status: 'ACTIVE' | 'PAUSED' | 'REVOKED';
+  lastSyncedAt: string | null;
+  lastError: string | null;
+}
+
+/**
+ * Bank feeds: lines that arrive on their own.
+ *
+ * Two sources exist today and the card says exactly what each is. The sandbox
+ * is a demonstration bank — real machinery, fake money. The push key is the
+ * real integration surface: anything the shop trusts can deliver lines with
+ * it, and the key can do nothing else. A live Malaysian bank connection needs
+ * an agreement no code can conjure; when one exists it becomes a third option
+ * here, and nothing else on this screen changes.
+ */
+function FeedsCard({ account, onChanged }: { account: BankAccount; onChanged: () => void }) {
+  const me = useMe();
+  const queryClient = useQueryClient();
+  const [provider, setProvider] = useState<'SANDBOX' | 'API_PUSH'>('API_PUSH');
+  const [issuedKey, setIssuedKey] = useState<{ key: string; feedId: string } | null>(null);
+  const [lastSync, setLastSync] = useState<{ imported: number; duplicates: number } | null>(null);
+
+  const feeds = useQuery({
+    queryKey: ['bank-feeds'],
+    queryFn: () => api<{ feeds: FeedConnection[] }>('/v1/bank-feeds'),
+  });
+  const mine = (feeds.data?.feeds ?? []).filter((f) => f.bankAccountId === account.id);
+  const live = mine.find((f) => f.status !== 'REVOKED') ?? null;
+
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['bank-feeds'] });
+    onChanged();
+  };
+
+  const connect = useMutation({
+    mutationFn: () =>
+      api<FeedConnection>('/v1/bank-feeds', {
+        method: 'POST',
+        body: { bankAccountId: account.id, provider },
+      }),
+    onSuccess: refresh,
+  });
+
+  const sync = useMutation({
+    mutationFn: (feedId: string) =>
+      api<{ imported: number; duplicates: number }>(`/v1/bank-feeds/${feedId}/sync`, {
+        method: 'POST',
+      }),
+    onSuccess: (result) => {
+      setLastSync(result);
+      refresh();
+    },
+  });
+
+  const setStatus = useMutation({
+    mutationFn: (input: { feedId: string; status: 'ACTIVE' | 'PAUSED' | 'REVOKED' }) =>
+      api(`/v1/bank-feeds/${input.feedId}`, {
+        method: 'PATCH',
+        body: { status: input.status },
+      }),
+    onSuccess: refresh,
+  });
+
+  /*
+   * The push key: issued through the ordinary API-key machinery, scoped to
+   * bank.import and nothing else, shown ONCE. The curl below is a complete
+   * working call so "integrate with our system" is copy-paste, not a manual.
+   */
+  const issueKey = useMutation({
+    mutationFn: async (feedId: string) => {
+      const issued = await api<{ key: string }>('/v1/auth/api-keys', {
+        method: 'POST',
+        body: {
+          name: `Bank feed push — ${account.name}`,
+          scopes: ['bank.import'],
+        },
+      });
+      return { key: issued.key, feedId };
+    },
+    onSuccess: setIssuedKey,
+  });
+
+  const canImport = can(me.data, 'bank.import');
+
+  return (
+    <Card title="Feeds — lines that arrive on their own">
+      {live === null ? (
+        <div className="space-y-3">
+          <p className="text-sm text-slate-500">
+            Instead of importing a file, this account can receive its lines automatically.
+            Duplicates are impossible by construction — a feed and an overlapping CSV import
+            of the same days produce each transaction once.
+          </p>
+          {canImport ? (
+            <div className="flex flex-wrap items-end gap-3">
+              <Field label="Source">
+                <select
+                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value as typeof provider)}
+                >
+                  <option value="API_PUSH">Push API (for a script or integration)</option>
+                  <option value="SANDBOX">Sandbox bank (demo data, real machinery)</option>
+                </select>
+              </Field>
+              <Button disabled={connect.isPending} onClick={() => connect.mutate()}>
+                Connect
+              </Button>
+              <p className="max-w-md text-xs text-slate-500">
+                A live Malaysian bank connection needs a bank or aggregator agreement — that is
+                a contract, not a setting. The push API is the same machinery with your own
+                trusted sender.
+              </p>
+            </div>
+          ) : null}
+          <ErrorNote error={connect.error} />
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3 text-sm">
+            <span className="font-medium text-slate-900">
+              {live.provider === 'SANDBOX' ? 'Sandbox bank' : 'Push API'}
+            </span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+                live.status === 'ACTIVE'
+                  ? 'bg-emerald-100 text-emerald-900'
+                  : 'bg-amber-100 text-amber-900'
+              }`}
+            >
+              {live.status}
+            </span>
+            <span className="text-xs text-slate-500">
+              {live.lastSyncedAt
+                ? `Last received ${displayDate(live.lastSyncedAt.slice(0, 10))}`
+                : 'Nothing received yet'}
+            </span>
+            {live.lastError ? (
+              <span className="text-xs text-red-600">Last attempt failed: {live.lastError}</span>
+            ) : null}
+          </div>
+
+          {canImport ? (
+            <div className="flex flex-wrap gap-2">
+              {live.provider === 'SANDBOX' && live.status === 'ACTIVE' ? (
+                <Button disabled={sync.isPending} onClick={() => sync.mutate(live.id)}>
+                  {sync.isPending ? 'Fetching…' : 'Fetch new lines'}
+                </Button>
+              ) : null}
+              {live.provider === 'API_PUSH' && live.status === 'ACTIVE' ? (
+                <Button
+                  variant="ghost"
+                  disabled={issueKey.isPending}
+                  onClick={() => issueKey.mutate(live.id)}
+                >
+                  Create push key
+                </Button>
+              ) : null}
+              <Button
+                variant="ghost"
+                onClick={() =>
+                  setStatus.mutate({
+                    feedId: live.id,
+                    status: live.status === 'ACTIVE' ? 'PAUSED' : 'ACTIVE',
+                  })
+                }
+              >
+                {live.status === 'ACTIVE' ? 'Pause' : 'Resume'}
+              </Button>
+              <Button
+                variant="ghost"
+                onClick={() => setStatus.mutate({ feedId: live.id, status: 'REVOKED' })}
+              >
+                Disconnect
+              </Button>
+            </div>
+          ) : null}
+
+          {lastSync ? (
+            <p className="text-sm text-slate-600">
+              Received <strong>{lastSync.imported}</strong> new line
+              {lastSync.imported === 1 ? '' : 's'}
+              {lastSync.duplicates > 0
+                ? ` — ${lastSync.duplicates} already held, skipped`
+                : ''}
+              . They are in the To sort queue below.
+            </p>
+          ) : null}
+
+          {issuedKey ? (
+            <div className="space-y-2 rounded-lg bg-slate-50 p-3">
+              <p className="text-xs font-medium text-slate-900">
+                Copy this key now — it is shown once and never again.
+              </p>
+              {/*
+                A complete working call, not a fragment: the difference between
+                an integration that happens tonight and one that never does.
+              */}
+              <pre className="overflow-x-auto rounded bg-slate-900 p-3 text-xs text-slate-100">
+{`curl -X POST "$APP_URL/api/v1/bank-feeds/${issuedKey.feedId}/transactions" \\
+  -H "X-Api-Key: ${issuedKey.key}" \\
+  -H "X-Tenant-Id: ${loadSession()?.tenantId ?? ''}" \\
+  -H "Idempotency-Key: $(uuidgen)" \\
+  -H "Content-Type: application/json" \\
+  -d '{"transactions": [{"date": "2026-08-05",
+        "description": "DUITNOW QR SETTLEMENT",
+        "amount": "1250.00", "reference": "QR-20260805"}]}'`}
+              </pre>
+              <p className="text-xs text-slate-500">
+                Amounts are signed strings: money in positive, money out negative. The key can
+                deliver bank lines and do nothing else; revoke it any time under Team.
+              </p>
+            </div>
+          ) : null}
+
+          <ErrorNote error={sync.error} />
+          <ErrorNote error={setStatus.error} />
+          <ErrorNote error={issueKey.error} />
+        </div>
+      )}
     </Card>
   );
 }

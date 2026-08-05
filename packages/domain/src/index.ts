@@ -28,6 +28,7 @@ export * from './ageing.js';
 export * from './text.js';
 export * from './matching.js';
 export * from './statement-import.js';
+export * from './bank-feed.js';
 export * from './reconciliation.js';
 export * from './rbac.js';
 export * from './approval.js';

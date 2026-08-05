@@ -238,7 +238,7 @@ export async function importStatement(
   let duplicates = 0;
 
   for (const row of parsed.rows) {
-    const inserted = await insertTransaction(tx, ctx, input.bankAccountId, statementId, row);
+    const inserted = await insertBankTransaction(tx, ctx, input.bankAccountId, statementId, row);
     if (inserted) imported++;
     else duplicates++;
   }
@@ -260,8 +260,13 @@ export async function importStatement(
   };
 }
 
-/** Returns false when the row was already held. */
-async function insertTransaction(
+/**
+ * Returns false when the row was already held. Exported because the FEED path
+ * (bank-feed.ts) must land lines through the exact same conflict target as an
+ * import — two implementations of "insert exactly once" is how one of them
+ * drifts.
+ */
+export async function insertBankTransaction(
   tx: Tx,
   ctx: TenantContext,
   bankAccountId: string,

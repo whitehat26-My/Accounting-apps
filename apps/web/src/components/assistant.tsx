@@ -149,6 +149,8 @@ const HELP: Record<string, { title: string; steps: string[] }> = {
     title: 'Banking',
     steps: [
       'Import the bank statement — CSV, or a Maybank payment advice as-is.',
+      'Or let lines arrive on their own: the Feeds card can receive transactions from a script or integration through a push key that can deliver bank lines and do nothing else.',
+      'Duplicates cannot happen — a feed and a re-imported statement of the same days produce each line once.',
       'Match each line to the invoice or bill it settles; rules learn repeat lines.',
       'One transfer covering several invoices shows a breakdown — confirm the split in one tap.',
       'When the difference reads RM 0.00, sign off the month.',

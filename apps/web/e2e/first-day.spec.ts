@@ -256,4 +256,29 @@ test('first day at the shop', async ({ page }) => {
     page.getByRole('button', { name: 'Payslips for everyone' }).click(),
   ]);
   expect(book.suggestedFilename()).toBe('payslips-2026-08.pdf');
+
+  // ---- The bank, arriving on its own --------------------------------------
+  /*
+   * Set up the bank account, wire the sandbox feed to it, and fetch. The
+   * assertion that matters is the SECOND fetch: zero new lines, everything a
+   * duplicate — the shop can press this button as often as it likes and the
+   * books cannot double. The lines land in the same To sort queue a CSV
+   * import fills, which is the whole design.
+   */
+  await page.getByRole('link', { name: 'Banking' }).click();
+  await page.getByLabel('Ledger account').selectOption({ index: 1 });
+  await page.getByRole('button', { name: 'Create account', exact: true }).click();
+
+  await page.getByLabel('Source').selectOption('SANDBOX');
+  await page.getByRole('button', { name: 'Connect', exact: true }).click();
+  await expect(page.getByText('Sandbox bank')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Fetch new lines' }).click();
+  await expect(page.getByText(/Received \d+ new lines/)).toBeVisible();
+  await expect(page.getByText('DUITNOW QR SETTLEMENT').first()).toBeVisible();
+
+  await page.getByRole('button', { name: 'Fetch new lines' }).click();
+  await expect(page.getByText(/Received 0 new lines — \d+ already held/)).toBeVisible();
+
+  await page.screenshot({ path: 'e2e-artifacts/bank-feed.png', fullPage: true });
 });
