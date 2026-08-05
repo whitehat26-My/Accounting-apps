@@ -32,6 +32,7 @@ import {
   repairProfitability,
   stockAgeing,
   freeCash,
+  fraudWatch,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
@@ -168,6 +169,27 @@ export class ReportsController {
       statementOfProfitOrLoss(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
     );
     return renderReport(report);
+  }
+
+  /**
+   * The second pair of eyes — audit techniques on a five-person shop.
+   *
+   * Read-only and non-blocking by design: it never stops a payment or flags a
+   * record, because an automated control that stops work gets worked around
+   * within a fortnight. It makes a person look, and a person looking is the
+   * control. Every finding carries its innocent explanation.
+   */
+  @Requires('report.read')
+  @Get('reports/fraud-watch')
+  async fraudWatchReport(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      fraudWatch(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
+    );
   }
 
   /**

@@ -14,8 +14,8 @@ gap nobody noticed. Each entry below is one of four things:
 | **BLOCKED — ON EXTERNAL** | Cannot be built correctly without something from outside this repository. The unblocker is named. |
 | **NOT STARTED** | No decision, no blocker. Just not done yet. |
 
-Last reconciled against the tree: migration `0045` (audit anchors + proof packs),
-1,641 tests (736 domain · 632 db · 235 api · 21 worker · 17 contracts), plus one Playwright browser
+Last reconciled against the tree: migration `0045`; fraud watch added without one,
+1,656 tests (748 domain · 634 db · 236 api · 21 worker · 17 contracts), plus one Playwright browser
 journey through the full first day (`apps/web/e2e/first-day.spec.ts`) — register, onboard,
 add an item, ring a cash sale, see the takings, quote a job and convert it, run a customer
 statement, cost a hire with all four statutory deductions, then hire her: onto the staff
@@ -607,6 +607,37 @@ database; *"⚠️ That anchor is NOT implemented."* It is now.
 attacker with owner rights would, edits an audit row, re-chains every hash forward — then
 asserts the system's own check reports "intact" (as documented) **while a pack issued
 beforehand refuses to agree**. That test is the feature.
+
+### 5.18 Second pair of eyes — fraud watch — BUILT (no migration)
+
+`GET /v1/reports/fraud-watch` runs the tests an external auditor samples for, over the
+whole population rather than a sample: first-digit distribution (Benford), round-number
+clustering, duplicate supplier payments, bills landing just under the approval limit, and
+journals posted between midnight and 5am or dated more than 45 days before entry.
+
+**Two design rules, both about not being ignored:**
+
+1. **It never accuses.** Every finding carries an `innocentExplanation` shown at the same
+   weight as the suspicion — a duplicate payment is "often genuine… but also the most
+   common way a small business pays twice, and usually recoverable if caught early". A
+   tool that cries fraud at ordinary bookkeeping is switched off within a week and is
+   then absent for the case that mattered. Half the domain tests assert SILENCE on an
+   honest shop, including a Benford check that refuses to conclude anything below 200
+   amounts.
+2. **It never blocks.** Read-only, touching no document and writing no status. An
+   automated control that stops work gets worked around, leaving the original risk plus a
+   habit of bypassing controls. What it can do is make a person look, and a person
+   looking is the control. `checksRun` is reported even when nothing is found, so a clean
+   result reads as "we looked" rather than "nothing ran".
+
+⚠️ **One check is deliberately absent and named as such, in the code and here:** supplier
+bank details changed shortly before a payment — the shape of invoice-redirection fraud,
+and the check this module most wants. `contact` stores no bank details, so the audit log
+has no change to have recorded. Writing the query anyway would return zero rows forever
+and read as "checked, nothing found", which is worse than an absent check. **Unblocker:
+decide whether supplier bank details are stored at all — the same argument `0041` settled
+for employees by keeping only the last four digits — after which this is a dozen lines
+against `audit_log`.**
 
 ### 5.2 Serial number tracking — BUILT (`0028`, `packages/domain/src/serials.ts`)
 

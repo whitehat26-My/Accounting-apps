@@ -45,6 +45,7 @@ export * from './insights.js';
 export * from './compliance.js';
 export * from './free-cash.js';
 export * from './proof.js';
+export * from './fraud-watch.js';
 export * from './year-end-payroll.js';
 export { businessToday } from './internal.js';
 export { migrate } from './migrate.js';

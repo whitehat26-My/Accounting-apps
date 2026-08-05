@@ -321,6 +321,32 @@ describe('the owner-insight reports', () => {
   });
 });
 
+describe('the second pair of eyes', () => {
+  it('reports findings with their innocent explanations, and refuses SALES', async () => {
+    const response = await call(api, {
+      method: 'GET',
+      ...as('/v1/reports/fraud-watch?from=2026-01-01&to=2026-12-31'),
+    });
+    expect(response.status).toBe(200);
+    // What was CHECKED is reported even when nothing was found: a clean result
+    // must be distinguishable from a check that never ran.
+    expect((response.body['checksRun'] as string[]).length).toBeGreaterThan(0);
+    for (const finding of response.body['findings'] as { innocentExplanation: string }[]) {
+      expect(finding.innocentExplanation.length).toBeGreaterThan(0);
+    }
+
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const refused = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/fraud-watch?from=2026-01-01&to=2026-12-31',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(refused.status).toBe(403);
+  });
+});
+
 describe('free cash — what of the balance is actually the shop’s', () => {
   it('reports the split with a verdict, and refuses SALES', async () => {
     const response = await call(api, { method: 'GET', ...as('/v1/reports/free-cash') });

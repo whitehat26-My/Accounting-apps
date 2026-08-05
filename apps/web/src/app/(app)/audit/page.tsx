@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
-import { displayDate } from '@/lib/display';
+import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Input, Skeleton } from '@/components/ui';
 
 /**
@@ -70,6 +70,8 @@ export default function AuditPage() {
             : 'THE HASH CHAIN IS BROKEN — the log has been tampered with. Preserve the database and involve your accountant immediately.'}
         </p>
       ) : null}
+
+      <FraudWatchCard />
 
       <ProofPackCard />
 
@@ -294,6 +296,113 @@ function ProofPackCard() {
           printed inside the pack itself.
         </p>
         <ErrorNote error={error} />
+      </div>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+interface WatchFinding {
+  code: string;
+  severity: 'NOTE' | 'LOOK' | 'CHECK';
+  headline: string;
+  innocentExplanation: string;
+}
+
+interface Watch {
+  window: { from: string; to: string };
+  findings: WatchFinding[];
+  checksRun: string[];
+  duplicates: { party: string; amount: string; documents: string[]; daysApart: number }[];
+}
+
+const SEVERITY: Record<WatchFinding['severity'], { band: string; label: string }> = {
+  NOTE: { band: 'bg-slate-50 ring-slate-200', label: 'Worth knowing' },
+  LOOK: { band: 'bg-amber-50 ring-amber-200', label: 'Worth a look' },
+  CHECK: { band: 'bg-red-50 ring-red-200', label: 'Worth checking' },
+};
+
+/**
+ * The second pair of eyes.
+ *
+ * Two design rules, both about not being ignored. It never accuses — each
+ * finding shows its innocent explanation with the same weight as the
+ * suspicion, because a tool that cries fraud at ordinary bookkeeping is off
+ * within a week and absent for the case that mattered. And it lists what it
+ * CHECKED even when it found nothing, so a clean result reads as "we looked"
+ * rather than "nothing ran".
+ */
+function FraudWatchCard() {
+  const to = todayIso();
+  const from = `${Number(to.slice(0, 4)) - 1}${to.slice(4)}`;
+
+  const watch = useQuery({
+    queryKey: ['fraud-watch', from, to],
+    queryFn: () => api<Watch>(`/v1/reports/fraud-watch?from=${from}&to=${to}`),
+  });
+
+  const data = watch.data;
+  if (!data) return null;
+
+  return (
+    <Card title="Second pair of eyes — the last 12 months">
+      <div className="space-y-3">
+        {data.findings.length === 0 ? (
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
+            Nothing stood out. These are the same tests an auditor samples for, run over
+            everything rather than a sample.
+          </p>
+        ) : (
+          data.findings.map((finding) => {
+            const style = SEVERITY[finding.severity];
+            return (
+              <div
+                key={finding.code}
+                className={`rounded-lg px-3 py-2 ring-1 ring-inset ${style.band}`}
+              >
+                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                  {style.label}
+                </p>
+                <p className="text-sm font-medium text-slate-900">{finding.headline}</p>
+                {/* The innocent reading, never smaller than the suspicion. */}
+                <p className="mt-1 text-sm text-slate-600">{finding.innocentExplanation}</p>
+              </div>
+            );
+          })
+        )}
+
+        {data.duplicates.length > 0 ? (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="text-left text-xs text-slate-500">
+                <th className="pb-1">Supplier</th>
+                <th className="pb-1">Documents</th>
+                <th className="pb-1 text-right">Amount</th>
+                <th className="pb-1 text-right">Days apart</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.duplicates.map((d) => (
+                <tr key={`${d.party}-${d.documents.join()}`} className="border-t border-slate-100">
+                  <td className="py-1.5">{d.party}</td>
+                  <td className="py-1.5 text-xs text-slate-500">{d.documents.join(' and ')}</td>
+                  <td className="py-1.5 text-right font-medium">{rm(d.amount)}</td>
+                  <td className="py-1.5 text-right">{d.daysApart}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : null}
+
+        <details className="text-xs text-slate-500">
+          <summary className="cursor-pointer">What was checked ({data.checksRun.length})</summary>
+          <ul className="mt-1 list-disc pl-5">
+            {data.checksRun.map((check) => (
+              <li key={check}>{check}</li>
+            ))}
+          </ul>
+        </details>
       </div>
     </Card>
   );
