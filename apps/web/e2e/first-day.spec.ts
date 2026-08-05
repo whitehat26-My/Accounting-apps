@@ -189,6 +189,12 @@ test('first day at the shop', async ({ page }) => {
   await page.getByLabel('Income tax number (TIN)').fill('IG 531367080');
   await page.getByLabel('Monthly wage (RM)').first().fill('6000.00');
   await page.getByLabel('Hired on').fill('2026-08-01');
+  // Four digits and no more — enough to match a payslip against a bank
+  // statement, and the app never asks for the rest.
+  // By role: "Bank" also matches the "Paid by" select, whose accessible name
+  // is built from its own options ("Bank transfer / Cash / Cheque").
+  await page.getByRole('textbox', { name: 'Bank', exact: true }).fill('Maybank');
+  await page.getByLabel('Account — last 4 digits only').fill('4471');
   await page.getByLabel('Joined mid-year from another employer').check();
   await page.getByLabel('Gross paid this year (RM)').fill('42000.00');
   await page.getByLabel('EPF deducted this year (RM)').fill('4620.00');
@@ -236,4 +242,18 @@ test('first day at the shop', async ({ page }) => {
 
   const [cp39] = await Promise.all([page.waitForEvent('popup'), cp39Button.click()]);
   await expect.poll(() => cp39.url()).toContain('blob:');
+
+  // ---- And the payslips, in one file, to print and hand out ---------------
+  /*
+   * Asserted as a DOWNLOAD rather than a popup, and on the suggested filename
+   * specifically. That name is the whole point: a blob URL carries none, so
+   * before `apiDownload` every payslip saved as whatever the browser invented
+   * and a month of them were indistinguishable. Nothing but this assertion
+   * would notice that regressing — it is invisible in a screenshot.
+   */
+  const [book] = await Promise.all([
+    page.waitForEvent('download'),
+    page.getByRole('button', { name: 'Payslips for everyone' }).click(),
+  ]);
+  expect(book.suggestedFilename()).toBe('payslips-2026-08.pdf');
 });

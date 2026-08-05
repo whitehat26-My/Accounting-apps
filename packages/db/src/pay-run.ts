@@ -18,8 +18,8 @@ import { toIsoDate } from './internal.js';
 import { loadBaseCurrency } from './invoice.js';
 import { postJournalEntry, reversePostedEntry } from './ledger.js';
 import { computePayslip } from './payroll.js';
-import { sellerBlock } from './document-data.js';
-import type { PayslipDocument } from './payroll.js';
+import { sellerBlock, type SellerBlock } from './document-data.js';
+import type { PaymentMethod, PayslipDocument } from './payroll.js';
 
 /**
  * Pay runs — the firm's monthly job, kept in the books.
@@ -86,6 +86,10 @@ export interface EmployeeInput {
   readonly jobTitle?: string;
   readonly hiredOn: string;
   readonly leftOn?: string | null;
+  /** How wages reach this person. Only the last four account digits are kept. */
+  readonly paymentMethod?: PaymentMethod;
+  readonly bankName?: string;
+  readonly bankAccountLast4?: string;
   /** Form TP3: what a previous employer already paid and deducted this year. */
   readonly ytdYear?: number;
   readonly ytdGrossBefore?: string;
@@ -116,6 +120,9 @@ export interface EmployeeView {
   readonly hiredOn: string;
   readonly leftOn: string | null;
   readonly active: boolean;
+  readonly paymentMethod: PaymentMethod;
+  readonly bankName: string | null;
+  readonly bankAccountLast4: string | null;
   readonly ytdYear: number | null;
   readonly ytdGrossBefore: string;
   readonly ytdEpfBefore: string;
@@ -144,6 +151,9 @@ interface EmployeeRow {
   job_title: string | null;
   hired_on: Date;
   left_on: Date | null;
+  payment_method: PaymentMethod;
+  bank_name: string | null;
+  bank_account_last4: string | null;
   ytd_year: number | null;
   ytd_gross_before: string;
   ytd_epf_before: string;
@@ -154,6 +164,7 @@ const EMPLOYEE_COLUMNS = `id, full_name, employee_no, id_type, id_value, tin, co
   date_of_birth, citizenship, tax_resident, tax_category, qualifying_children,
   disabled, disabled_spouse, epf_elected_before_1998, on_invalidity_pension,
   had_eis_contribution_before_57, monthly_wage, job_title, hired_on, left_on,
+  payment_method, bank_name, bank_account_last4,
   ytd_year, ytd_gross_before, ytd_epf_before, ytd_mtd_before`;
 
 function toEmployeeView(row: EmployeeRow): EmployeeView {
@@ -180,6 +191,9 @@ function toEmployeeView(row: EmployeeRow): EmployeeView {
     hiredOn: toIsoDate(row.hired_on),
     leftOn: row.left_on === null ? null : toIsoDate(row.left_on),
     active: row.left_on === null,
+    paymentMethod: row.payment_method,
+    bankName: row.bank_name,
+    bankAccountLast4: row.bank_account_last4,
     ytdYear: row.ytd_year,
     ytdGrossBefore: row.ytd_gross_before,
     ytdEpfBefore: row.ytd_epf_before,
@@ -198,6 +212,7 @@ export async function createEmployee(
           date_of_birth, citizenship, tax_resident, tax_category, qualifying_children,
           disabled, disabled_spouse, epf_elected_before_1998, on_invalidity_pension,
           had_eis_contribution_before_57, monthly_wage, job_title, hired_on, left_on,
+          payment_method, bank_name, bank_account_last4,
           ytd_year, ytd_gross_before, ytd_epf_before, ytd_mtd_before
       ) VALUES (
           ${ctx.tenantId}, ${input.fullName}, ${input.employeeNo ?? null},
@@ -210,6 +225,8 @@ export async function createEmployee(
           ${input.hadEisContributionBefore57 ?? false},
           ${input.monthlyWage}, ${input.jobTitle ?? null}, ${input.hiredOn},
           ${input.leftOn ?? null},
+          ${input.paymentMethod ?? 'BANK_TRANSFER'}, ${input.bankName ?? null},
+          ${input.bankAccountLast4 ?? null},
           ${input.ytdYear ?? null}, ${input.ytdGrossBefore ?? '0'},
           ${input.ytdEpfBefore ?? '0'}, ${input.ytdMtdBefore ?? '0'}
       )
@@ -253,6 +270,9 @@ export async function updateEmployee(
           job_title = ${input.jobTitle ?? null},
           hired_on = ${input.hiredOn},
           left_on = ${input.leftOn ?? null},
+          payment_method = ${input.paymentMethod ?? 'BANK_TRANSFER'},
+          bank_name = ${input.bankName ?? null},
+          bank_account_last4 = ${input.bankAccountLast4 ?? null},
           ytd_year = ${input.ytdYear ?? null},
           ytd_gross_before = ${input.ytdGrossBefore ?? '0'},
           ytd_epf_before = ${input.ytdEpfBefore ?? '0'},
@@ -376,6 +396,9 @@ interface LineRow {
   chargeable_income: string;
   total_deducted: string;
   net_pay: string;
+  payment_method: PaymentMethod;
+  bank_name: string | null;
+  bank_account_last4: string | null;
 }
 
 function toLineView(row: LineRow): PayRunLineView {
@@ -643,7 +666,8 @@ export async function preparePayRun(
             socso_employee_invalidity, socso_employee_skbbk, socso_employer,
             eis_employee, eis_employer,
             pcb, pcb_on_bonus, chargeable_income,
-            total_deducted, net_pay
+            total_deducted, net_pay,
+            payment_method, bank_name, bank_account_last4
         ) VALUES (
             ${ctx.tenantId}, ${run!.id}, ${employee.id},
             ${employee.full_name}, ${employee.employee_no}, ${employee.tin},
@@ -656,7 +680,9 @@ export async function preparePayRun(
             ${slip.socso.employer},
             ${slip.eis.employee}, ${slip.eis.employer},
             ${slip.pcb.deduction}, ${slip.pcb.onBonus}, ${slip.pcb.chargeableIncome},
-            ${slip.totalDeducted}, ${slip.netPay}
+            ${slip.totalDeducted}, ${slip.netPay},
+            ${employee.payment_method}, ${employee.bank_name},
+            ${employee.bank_account_last4}
         )
     `;
   }
@@ -982,7 +1008,7 @@ export async function payRunPayslip(
   runId: string,
   lineId: string,
 ): Promise<PayslipDocument> {
-  const [line] = await tx<(LineRow & { pay_month: Date; job_title: string | null })[]>`
+  const [line] = await tx<PayslipRow[]>`
       SELECT l.*, r.pay_month, e.job_title
         FROM pay_run_line l
         JOIN pay_run r ON r.tenant_id = l.tenant_id AND r.id = l.pay_run_id
@@ -993,7 +1019,57 @@ export async function payRunPayslip(
     throw new PayRunError('RUN_NOT_FOUND', `No payslip line ${lineId} on run ${runId}.`);
   }
 
+  return toPayslip(line, await sellerBlock(tx, ctx));
+}
+
+/**
+ * EVERY payslip for a confirmed run, for the one file the shop prints and
+ * hands out.
+ *
+ * CONFIRMED only, for the same reason a single payslip is drawn from the
+ * snapshot: a DRAFT month is a proposal, and a stack of paper that says
+ * "payslip" at the top of every page is not a proposal to anybody holding one.
+ *
+ * The employer block is read ONCE for the whole book rather than per line —
+ * fifteen staff should not be fifteen reads of the same organisation row.
+ */
+export async function payRunPayslips(
+  tx: Tx,
+  ctx: TenantContext,
+  runId: string,
+): Promise<{ payMonth: string; documents: PayslipDocument[] }> {
+  const [run] = await tx<{ status: string; pay_month: Date }[]>`
+      SELECT status, pay_month FROM pay_run
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${runId}
+  `;
+  if (run === undefined) throw new PayRunError('RUN_NOT_FOUND', `No pay run ${runId}.`);
+  if (run.status !== 'CONFIRMED') {
+    throw new PayRunError(
+      'NOT_CONFIRMED',
+      `Pay run ${runId} is ${run.status}. Confirm the month before printing payslips.`,
+    );
+  }
+
+  const lines = await tx<PayslipRow[]>`
+      SELECT l.*, r.pay_month, e.job_title
+        FROM pay_run_line l
+        JOIN pay_run r ON r.tenant_id = l.tenant_id AND r.id = l.pay_run_id
+        LEFT JOIN employee e ON e.tenant_id = l.tenant_id AND e.id = l.employee_id
+       WHERE l.tenant_id = ${ctx.tenantId} AND l.pay_run_id = ${runId}
+       ORDER BY l.full_name
+  `;
+
   const employer = await sellerBlock(tx, ctx);
+  return {
+    payMonth: toIsoDate(run.pay_month),
+    documents: lines.map((line) => toPayslip(line, employer)),
+  };
+}
+
+/** A run line with the two fields a payslip needs from beyond it. */
+type PayslipRow = LineRow & { pay_month: Date; job_title: string | null };
+
+function toPayslip(line: PayslipRow, employer: SellerBlock): PayslipDocument {
   const month = toIsoDate(line.pay_month);
   const currency = 'MYR' as const;
 
@@ -1049,6 +1125,15 @@ export async function payRunPayslip(
       .add(Money.fromDecimal(line.socso_employer, currency))
       .add(Money.fromDecimal(line.eis_employer, currency))
       .toDecimalString(),
+    // Snapshotted, like everything else on this line: someone who changes bank
+    // in November must not rewrite the August payslip they were handed.
+    payment: {
+      method: line.payment_method,
+      ...(line.bank_name !== null ? { bankName: line.bank_name } : {}),
+      ...(line.bank_account_last4 !== null
+        ? { accountLast4: line.bank_account_last4 }
+        : {}),
+    },
     basis: {
       epfPart: line.epf_part as PayslipDocument['basis']['epfPart'],
       socsoCategory: line.socso_category as 1 | 2,

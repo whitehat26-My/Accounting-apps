@@ -638,6 +638,19 @@ export interface PayslipDocument {
     readonly amount: string;
   }[];
   readonly totalEmployerContributions: string;
+  /**
+   * How the money reached them.
+   *
+   * Optional because the quick one-off print serves someone who is not on the
+   * staff register and therefore has no known account — the line is omitted
+   * rather than guessed. Only the last four digits are ever carried; see the
+   * comment on migration 0041 for why the rest is not stored at all.
+   */
+  readonly payment?: {
+    readonly method: PaymentMethod;
+    readonly bankName?: string;
+    readonly accountLast4?: string;
+  };
   /** Which Part / Category / scheme applied, for the notes at the foot. */
   readonly basis: {
     readonly epfPart: EpfPart;
@@ -647,6 +660,9 @@ export interface PayslipDocument {
     readonly chargeableIncome: string;
   };
 }
+
+/** How wages leave the shop. Mirrors the CHECK on `employee.payment_method`. */
+export type PaymentMethod = 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
 
 const MONTHS = [
   'January', 'February', 'March', 'April', 'May', 'June',

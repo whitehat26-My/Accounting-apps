@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, apiBlobUrl } from '@/lib/api';
+import { api, apiBlobUrl, apiDownload } from '@/lib/api';
 import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { rm, todayIso } from '@/lib/display';
 
@@ -552,6 +552,9 @@ interface Employee {
   hiredOn: string;
   leftOn: string | null;
   active: boolean;
+  paymentMethod: 'BANK_TRANSFER' | 'CASH' | 'CHEQUE';
+  bankName: string | null;
+  bankAccountLast4: string | null;
   ytdYear: number | null;
   ytdGrossBefore: string;
   ytdEpfBefore: string;
@@ -624,6 +627,9 @@ const EMPTY_FORM = {
   monthlyWage: '',
   hiredOn: todayIso(),
   leftOn: '',
+  paymentMethod: 'BANK_TRANSFER' as 'BANK_TRANSFER' | 'CASH' | 'CHEQUE',
+  bankName: '',
+  bankAccountLast4: '',
   midYear: false,
   ytdGrossBefore: '0.00',
   ytdEpfBefore: '0.00',
@@ -659,6 +665,11 @@ function StaffCard() {
         monthlyWage: form.monthlyWage,
         hiredOn: form.hiredOn,
         leftOn: form.leftOn === '' ? null : form.leftOn,
+        paymentMethod: form.paymentMethod,
+        ...(form.bankName.trim() ? { bankName: form.bankName.trim() } : {}),
+        ...(form.bankAccountLast4.trim()
+          ? { bankAccountLast4: form.bankAccountLast4.trim() }
+          : {}),
         // TP3: only sent when the joiner brought a year with them. The year is
         // the hire year — figures from an earlier year are stale by law.
         ...(form.midYear
@@ -700,6 +711,9 @@ function StaffCard() {
       monthlyWage: employee.monthlyWage,
       hiredOn: employee.hiredOn,
       leftOn: employee.leftOn ?? '',
+      paymentMethod: employee.paymentMethod,
+      bankName: employee.bankName ?? '',
+      bankAccountLast4: employee.bankAccountLast4 ?? '',
       midYear: employee.ytdYear !== null,
       ytdGrossBefore: employee.ytdGrossBefore,
       ytdEpfBefore: employee.ytdEpfBefore,
@@ -870,6 +884,47 @@ function StaffCard() {
                 />
               </Field>
             ) : null}
+            <Field label="Paid by">
+              <select
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                value={form.paymentMethod}
+                onChange={(e) =>
+                  set({ paymentMethod: e.target.value as typeof form.paymentMethod })
+                }
+              >
+                <option value="BANK_TRANSFER">Bank transfer</option>
+                <option value="CASH">Cash</option>
+                <option value="CHEQUE">Cheque</option>
+              </select>
+            </Field>
+            {form.paymentMethod !== 'CASH' ? (
+              <>
+                <Field label="Bank">
+                  <Input
+                    value={form.bankName}
+                    onChange={(e) => set({ bankName: e.target.value })}
+                    placeholder="Maybank"
+                  />
+                </Field>
+                <Field label="Account — last 4 digits only">
+                  {/*
+                    Four digits, and the app never asks for more. It does not
+                    make payments, so the rest of an account number would be
+                    stored for no reason; four is enough for someone to match
+                    the payslip against their own bank statement.
+                  */}
+                  <Input
+                    inputMode="numeric"
+                    maxLength={4}
+                    value={form.bankAccountLast4}
+                    onChange={(e) =>
+                      set({ bankAccountLast4: e.target.value.replace(/\D/g, '').slice(0, 4) })
+                    }
+                    placeholder="4471"
+                  />
+                </Field>
+              </>
+            ) : null}
           </div>
 
           <label className="flex items-start gap-2.5 text-sm">
@@ -1010,6 +1065,16 @@ function RunCard() {
     }
   };
 
+  /** Saved under the server's own filename — see `apiDownload`. */
+  const download = async (path: string, fallbackName: string) => {
+    setBlobError(null);
+    try {
+      await apiDownload(path, fallbackName);
+    } catch (error) {
+      setBlobError(error);
+    }
+  };
+
   const run = detail.data ?? null;
 
   return (
@@ -1065,6 +1130,21 @@ function RunCard() {
             ) : null}
             {run.status === 'CONFIRMED' ? (
               <div className="flex flex-wrap gap-2">
+                {/*
+                  One file, one per page, downloaded under its own name — print
+                  it once and hand the pages out. The per-row buttons below stay
+                  for reprinting a single slip someone has lost.
+                */}
+                <Button
+                  onClick={() =>
+                    void download(
+                      `/v1/payroll/runs/${run.id}/payslips/pdf`,
+                      `payslips-${run.payMonth.slice(0, 7)}.pdf`,
+                    )
+                  }
+                >
+                  Payslips for everyone
+                </Button>
                 <Button variant="ghost" onClick={() => void openBlob(`/v1/payroll/runs/${run.id}/cp39`)}>
                   CP39 file (LHDN)
                 </Button>
@@ -1145,7 +1225,10 @@ function RunCard() {
                         <Button
                           variant="ghost"
                           onClick={() =>
-                            void openBlob(`/v1/payroll/runs/${run.id}/payslips/${line.id}/pdf`)
+                            void download(
+                              `/v1/payroll/runs/${run.id}/payslips/${line.id}/pdf`,
+                              `payslip-${line.fullName}-${run.payMonth.slice(0, 7)}.pdf`,
+                            )
                           }
                         >
                           Payslip

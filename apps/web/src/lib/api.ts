@@ -175,6 +175,58 @@ function refreshAccessToken(): Promise<boolean> {
  * since a salary in a query string ends up in every proxy's access log between
  * here and the shop PC.
  */
+/**
+ * Download a document under the name the SERVER gave it.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS AND `apiBlobUrl` IS NOT ENOUGH.
+ *
+ * A blob URL carries no filename. `apiBlobUrl` + `window.open` therefore
+ * throws away the `content-disposition` the API carefully built, and the
+ * browser invents its own — so a month of payslips saves as `download (3).pdf`
+ * and the shop cannot tell one from another. Opening in a tab is right for
+ * something you glance at; a document you keep needs its name.
+ *
+ * The object URL is revoked once the click has been dispatched. `apiBlobUrl`
+ * never revokes, which leaks one blob per print for the life of the page.
+ * ---------------------------------------------------------------------------
+ */
+export async function apiDownload(path: string, fallbackName: string): Promise<void> {
+  if (DEMO) {
+    const { DEMO_PDF_MESSAGE } = await import('./demo');
+    throw new ApiError(501, { message: DEMO_PDF_MESSAGE });
+  }
+  const session = loadSession();
+  const response = await fetch(`/api${path}`, {
+    headers: session
+      ? { authorization: `Bearer ${session.accessToken}`, 'x-tenant-id': session.tenantId }
+      : {},
+  });
+  if (!response.ok) {
+    throw new ApiError(response.status, { message: `Document failed (${response.status})` });
+  }
+
+  const url = URL.createObjectURL(await response.blob());
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filenameFrom(response.headers.get('content-disposition')) ?? fallbackName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    // A revoke in the same tick would race Safari's download; one frame is
+    // enough, and the blob is freed either way.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+}
+
+/** `attachment; filename="payslips-2026-08.pdf"` → `payslips-2026-08.pdf`. */
+function filenameFrom(disposition: string | null): string | null {
+  const match = disposition?.match(/filename="?([^";]+)"?/);
+  return match?.[1] ?? null;
+}
+
 export async function apiBlobUrl(path: string, body?: unknown): Promise<string> {
   if (DEMO) {
     const { DEMO_PDF_MESSAGE } = await import('./demo');

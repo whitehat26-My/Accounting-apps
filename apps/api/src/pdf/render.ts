@@ -130,7 +130,31 @@ export function renderReceiptPdf(doc: ReceiptDocument): Promise<Buffer> {
  * ---------------------------------------------------------------------------
  */
 export function renderPayslipPdf(doc: PayslipDocument): Promise<Buffer> {
+  return build((pdf) => drawPayslip(pdf, doc));
+}
+
+/**
+ * Every payslip for one confirmed pay run, one per page, in a single file.
+ *
+ * The shop prints this once and hands out the pages. The alternative — a
+ * button per person — is five downloads, five browser tabs and five files the
+ * browser names itself, which is how a payslip ends up filed as
+ * `download (3).pdf`.
+ *
+ * Each page is drawn by the same `drawPayslip` as the single-payslip route, so
+ * the two can never drift into being two different documents.
+ */
+export function renderPayslipBookPdf(docs: readonly PayslipDocument[]): Promise<Buffer> {
   return build((pdf) => {
+    docs.forEach((doc, index) => {
+      if (index > 0) pdf.addPage();
+      drawPayslip(pdf, doc);
+    });
+  });
+}
+
+function drawPayslip(pdf: PDFKit.PDFDocument, doc: PayslipDocument): void {
+  {
     header(pdf, doc.employer, 'PAYSLIP');
 
     // ---- Who and when ------------------------------------------------------
@@ -177,7 +201,22 @@ export function renderPayslipPdf(doc: PayslipDocument): Promise<Buffer> {
     pdf.fillColor('#000000').fontSize(14)
       .text(`RM ${money(doc.netPay)}`, 300, netY + 8, { width: 233, align: 'right' });
     pdf.font('Helvetica').fontSize(9);
-    pdf.y = netY + 42;
+    pdf.y = netY + 36;
+
+    // ---- How the money reached them ----------------------------------------
+    /*
+     * Stated because a payslip without it cannot be checked against anything.
+     * The reader compares four digits with their own bank statement and knows
+     * whether the money they are holding is this money.
+     */
+    if (doc.payment !== undefined) {
+      pdf.fontSize(8).fillColor('#555555');
+      pdf.text(paymentLine(doc.payment), MARGIN, pdf.y, { width: 495 });
+      pdf.fillColor('#000000').fontSize(9);
+      pdf.y += 4;
+    } else {
+      pdf.y += 6;
+    }
 
     // ---- What the employer pays on top -------------------------------------
     sectionHeading(pdf, 'EMPLOYER CONTRIBUTIONS — NOT DEDUCTED FROM YOUR PAY');
@@ -187,6 +226,13 @@ export function renderPayslipPdf(doc: PayslipDocument): Promise<Buffer> {
     subtotalRow(pdf, 'Paid by the employer', doc.totalEmployerContributions);
 
     // ---- The basis, so every figure can be checked --------------------------
+    /*
+     * The footer is hard-positioned at y=780, and nothing above here paginates.
+     * A payslip with several earnings lines would run these notes underneath it
+     * silently — so the guard `renderStatementPdf` already uses goes here too,
+     * before the last block that can grow.
+     */
+    if (pdf.y > 690) pdf.addPage();
     pdf.moveDown(0.8);
     pdf.fontSize(7.5).fillColor('#555555');
     const basis = [
@@ -205,7 +251,25 @@ export function renderPayslipPdf(doc: PayslipDocument): Promise<Buffer> {
     pdf.fillColor('#000000');
 
     footer(pdf);
-  });
+  }
+}
+
+/**
+ * "Paid by bank transfer to Maybank ••••4471", and it degrades honestly.
+ *
+ * Bank and last-four are each optional, so a shop that has recorded only the
+ * method still gets a true sentence rather than a half-finished one with a
+ * dangling "to".
+ */
+function paymentLine(payment: NonNullable<PayslipDocument['payment']>): string {
+  if (payment.method === 'CASH') return 'Paid in cash.';
+
+  const how = payment.method === 'CHEQUE' ? 'Paid by cheque' : 'Paid by bank transfer';
+  const account = [payment.bankName, payment.accountLast4 ? `••••${payment.accountLast4}` : null]
+    .filter((part): part is string => part !== null && part !== undefined && part !== '')
+    .join(' ');
+
+  return account === '' ? `${how}.` : `${how} to ${account}.`;
 }
 
 function sectionHeading(pdf: PDFKit.PDFDocument, title: string): void {

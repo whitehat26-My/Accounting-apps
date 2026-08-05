@@ -10,6 +10,7 @@ import {
   listEmployees,
   payRunCp39,
   payRunPayslip,
+  payRunPayslips,
   preparePayRun,
   reversePayRun,
   setPayrollSettings,
@@ -68,6 +69,9 @@ const NURUL: EmployeeInput = {
   monthlyWage: '6000.00',
   jobTitle: 'Senior Technician',
   hiredOn: '2026-08-01',
+  paymentMethod: 'BANK_TRANSFER',
+  bankName: 'Maybank',
+  bankAccountLast4: '4471',
   ytdYear: 2026,
   ytdGrossBefore: '42000.00',
   ytdEpfBefore: '4620.00',
@@ -85,6 +89,7 @@ const AZLAN: EmployeeInput = {
   qualifyingChildren: 0,
   monthlyWage: '2500.00',
   hiredOn: '2026-08-01',
+  paymentMethod: 'CASH',
 };
 
 // ---------------------------------------------------------------------------
@@ -387,6 +392,78 @@ describe('the snapshot', () => {
     expect(doc.period).toBe('August 2026');
     expect(doc.netPay).toBe('5046.2000');
     expect(doc.deductions.map((d) => d.label)).toContain('SOCSO — SKBBK');
+
+    /*
+     * How she was paid is snapshotted too, and the previous test has ALREADY
+     * renamed her and raised her wage on the register. If the payslip read the
+     * employee row rather than the line, this block would follow those edits.
+     */
+    expect(doc.payment).toEqual({
+      method: 'BANK_TRANSFER',
+      bankName: 'Maybank',
+      accountLast4: '4471',
+    });
+  });
+
+  it('changing bank later does not rewrite a payslip already handed out', async () => {
+    const employees = await withTenant(sql, ctx(), (tx) => listEmployees(tx, ctx()));
+    const nurul = employees.find((e) => e.employeeNo === 'SGT-004')!;
+
+    await withTenant(sql, ctx(), (tx) =>
+      updateEmployee(tx, ctx(), nurul.id, {
+        ...NURUL,
+        bankName: 'CIMB',
+        bankAccountLast4: '9902',
+      }),
+    );
+
+    const runs = await admin<{ id: string }[]>`
+        SELECT id FROM pay_run
+         WHERE tenant_id = ${tenant.tenantId} AND pay_month = '2026-08-01'
+           AND status = 'CONFIRMED'
+    `;
+    const view = await withTenant(sql, ctx(), (tx) => getPayRun(tx, ctx(), runs[0]!.id));
+    const line = view.lines.find((l) => l.employeeNo === 'SGT-004')!;
+    const doc = await withTenant(sql, ctx(), (tx) =>
+      payRunPayslip(tx, ctx(), runs[0]!.id, line.id),
+    );
+
+    // August's payslip still says where August's money went.
+    expect(doc.payment?.bankName).toBe('Maybank');
+    expect(doc.payment?.accountLast4).toBe('4471');
+  });
+
+  it('hands over every payslip for the month, name-ordered, in one call', async () => {
+    const runs = await admin<{ id: string }[]>`
+        SELECT id FROM pay_run
+         WHERE tenant_id = ${tenant.tenantId} AND pay_month = '2026-08-01'
+           AND status = 'CONFIRMED'
+    `;
+    const book = await withTenant(sql, ctx(), (tx) =>
+      payRunPayslips(tx, ctx(), runs[0]!.id),
+    );
+
+    expect(book.payMonth).toBe('2026-08-01');
+    // Both people, sorted — the printed stack has to be predictable.
+    expect(book.documents.map((d) => d.employee.name)).toEqual([
+      'Azlan bin Musa',
+      'Nurul Huda binti Ahmad',
+    ]);
+    // Cash and transfer are different sentences on the page.
+    expect(book.documents[0]!.payment?.method).toBe('CASH');
+    expect(book.documents[0]!.payment?.bankName).toBeUndefined();
+    expect(book.documents[1]!.payment?.method).toBe('BANK_TRANSFER');
+    // One employer block, read once, identical on every page.
+    expect(book.documents[0]!.employer).toEqual(book.documents[1]!.employer);
+  });
+
+  it('refuses to print a book for a month that is not confirmed', async () => {
+    const draft = await withTenant(sql, ctx(), (tx) =>
+      preparePayRun(tx, ctx(), { payMonth: '2026-10-01', idempotencyKey: 'book-draft' }),
+    );
+    await expect(
+      withTenant(sql, ctx(), (tx) => payRunPayslips(tx, ctx(), draft.id)),
+    ).rejects.toMatchObject({ code: 'NOT_CONFIRMED' });
   });
 });
 

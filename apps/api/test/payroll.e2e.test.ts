@@ -271,7 +271,11 @@ describe('the printed payslip', () => {
 
     expect(response.status).toBe(201);
     expect(response.headers['content-type']).toContain('application/pdf');
-    expect(response.headers['content-disposition']).toContain('payslip-august-2026.pdf');
+    // The name is in the filename, here as well as on the pay-run route: two
+    // payslips printed for the same month must not be one file twice.
+    expect(response.headers['content-disposition']).toContain(
+      'payslip-nurul-huda-binti-ahmad-august-2026.pdf',
+    );
     expect(response.body.startsWith('%PDF')).toBe(true);
 
     // Assert what is ON the page, not merely that a PDF came back.
@@ -340,22 +344,42 @@ describe('the pay run over HTTP', () => {
     monthlyWage: '6000.00',
     jobTitle: 'Senior Technician',
     hiredOn: '2026-08-01',
+    paymentMethod: 'BANK_TRANSFER' as const,
+    bankName: 'Maybank',
+    bankAccountLast4: '4471',
     ytdYear: 2026,
     ytdGrossBefore: '42000.00',
     ytdEpfBefore: '4620.00',
     ytdMtdBefore: '1452.50',
   };
 
+  /** A second person, paid in cash — the other branch of the payslip's payment line. */
+  const cashier = {
+    fullName: 'Azlan bin Musa',
+    employeeNo: 'SGT-001',
+    tin: '445566778',
+    dateOfBirth: '2002-02-02',
+    citizenship: 'CITIZEN' as const,
+    taxResident: true,
+    taxCategory: 1,
+    qualifyingChildren: 0,
+    monthlyWage: '2500.00',
+    hiredOn: '2026-08-01',
+    paymentMethod: 'CASH' as const,
+  };
+
   let runId: string;
   let lineId: string;
 
   it('registers staff, computes the month, and confirms it', async () => {
-    const added = await call(api, {
-      method: 'POST',
-      ...asOwner('/v1/payroll/employees'),
-      body: employee,
-    });
-    expect(added.status, JSON.stringify(added.body)).toBe(201);
+    for (const person of [employee, cashier]) {
+      const added = await call(api, {
+        method: 'POST',
+        ...asOwner('/v1/payroll/employees'),
+        body: person,
+      });
+      expect(added.status, JSON.stringify(added.body)).toBe(201);
+    }
 
     const prepared = await call(api, {
       method: 'POST',
@@ -364,13 +388,21 @@ describe('the pay run over HTTP', () => {
     });
     expect(prepared.status, JSON.stringify(prepared.body)).toBe(201);
     runId = prepared.body['id'] as string;
-    const lines = prepared.body['lines'] as { id: string; pcb: string; netPay: string }[];
-    lineId = lines[0]!.id;
+    const lines = prepared.body['lines'] as {
+      id: string;
+      employeeNo: string;
+      pcb: string;
+      netPay: string;
+    }[];
+    // By staff number, not by position: the run orders by name, so anybody
+    // hired later could silently move which row these figures are asserted on.
+    const nurul = lines.find((l) => l.employeeNo === 'SGT-004')!;
+    lineId = nurul.id;
 
     // The pinned figures, now arriving over HTTP with the YTD read from the
     // employee record rather than typed into a form.
-    expect(lines[0]!.pcb).toBe('207.5000');
-    expect(lines[0]!.netPay).toBe('5046.2000');
+    expect(nurul.pcb).toBe('207.5000');
+    expect(nurul.netPay).toBe('5046.2000');
 
     const confirmed = await call(api, {
       method: 'POST',
@@ -393,6 +425,54 @@ describe('the pay run over HTTP', () => {
     expect(text).toContain('Nurul Huda binti Ahmad');
     expect(text).toContain('August 2026');
     expect(text).toContain('5,046.20');
+    // How she was paid, from the snapshot.
+    expect(text).toContain('Paid by bank transfer to Maybank');
+
+    /*
+     * The employee's name is in the filename. Before this, ten staff printed
+     * one at a time produced ten files all called `payslip-august-2026.pdf`.
+     */
+    expect(response.headers['content-disposition']).toContain(
+      'payslip-nurul-huda-binti-ahmad-august-2026.pdf',
+    );
+  });
+
+  it('prints every payslip for the month as one downloadable file', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${runId}/payslips/pdf`),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toContain('application/pdf');
+    // `attachment`, not `inline`: this is the stack you print and hand out.
+    expect(response.headers['content-disposition']).toContain('attachment');
+    expect(response.headers['content-disposition']).toContain('payslips-2026-08.pdf');
+
+    const text = pdfText(response.body);
+    expect(text).toContain('Nurul Huda binti Ahmad');
+    expect(text).toContain('Azlan bin Musa');
+    // Cash and transfer print different sentences.
+    expect(text).toContain('Paid in cash');
+
+    // One page each — a book that silently ran two people together on one
+    // sheet would still contain both names.
+    const pages = response.body.match(/\/Type\s*\/Page[^s]/g) ?? [];
+    expect(pages).toHaveLength(2);
+  });
+
+  it('refuses a payslip book for a month nobody has confirmed', async () => {
+    const draft = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/runs/prepare'),
+      body: { payMonth: '2026-11-01' },
+    });
+    expect(draft.status).toBe(201);
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${draft.body['id'] as string}/payslips/pdf`),
+    });
+    expect(response.status).toBe(422);
   });
 
   it('exports the CP39 with the exhibit’s record lengths', async () => {

@@ -14,6 +14,7 @@ import {
   loadStatutorySchedules,
   payRunCp39,
   payRunPayslip,
+  payRunPayslips,
   payslipDocument,
   preparePayRun,
   reversePayRun,
@@ -27,7 +28,7 @@ import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
-import { renderPayslipPdf } from '../pdf/render.js';
+import { renderPayslipBookPdf, renderPayslipPdf } from '../pdf/render.js';
 
 /**
  * Statutory payroll — the rates, and now the runs.
@@ -173,10 +174,13 @@ export class PayrollController {
     );
 
     const pdf = await renderPayslipPdf(doc);
-    const slug = doc.period.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const when = doc.period.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     void reply
       .header('content-type', 'application/pdf')
-      .header('content-disposition', `inline; filename="payslip-${slug}.pdf"`)
+      .header(
+        'content-disposition',
+        `inline; filename="${filename(`payslip-${slug(doc.employee.name)}-${when}.pdf`)}"`,
+      )
       .send(pdf);
   }
 
@@ -332,6 +336,34 @@ export class PayrollController {
       .send(file.content);
   }
 
+  /**
+   * Every payslip for the month, one per page, in one file.
+   *
+   * `attachment` rather than `inline`: this is not a document to glance at, it
+   * is the stack the shop prints and hands out, so it should land in Downloads
+   * under its own name instead of opening in a tab.
+   */
+  @Requires('payroll.read')
+  @Get('runs/:id/payslips/pdf')
+  async runPayslipBookPdf(
+    @Param('id') id: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = tenantContextOf(request);
+    const book = await withTenant(this.sql, ctx, (tx) =>
+      payRunPayslips(tx, ctx, parse(uuid, id)),
+    );
+    const pdf = await renderPayslipBookPdf(book.documents);
+    void reply
+      .header('content-type', 'application/pdf')
+      .header(
+        'content-disposition',
+        `attachment; filename="${filename(`payslips-${book.payMonth.slice(0, 7)}.pdf`)}"`,
+      )
+      .send(pdf);
+  }
+
   /** One payslip off a run, from the stored snapshot — never recomputed. */
   @Requires('payroll.read')
   @Get('runs/:id/payslips/:lineId/pdf')
@@ -346,10 +378,20 @@ export class PayrollController {
       payRunPayslip(tx, ctx, parse(uuid, id), parse(uuid, lineId)),
     );
     const pdf = await renderPayslipPdf(doc);
-    const slug = doc.period.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    /*
+     * The employee's name is IN the filename, not just the month. Ten staff
+     * printed one at a time were previously ten files all called
+     * `payslip-august-2026.pdf`, which is nine files the shop cannot tell apart
+     * and one that overwrote the rest.
+     */
+    const who = slug(doc.employee.name);
+    const when = doc.period.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     void reply
       .header('content-type', 'application/pdf')
-      .header('content-disposition', `inline; filename="payslip-${slug}.pdf"`)
+      .header(
+        'content-disposition',
+        `attachment; filename="${filename(`payslip-${who}-${when}.pdf`)}"`,
+      )
       .send(pdf);
   }
 
@@ -362,6 +404,20 @@ export class PayrollController {
     const ctx = tenantContextOf(request);
     return withTenant(this.sql, ctx, (tx) => setPayrollSettings(tx, ctx, input));
   }
+}
+
+/** 'Nurul Huda binti Ahmad' → 'nurul-huda-binti-ahmad'. */
+function slug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+}
+
+/**
+ * Keep a Content-Disposition filename to characters that cannot break out of
+ * the header — the same guard the CSV exports use (`reports.controller.ts`).
+ * A staff name reaches this string, and a name is user input.
+ */
+function filename(name: string): string {
+  return name.replace(/[^\w.@-]/g, '_');
 }
 
 const partSchema = z.enum(['A', 'C', 'E', 'F']);
@@ -485,6 +541,14 @@ const employeeSchema = z.object({
   qualifyingChildren: z.number().int().min(0).max(40),
   disabled: z.boolean().optional(),
   disabledSpouse: z.boolean().optional(),
+  /**
+   * How wages reach them. Only the last four digits of the account are taken:
+   * this app never initiates a payment, so a full account number would be
+   * stored for no functional reason — see migration 0041.
+   */
+  paymentMethod: z.enum(['BANK_TRANSFER', 'CASH', 'CHEQUE']).optional(),
+  bankName: z.string().trim().max(60).optional(),
+  bankAccountLast4: z.string().trim().regex(/^\d{4}$/).optional(),
   epfElectedBefore1998: z.boolean().optional(),
   onInvalidityPension: z.boolean().optional(),
   hadEisContributionBefore57: z.boolean().optional(),
@@ -528,6 +592,11 @@ function employeeInput(input: z.infer<typeof employeeSchema>) {
       : {}),
     ...(input.jobTitle !== undefined ? { jobTitle: input.jobTitle } : {}),
     ...(input.leftOn !== undefined ? { leftOn: input.leftOn } : {}),
+    ...(input.paymentMethod !== undefined ? { paymentMethod: input.paymentMethod } : {}),
+    ...(input.bankName !== undefined ? { bankName: input.bankName } : {}),
+    ...(input.bankAccountLast4 !== undefined
+      ? { bankAccountLast4: input.bankAccountLast4 }
+      : {}),
     ...(input.ytdYear !== undefined ? { ytdYear: input.ytdYear } : {}),
     ...(input.ytdGrossBefore !== undefined ? { ytdGrossBefore: input.ytdGrossBefore } : {}),
     ...(input.ytdEpfBefore !== undefined ? { ytdEpfBefore: input.ytdEpfBefore } : {}),
