@@ -639,6 +639,55 @@ decide whether supplier bank details are stored at all — the same argument `00
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
 
+### 5.19 The time machine — the books at a past instant — BUILT (no migration)
+
+`GET /v1/reports/books-as-at`, `/v1/reports/what-changed`, its `/csv`, and
+`/v1/reports/lock-moments`. The question: *"I closed March on 5 April. It is now
+September and the figure is different. What changed, and who changed it?"*
+
+**It is exact, not reconstructed, and that is a property of the data model rather than of
+this code.** The ledger is append-only (rule 1), so the books as at instant *T* are one
+predicate over rows that still exist:
+
+```sql
+e.posted_at IS NOT NULL AND e.posted_at <= T
+```
+
+No snapshot has to have been taken in advance, nothing is replayed, and the answer is the
+same whoever asks and whenever. The predicate makes no reference to `status`, deliberately:
+a DRAFT entry has `posted_at NULL` and drops out on its own; a REVERSED entry keeps its
+lines and its original `posted_at`, so at an instant before the reversal existed it
+correctly still counts; and the reversal is a separate entry with a later `posted_at`, so
+it enters the picture exactly when it did. Filtering on today's `status` instead would
+retroactively erase entries that were live at the time — which is the precise error this
+feature exists to expose in systems that UPDATE their ledgers.
+
+`account_period_balance` cannot answer this and is not asked to. It is a mutable rollup
+holding where each account stands NOW; there is no version of it from April. Every query
+here reads `journal_line` directly, which is slower and is the only thing that is true.
+
+`whatChanged` returns the account deltas AND the entries responsible, each classified
+`REVERSAL` / `BACKDATED` / `LATER` and carrying the poster's name through `audit_actor`
+(0016) — `app_user` is global and stays unreadable by `emil_app`, so the SECURITY DEFINER
+function resolves a name only for a member of this tenant. BACKDATED is the one worth a
+person's attention: an entry *dated* inside the examined period but *posted* after that
+period's figures were read. `lockMoments` reads `financial_event_log` for `PERIOD_LOCKED`
+/ `PERIOD_UNLOCKED` / `YEAR_END_CLOSED` so the screen can offer *"since you locked March
+— 05/04/2026"*; a feature that asks a shopkeeper for a timestamp is a feature nobody uses.
+
+`isoInstant` (contracts) accepts a bare `YYYY-MM-DD` and means **midnight in
+Asia/Kuala_Lumpur**, not midnight UTC — an eight-hour slip would move a whole evening's
+trading across the boundary. Malaysia has observed UTC+8 without daylight saving since
+1982, so the fixed offset is exact.
+
+⚠️ **The honest limit: this reconstructs the GENERAL LEDGER, not sub-ledger documents.**
+Invoice statuses, stock levels, contact details and prices are mutable rows and are NOT
+travelled back; the audit log answers those one record at a time. Saying "the books as at
+March" while silently meaning "the trial balance" would be exactly the overclaim this
+register exists to prevent. **Unblocker for the fuller version: temporal (system-versioned)
+history on the mutable tables — a `*_history` table written by trigger — which is a real
+schema commitment and should be taken deliberately, not inherited from this slice.**
+
 ### 5.2 Serial number tracking — BUILT (`0028`, `packages/domain/src/serials.ts`)
 
 `stock_unit` rides on the movement log: each unit points at the movement that brought it

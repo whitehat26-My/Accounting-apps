@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { isoDate, uuid } from '@emil/contracts';
+import { isoDate, isoInstant, uuid } from '@emil/contracts';
 import {
   toCsv,
   type CashFlowStatement,
@@ -33,6 +33,9 @@ import {
   stockAgeing,
   freeCash,
   fraudWatch,
+  booksAsAt,
+  whatChanged,
+  lockMoments,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
@@ -306,6 +309,122 @@ export class ReportsController {
     return withTenant(this.sql, ctx, (tx) =>
       repairProfitability(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
     );
+  }
+
+  // ---- The time machine ---------------------------------------------------
+
+  /**
+   * The books as they stood at a past instant.
+   *
+   * Not a reconstruction: the ledger is append-only, so this is one predicate
+   * over rows that still exist — see `packages/domain/src/time-machine.ts`.
+   * The optional `from`/`to` restrict it to entries DATED in a window, which
+   * is how you ask "March, as March was reported".
+   */
+  @Requires('report.read')
+  @Get('reports/books-as-at')
+  async booksAsAtReport(
+    @Query('asAt') asAt: string,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    const books = await withTenant(this.sql, ctx, (tx) =>
+      booksAsAt(tx, ctx, { asAt: parse(isoInstant, asAt), ...window_(from, to) }),
+    );
+    return { ...books, balances: books.balances.map(renderBalance) };
+  }
+
+  /**
+   * What moved between two instants, and who moved it.
+   *
+   * The question this whole feature exists for: "I closed March on 5 April and
+   * the figure is different now — what changed?" No other package for a shop
+   * this size answers it, because answering it requires a ledger that was
+   * never edited.
+   */
+  @Requires('report.read')
+  @Get('reports/what-changed')
+  async whatChangedReport(
+    @Query('since') since: string,
+    @Query('until') until: string | undefined,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    const diff = await withTenant(this.sql, ctx, (tx) =>
+      whatChanged(tx, ctx, {
+        since: parse(isoInstant, since),
+        // Defaulting `until` to now is the common case — "since I closed it,
+        // what has happened" — and saves the caller stamping a clock.
+        until: until === undefined ? new Date().toISOString() : parse(isoInstant, until),
+        ...window_(from, to),
+      }),
+    );
+    return {
+      ...diff,
+      changes: diff.changes.map((c) => ({
+        accountId: c.accountId,
+        code: c.code,
+        name: c.name,
+        before: c.before.toDecimalString(),
+        after: c.after.toDecimalString(),
+        delta: c.delta.toDecimalString(),
+      })),
+    };
+  }
+
+  @Requires('report.read')
+  @Get('reports/what-changed/csv')
+  async whatChangedCsv(
+    @Query('since') since: string,
+    @Query('until') until: string | undefined,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const diff = await withTenant(this.sql, ctx, (tx) =>
+      whatChanged(tx, ctx, {
+        since: parse(isoInstant, since),
+        until: until === undefined ? new Date().toISOString() : parse(isoInstant, until),
+        ...window_(from, to),
+      }),
+    );
+    send(
+      reply,
+      `what-changed-since-${diff.since.slice(0, 10)}.csv`,
+      toCsv([
+        ['Account', 'Name', 'Before (RM)', 'After (RM)', 'Change (RM)'],
+        ...diff.changes.map((c) => [
+          c.code, c.name,
+          c.before.toDecimalString(), c.after.toDecimalString(), c.delta.toDecimalString(),
+        ]),
+        [],
+        // The entries responsible go in the SAME file. Two downloads to answer
+        // one question is how the second one gets lost.
+        ['Entry', 'Dated', 'Posted', 'Why', 'Posted by', 'Source', 'Description'],
+        ...diff.entries.map((e) => [
+          e.entryNo, display(e.entryDate), e.postedAt, e.kind,
+          e.postedByName ?? 'unknown', e.sourceModule, e.description ?? '',
+        ]),
+      ]),
+    );
+  }
+
+  /**
+   * The instants worth comparing against — when periods were locked, unlocked
+   * or closed. Without these the screen asks for a timestamp, and nobody knows
+   * theirs.
+   */
+  @Requires('report.read')
+  @Get('reports/lock-moments')
+  async lockMomentsReport(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { moments: await withTenant(this.sql, ctx, (tx) => lockMoments(tx, ctx)) };
   }
 
   @Requires('report.read')
@@ -695,6 +814,34 @@ function cashFlowCsv(statement: CashFlowStatement, reconciles: boolean): string 
 
 function label(activity: string): string {
   return activity.charAt(0) + activity.slice(1).toLowerCase() + ' activities';
+}
+
+/**
+ * The optional accounting-date window for the time machine.
+ *
+ * Absent means "the whole ledger". `exactOptionalPropertyTypes` is on, so an
+ * explicit `undefined` is not the same as an omitted key — the spread form is
+ * what keeps the two apart.
+ */
+function window_(from: string | undefined, to: string | undefined) {
+  return {
+    ...(from !== undefined && from !== '' ? { from: parse(isoDate, from) } : {}),
+    ...(to !== undefined && to !== '' ? { to: parse(isoDate, to) } : {}),
+  };
+}
+
+function renderBalance(balance: {
+  accountId: string;
+  code: string;
+  name: string;
+  balance: { toDecimalString(): string };
+}) {
+  return {
+    accountId: balance.accountId,
+    code: balance.code,
+    name: balance.name,
+    balance: balance.balance.toDecimalString(),
+  };
 }
 
 function display(iso: string): string {

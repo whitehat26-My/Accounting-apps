@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiBlobUrl } from '@/lib/api';
-import { rm, todayIso } from '@/lib/display';
+import { displayDate, rm, todayIso } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
 
@@ -379,7 +379,209 @@ export default function ReportsPage() {
           <Loading />
         )}
       </Card>
+
+      <TimeMachineCard from={from} to={to} onExport={exportCsv} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The time machine
+// ---------------------------------------------------------------------------
+
+interface LockMoment {
+  eventType: string;
+  occurredAt: string;
+  periodLabel: string | null;
+  actorName: string | null;
+}
+
+interface Changed {
+  since: string;
+  until: string;
+  unchanged: boolean;
+  changes: { accountId: string; code: string; name: string; before: string; after: string; delta: string }[];
+  entries: {
+    entryNo: string;
+    entryDate: string;
+    postedAt: string;
+    description: string | null;
+    sourceModule: string;
+    postedByName: string | null;
+    kind: 'REVERSAL' | 'BACKDATED' | 'LATER';
+  }[];
+}
+
+const KIND: Record<Changed['entries'][number]['kind'], { band: string; label: string }> = {
+  BACKDATED: {
+    band: 'bg-amber-100 text-amber-900',
+    // The one worth a person's attention, so it is the one that gets a colour.
+    label: 'Backdated into this period',
+  },
+  REVERSAL: { band: 'bg-slate-100 text-slate-700', label: 'Reversal' },
+  LATER: { band: 'bg-slate-100 text-slate-600', label: 'Later trading' },
+};
+
+/**
+ * "I closed March on 5 April. It is September and the figure is different.
+ * What changed, and who changed it?"
+ *
+ * The ledger here is append-only, so the answer is exact rather than
+ * reconstructed — nothing was ever edited, so the books at any past instant
+ * are still sitting there. The screen's only real job is to stop asking for a
+ * timestamp: nobody knows theirs, so the moments a period was locked or closed
+ * are offered by name.
+ */
+function TimeMachineCard({
+  from,
+  to,
+  onExport,
+}: {
+  from: string;
+  to: string;
+  onExport: (path: string, filename: string) => Promise<void>;
+}) {
+  const [since, setSince] = useState<string>('');
+
+  const moments = useQuery({
+    queryKey: ['lock-moments'],
+    queryFn: () => api<{ moments: LockMoment[] }>('/v1/reports/lock-moments'),
+  });
+
+  const diff = useQuery({
+    queryKey: ['what-changed', since, from, to],
+    enabled: since !== '',
+    queryFn: () =>
+      api<Changed>(
+        `/v1/reports/what-changed?since=${encodeURIComponent(since)}&from=${from}&to=${to}`,
+      ),
+  });
+
+  const presets = moments.data?.moments ?? [];
+
+  return (
+    <Card title="What changed since you closed the books">
+      <div className="space-y-3">
+        <p className="text-sm text-slate-600">
+          Pick the moment you last read these figures. Anything posted since then is listed
+          below with the person who posted it — including entries <em>dated</em> inside this
+          period but keyed afterwards, which is how a month you already reported quietly
+          changes.
+        </p>
+
+        <div className="flex flex-wrap items-end gap-2">
+          <Field label="Since">
+            <select
+              className="rounded-lg border-0 bg-white px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-slate-300"
+              value={since}
+              onChange={(e) => setSince(e.target.value)}
+            >
+              <option value="">Choose a moment…</option>
+              {presets.map((m) => (
+                <option key={m.occurredAt} value={m.occurredAt}>
+                  {m.eventType === 'PERIOD_LOCKED'
+                    ? 'Since you locked'
+                    : m.eventType === 'PERIOD_UNLOCKED'
+                      ? 'Since you unlocked'
+                      : 'Since year-end close'}
+                  {m.periodLabel ? ` ${m.periodLabel}` : ''} —{' '}
+                  {displayDate(m.occurredAt.slice(0, 10))}
+                  {m.actorName ? ` (${m.actorName})` : ''}
+                </option>
+              ))}
+              {/* Always available, so the card is useful before the first lock. */}
+              <option value={`${from}T00:00:00+08:00`}>
+                Since the start of this period — {displayDate(from)}
+              </option>
+            </select>
+          </Field>
+          {since !== '' && diff.data && !diff.data.unchanged ? (
+            <Button
+              variant="ghost"
+              onClick={() =>
+                void onExport(
+                  `/v1/reports/what-changed/csv?since=${encodeURIComponent(since)}&from=${from}&to=${to}`,
+                  `what-changed-${from}-to-${to}.csv`,
+                )
+              }
+            >
+              CSV
+            </Button>
+          ) : null}
+        </div>
+
+        {since === '' ? null : diff.isPending ? (
+          <Loading />
+        ) : diff.data?.unchanged ? (
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
+            Nothing has changed since then. The figures you reported are still the figures in
+            the books.
+          </p>
+        ) : diff.data ? (
+          <div className="space-y-4">
+            <div className="overflow-x-auto text-sm">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-1 text-right text-xs text-slate-500">
+                <span className="text-left">Account</span>
+                <span>As you read it</span>
+                <span>Now</span>
+                <span>Change</span>
+              </div>
+              {diff.data.changes.map((c) => (
+                <div
+                  key={c.accountId}
+                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-slate-50 py-1 text-right"
+                >
+                  <span className="text-left">
+                    <span className="font-mono text-xs text-slate-400">{c.code}</span> {c.name}
+                  </span>
+                  <span className="whitespace-nowrap text-slate-500">{rm(c.before)}</span>
+                  <span className="whitespace-nowrap">{rm(c.after)}</span>
+                  <span
+                    className={`whitespace-nowrap font-medium ${
+                      c.delta.startsWith('-') ? 'text-red-700' : 'text-emerald-700'
+                    }`}
+                  >
+                    {rm(c.delta)}
+                  </span>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-1">
+              <p className="text-xs font-semibold uppercase text-slate-400">
+                The entries responsible
+              </p>
+              {diff.data.entries.map((e) => (
+                <div
+                  key={e.entryNo}
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-50 py-1.5 text-sm"
+                >
+                  <span className="font-mono text-xs text-slate-500">{e.entryNo}</span>
+                  <span className="flex-1">{e.description ?? '—'}</span>
+                  <span className="text-xs text-slate-500">
+                    dated {displayDate(e.entryDate)} · posted{' '}
+                    {displayDate(e.postedAt.slice(0, 10))} by {e.postedByName ?? 'unknown'}
+                  </span>
+                  <span
+                    className={`rounded-full px-2 py-0.5 text-xs font-medium ${KIND[e.kind].band}`}
+                  >
+                    {KIND[e.kind].label}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
+        <ErrorNote error={diff.error} />
+
+        <p className="text-xs text-slate-500">
+          This reconstructs the <strong>general ledger</strong>. Invoice statuses, stock
+          levels and contact details change in place and are not travelled back — the audit
+          trail answers those one record at a time.
+        </p>
+      </div>
+    </Card>
   );
 }
 

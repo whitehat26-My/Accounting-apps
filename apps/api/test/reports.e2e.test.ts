@@ -651,3 +651,129 @@ describe('customer statements', () => {
     expect(response.status).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The time machine
+// ---------------------------------------------------------------------------
+
+/*
+ * Deliberately the LAST describe in this file. It posts an entry backdated
+ * into a month the earlier suites make assertions about, and running it first
+ * would move figures under tests that have nothing to do with it — which is,
+ * with some irony, the exact defect this feature exists to surface.
+ */
+describe('the time machine', () => {
+  it('reconstructs an instant, then names what changed and who', async () => {
+    const closedAt = new Date().toISOString();
+
+    const asRead = await call(api, {
+      method: 'GET',
+      ...as(`/v1/reports/books-as-at?asAt=${closedAt}&from=2026-03-01&to=2026-03-31`),
+    });
+    expect(asRead.status).toBe(200);
+    const marchAsRead = (asRead.body['balances'] as { code: string; balance: string }[]).find(
+      (b) => b.code === '4000',
+    )!;
+    // Money crosses the wire as a decimal STRING (rule 2).
+    expect(typeof marchAsRead.balance).toBe('string');
+    expect(marchAsRead.balance).toBe('-30000.0000');
+
+    // Somebody finds an invoice in a drawer and posts it into closed March.
+    await journal('2026-03-25', 'Invoice found in the drawer', [
+      ['1100', 'DEBIT', '2500.00'],
+      ['4000', 'CREDIT', '2500.00'],
+    ]);
+
+    // The earlier instant is unmoved — that is the whole claim.
+    const stillAsRead = await call(api, {
+      method: 'GET',
+      ...as(`/v1/reports/books-as-at?asAt=${closedAt}&from=2026-03-01&to=2026-03-31`),
+    });
+    expect(
+      (stillAsRead.body['balances'] as { code: string; balance: string }[]).find(
+        (b) => b.code === '4000',
+      )!.balance,
+    ).toBe('-30000.0000');
+
+    const diff = await call(api, {
+      method: 'GET',
+      ...as(`/v1/reports/what-changed?since=${closedAt}&from=2026-03-01&to=2026-03-31`),
+    });
+    expect(diff.status).toBe(200);
+    expect(diff.body['unchanged']).toBe(false);
+
+    const revenue = (diff.body['changes'] as { code: string; delta: string }[]).find(
+      (c) => c.code === '4000',
+    )!;
+    expect(revenue.delta).toBe('-2500.0000');
+
+    const entries = diff.body['entries'] as {
+      description: string; kind: string; postedByName: string | null;
+    }[];
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.description).toBe('Invoice found in the drawer');
+    expect(entries[0]!.kind).toBe('BACKDATED');
+    // The half of the answer that matters. `makeUser` creates a real member,
+    // so `audit_actor` resolves the name rather than returning null.
+    expect(entries[0]!.postedByName).not.toBeNull();
+  });
+
+  it('says nothing changed rather than returning an empty table to interpret', async () => {
+    const now = new Date().toISOString();
+    const diff = await call(api, {
+      method: 'GET',
+      ...as(`/v1/reports/what-changed?since=${now}&until=${now}`),
+    });
+    expect(diff.status).toBe(200);
+    expect(diff.body['unchanged']).toBe(true);
+  });
+
+  it('accepts a bare date as midnight in Kuala Lumpur, and refuses nonsense', async () => {
+    const ok = await call(api, {
+      method: 'GET',
+      ...as('/v1/reports/books-as-at?asAt=2026-04-01'),
+    });
+    expect(ok.status).toBe(200);
+    // Midnight KL on 1 April, so March's entries are in and April's are not:
+    // an eight-hour slip to midnight UTC would land inside 31 March instead.
+    expect(ok.body['asAt']).toBe('2026-04-01T00:00:00+08:00');
+
+    const bad = await call(api, {
+      method: 'GET',
+      ...as('/v1/reports/books-as-at?asAt=last%20Tuesday'),
+    });
+    expect(bad.status).toBe(422);
+  });
+
+  it('offers the lock moments the screen presets itself from', async () => {
+    const response = await call(api, { method: 'GET', ...as('/v1/reports/lock-moments') });
+    expect(response.status).toBe(200);
+    expect(Array.isArray(response.body['moments'])).toBe(true);
+  });
+
+  it('exports the diff and the entries responsible in ONE file, and refuses SALES', async () => {
+    const csv = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/what-changed/csv?since=2026-01-01&from=2026-03-01&to=2026-03-31'),
+    });
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-type']).toContain('text/csv');
+    expect(csv.headers['x-content-type-options']).toBe('nosniff');
+    expect(csv.body).toContain('Change (RM)');
+    expect(csv.body).toContain('Posted by');
+    expect(csv.body).toContain('Invoice found in the drawer');
+
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    for (const url of [
+      '/v1/reports/books-as-at?asAt=2026-04-01',
+      '/v1/reports/what-changed?since=2026-01-01',
+      '/v1/reports/lock-moments',
+    ]) {
+      const refused = await call(api, {
+        method: 'GET', url, token: accessToken, tenantId: tenant.tenantId,
+      });
+      expect(refused.status, url).toBe(403);
+    }
+  });
+});

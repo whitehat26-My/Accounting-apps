@@ -33,6 +33,7 @@ export * from './insights.js';
 export * from './compliance.js';
 export * from './free-cash.js';
 export * from './fraud-watch.js';
+export * from './time-machine.js';
 export * from './reconciliation.js';
 export * from './rbac.js';
 export * from './approval.js';
