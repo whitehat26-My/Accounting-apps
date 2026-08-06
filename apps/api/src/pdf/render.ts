@@ -11,6 +11,7 @@ import type {
   ReceiptDocument,
   RepairDocument,
   RepairEvidencePhoto,
+  WarrantyCard,
 } from '@emil/db';
 
 /**
@@ -2040,5 +2041,120 @@ export function renderRepairReportPdf(
       );
     },
     { footNote: 'Repair job report — keep with your receipt for any warranty claim.' },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The warranty card
+// ---------------------------------------------------------------------------
+
+/**
+ * THE CARD THAT ANSWERS "IS IT STILL UNDER WARRANTY?"
+ *
+ * ---------------------------------------------------------------------------
+ * IT STATES THE PROMISE. IT DOES NOT INVENT THE TERMS.
+ *
+ * Everything printed here is something the system actually knows: this unit,
+ * this item, sold on this date by this shop, covered until this one. What the
+ * warranty COVERS — manufacturing defects, what voids it, whether labour is
+ * included — is a commercial and legal matter this software has no knowledge
+ * of, and a card that filled that space with plausible boilerplate would be
+ * handing customers terms nobody in the shop had agreed to. The card says so
+ * in a line and points at the shop, which is the honest version.
+ *
+ * The cover dates are set LARGE and the status is a coloured band, because a
+ * card is read in one glance across a counter by somebody who wants one fact.
+ * An expired card says EXPIRED rather than quietly printing a past date and
+ * leaving the reader to do the arithmetic.
+ * ---------------------------------------------------------------------------
+ */
+const PROMISE_BANDS: Record<string, { fill: string; ink: string; says: string }> = {
+  ACTIVE: { fill: '#ecfdf5', ink: '#065f46', says: 'IN WARRANTY' },
+  EXPIRING_SOON: { fill: '#fffbeb', ink: '#92400e', says: 'IN WARRANTY — ENDING SOON' },
+  EXPIRED: { fill: '#f4f4f5', ink: '#52525b', says: 'WARRANTY ENDED' },
+};
+
+export function renderWarrantyCardPdf(
+  card: WarrantyCard,
+  verification?: DocumentVerification,
+): Promise<Buffer> {
+  return build(
+    (pdf) => {
+      reportHeader(pdf, card.seller, 'WARRANTY CARD', [
+        ['Serial', card.serialNo],
+        ['Sold', displayDate(card.soldOn)],
+      ]);
+
+      const band = PROMISE_BANDS[card.status] ?? PROMISE_BANDS['EXPIRED']!;
+      const top = pdf.y + 4;
+      pdf.rect(MARGIN, top, 495, 66).fill(band.fill);
+      pdf.fillColor(band.ink).font('Helvetica-Bold').fontSize(10);
+      pdf.text(band.says, MARGIN + 16, top + 12, { width: 463, lineBreak: false });
+
+      // The one fact somebody crossed the shop to find out.
+      pdf.font('Helvetica').fontSize(9).fillColor(band.ink);
+      pdf.text(
+        card.status === 'EXPIRED' ? 'Cover ended' : 'Covered until',
+        MARGIN + 16,
+        top + 30,
+        { width: 200, lineBreak: false },
+      );
+      pdf.font('Helvetica-Bold').fontSize(20);
+      pdf.text(displayDate(card.expiresOn), MARGIN + 16, top + 40, {
+        width: 300,
+        lineBreak: false,
+      });
+      pdf.font('Helvetica').fontSize(9);
+      pdf.text(
+        `${card.warrantyMonths} months from ${displayDate(card.soldOn)}`,
+        320,
+        top + 45,
+        { width: 159, align: 'right', lineBreak: false },
+      );
+      pdf.fillColor('#000000');
+      pdf.y = top + 82;
+
+      pair(pdf, 'Item', `${card.itemName} (${card.itemCode})`);
+      pair(pdf, 'Serial number', card.serialNo);
+      if (card.customerName) pair(pdf, 'Sold to', card.customerName);
+      if (card.invoiceNo) pair(pdf, 'On invoice', card.invoiceNo);
+      /*
+       * Prior repairs are printed rather than hidden. A customer bringing the
+       * same machine back for the third time is the customer most likely to be
+       * told "we have no record of that", and the count is the shop's own
+       * record answering before anybody has to argue.
+       */
+      if (card.claims > 0) {
+        pair(
+          pdf,
+          'Repairs so far',
+          card.claims === 1
+            ? '1 job booked in against this serial since it was sold'
+            : `${card.claims} jobs booked in against this serial since it was sold`,
+        );
+      }
+      pdf.moveDown(1);
+
+      const noteTop = pdf.y;
+      pdf.rect(MARGIN, noteTop, 495, 78).fillAndStroke('#fafafa', '#e4e4e7');
+      pdf.fillColor('#3f3f46').font('Helvetica').fontSize(8);
+      pdf.text(
+        'This card records WHEN the cover runs, which is what this shop’s records can ' +
+          'establish. What the warranty covers — and what would void it — is the ' +
+          'manufacturer’s and this shop’s to state, and is not reproduced here rather than ' +
+          'guessed at: ask at the counter, quoting the serial above.\n\n' +
+          'Bring this card, or the invoice, when you make a claim. The reference below is ' +
+          'checkable by anyone, so a replacement card can always be printed against the ' +
+          'same sale.',
+        MARGIN + 12,
+        noteTop + 10,
+        { width: 471, lineGap: 1.5 },
+      );
+      pdf.fillColor('#000000').fontSize(9);
+      pdf.y = noteTop + 86;
+
+      if (verification) verificationBlock(pdf, verification);
+    },
+    { footNote: 'Warranty card — keep with your invoice.' },
   );
 }

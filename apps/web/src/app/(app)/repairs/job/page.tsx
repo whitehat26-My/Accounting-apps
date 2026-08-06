@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
-import { api, apiBlobUrl } from '@/lib/api';
+import { api, apiBlobUrl, apiDownload } from '@/lib/api';
 import { displayDate, qty, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 import { RepairPhotos } from '@/components/repair-photos';
@@ -363,7 +363,7 @@ function WarrantyLine({ serialNo }: { serialNo: string }) {
 
   const covered = promise.status !== 'EXPIRED';
   return (
-    <p
+    <div
       className={`mt-3 rounded-lg px-3 py-2 text-sm ring-1 ring-inset ${
         covered
           ? 'bg-emerald-50 text-emerald-900 ring-emerald-200'
@@ -381,6 +381,24 @@ function WarrantyLine({ serialNo }: { serialNo: string }) {
           but the promise has run out.
         </>
       )}
-    </p>
+      {/*
+        Printed from HERE, not only from Stock. This is where somebody is
+        standing with the device in their hands and the question in the air;
+        making them navigate to another screen to print the answer is how a
+        feature ends up unused.
+      */}
+      <button
+        type="button"
+        className="ml-2 underline underline-offset-2"
+        onClick={() =>
+          void apiDownload(
+            `/v1/stock/warranties/${encodeURIComponent(serialNo)}/card.pdf`,
+            `warranty-${serialNo}.pdf`,
+          ).catch((e: Error) => window.alert(e.message))
+        }
+      >
+        Print the card
+      </button>
+    </div>
   );
 }

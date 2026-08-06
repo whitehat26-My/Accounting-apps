@@ -2,7 +2,9 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   accessTokenFor,
   call,
+  callRaw,
   createTestApi,
+  pdfText,
   makeUser,
   seedTenant,
   type TestApi,
@@ -206,5 +208,95 @@ describe('the promises register', () => {
     // exactly who needs this, and it exposes no figure a till user cannot
     // already see on the invoice they raised.
     expect(response.status).toBe(200);
+  });
+});
+
+/**
+ * The card the customer keeps.
+ *
+ * The register and the JSON lookup answer a screen; this answers the phone
+ * call. Everything asserted here is a fact the system already holds — the
+ * card deliberately states no warranty TERMS, because those are the shop's
+ * and the manufacturer's to state and plausible boilerplate would be worse
+ * than a pointer to the counter.
+ */
+describe('the printed warranty card', () => {
+  it('prints the promise, and says plainly what it does not state', async () => {
+    const raw = await callRaw(api, {
+      method: 'GET',
+      // Lowercase, as somebody types it off the back of a machine.
+      ...as('/v1/stock/warranties/ax3-777/card.pdf'),
+    });
+
+    expect(raw.status).toBe(200);
+    expect(raw.headers['content-type']).toContain('application/pdf');
+    // The serial is the filename, so a folder of these sorts by the thing.
+    expect(raw.headers['content-disposition']).toContain('warranty-AX3-777.pdf');
+
+    const text = pdfText(raw.body);
+    expect(text).toContain('WARRANTY CARD');
+    expect(text).toContain('IN WARRANTY');
+    expect(text).toContain('AX3-777');
+    // The one fact somebody crossed the shop to find out.
+    expect(text).toContain('04/08/2028');
+    expect(text).toContain('24 months from 04/08/2026');
+    // And the honest limit, in words on the page.
+    expect(text).toMatch(/not reproduced here rather than.*guessed at/s);
+  });
+
+  it('is verifiable by anybody holding it', async () => {
+    const raw = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/stock/warranties/AX3-777/card.pdf'),
+    });
+    const digest = /([0-9a-f]{16})\s*([0-9a-f]{16})\s*([0-9a-f]{16})\s*([0-9a-f]{16})/
+      .exec(pdfText(raw.body));
+    expect(digest).not.toBeNull();
+
+    // No token, no tenant: the route a customer holding the card would use.
+    const verified = await call(api, {
+      method: 'POST',
+      url: '/public/verify',
+      body: { digest: digest!.slice(1, 5).join('') },
+    });
+    expect(verified.status).toBe(201);
+    expect(verified.body['verdict']).toBe('GENUINE');
+    expect(verified.body['documentType']).toBe('WARRANTY');
+  });
+
+  it('reprints the SAME card — the digest is the promise, not the printing', async () => {
+    /*
+     * A customer who loses the card gets an identical one, and the reference
+     * on it still matches. If the digest moved with each print, the old card
+     * in somebody's drawer would start failing verification for no reason
+     * anybody could explain.
+     */
+    const digestOf = async () => {
+      const raw = await callRaw(api, {
+        method: 'GET',
+        ...as('/v1/stock/warranties/AX3-777/card.pdf'),
+      });
+      return /([0-9a-f]{16})\s*([0-9a-f]{16})\s*([0-9a-f]{16})\s*([0-9a-f]{16})/
+        .exec(pdfText(raw.body))!.slice(1, 5).join('');
+    };
+    expect(await digestOf()).toBe(await digestOf());
+  });
+
+  it('refuses to print a card for a device this shop has no record of selling', async () => {
+    // The JSON route answers 200 with `promise: null` — a fine ANSWER for a
+    // screen. A DOCUMENT saying the same thing would be believed, so this is
+    // a 404 instead.
+    const unknown = await call(api, {
+      method: 'GET',
+      ...as('/v1/stock/warranties/SOMEONE-ELSES-99/card.pdf'),
+    });
+    expect(unknown.status).toBe(404);
+
+    // And the unit still on the shelf: sold to nobody, so owed to nobody.
+    const unsold = await call(api, {
+      method: 'GET',
+      ...as('/v1/stock/warranties/AX3-778/card.pdf'),
+    });
+    expect(unsold.status).toBe(404);
   });
 });

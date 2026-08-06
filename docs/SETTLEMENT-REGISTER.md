@@ -661,6 +661,54 @@ decide whether supplier bank details are stored at all — the same argument `00
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
 
+### 5.27 The warranty card — BUILT (`0049`)
+
+`GET /v1/stock/warranties/:serialNo/card.pdf` (`stock.read`),
+`packages/db/src/repair-document.ts`, `renderWarrantyCardPdf`.
+
+The promises register (§5.21) has always known what the shop still owes; the answer lived only
+on a screen behind a login. "Is it still under warranty?" is the phone call a computer shop
+gets most, and until now nobody on either end of it could hold the answer.
+
+**It states the promise. It does not invent the terms.** Everything on the card is something
+the system actually knows: this unit, this item, sold on this date by this shop, covered until
+this one. What the warranty COVERS — manufacturing defects, what voids it, whether labour is
+included — is commercial and legal, and this software has no knowledge of it. A card that
+filled that space with plausible boilerplate would hand customers terms nobody in the shop had
+agreed to, so it says in a line that the terms are the shop's and the manufacturer's, and
+points at the counter with the serial to quote. That empty space is the honest version.
+
+**Keyed on `stock_unit.id`, not on the invoice.** A promise belongs to one physical thing —
+two laptops on one invoice become two promises with two expiry dates the moment one is
+returned and replaced, and a card keyed on the invoice could not tell them apart. The promise
+itself is still derived and still stored nowhere; `0049` only widens
+`document_fingerprint.document_type`, so `verify_document_digest` answers for a card.
+
+**`status` and `claims` are excluded from the digest, and it matters more here than
+elsewhere.** Both move with time and use: a card printed on the day of sale reads ACTIVE with
+no claims, and eleven months later the same card reads EXPIRING_SOON with two repairs against
+it. Hashing either would make a genuine card stop verifying exactly when the customer most
+needs it — near the end of the cover, which is when somebody checks. What IS hashed is the
+promise, which cannot change without the sale being undone; a card for a unit that has since
+been returned correctly stops verifying. A test asserts two prints of the same card carry the
+SAME reference, because the one in a customer's drawer must not be invalidated by a reprint.
+
+**A serial with no promise is a 404, where the JSON route is a 200 with `promise: null`.** The
+difference is deliberate: "we have no record of selling this" is a fine ANSWER for a screen to
+show and a terrible DOCUMENT to hand somebody — a warranty card for a device nobody can show
+was sold here would be believed. The error code is `WARRANTY_NOT_FOUND` rather than
+`NO_PROMISE` so the existing `_NOT_FOUND$` mapping applies without teaching the exception
+filter another special case.
+
+**Prior repairs are printed rather than hidden.** A customer bringing the same machine back
+for the third time is the one most likely to be told "we have no record of that", and the
+count on the card is the shop's own record answering before anybody has to argue.
+
+Reachable from the promises register on Stock and from the warranty line on a repair job —
+the second because that is where somebody is standing with the device in their hands, and
+making them navigate elsewhere to print the answer is how a feature ends up unused. Offered
+on expired rows too: "when did cover run out" is a fair question.
+
 ### 5.26 Per-screen permission guard — BUILT (no migration)
 
 `apps/web/src/app/(app)/layout.tsx`, `apps/web/e2e/roles.spec.ts`.

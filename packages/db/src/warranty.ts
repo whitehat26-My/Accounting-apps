@@ -34,6 +34,12 @@ import { businessToday } from './internal.js';
  */
 
 export interface Promise_ {
+  /**
+   * The physical unit. A promise belongs to one THING, not to an invoice
+   * line — two laptops on one invoice are two promises the moment one is
+   * returned — so this is what the printed card is keyed and fingerprinted on.
+   */
+  readonly unitId: string;
   readonly serialNo: string;
   readonly itemId: string;
   readonly itemCode: string;
@@ -58,6 +64,7 @@ export interface PromisesRegister {
 }
 
 interface Row {
+  unit_id: string;
   serial_no: string;
   item_id: string;
   item_code: string;
@@ -93,7 +100,8 @@ export async function warrantyRegister(
   const today = options.today ?? businessToday();
 
   const rows = await tx<Row[]>`
-      SELECT u.serial_no, i.id AS item_id, i.code AS item_code, i.name AS item_name,
+      SELECT u.id AS unit_id, u.serial_no,
+             i.id AS item_id, i.code AS item_code, i.name AS item_name,
              i.warranty_months, c.name AS customer_name,
              inv.id AS invoice_id, inv.invoice_no, m.moved_on AS sold_on,
              (${tx.unsafe(CLAIMS)})::text AS claims
@@ -114,6 +122,7 @@ export async function warrantyRegister(
     const soldOn = r.sold_on.toISOString().slice(0, 10);
     const window = warrantyWindow(soldOn, r.warranty_months);
     return {
+      unitId: r.unit_id,
       serialNo: r.serial_no,
       itemId: r.item_id,
       itemCode: r.item_code,
@@ -146,6 +155,23 @@ export async function warrantyRegister(
  * than a 404. "We have no record of selling this" is a real answer to the
  * question, and one the person at the counter needs.
  */
+/**
+ * The same promise, found by the unit rather than by the serial.
+ *
+ * Exists because the fingerprint is keyed on `stock_unit.id`: a serial is
+ * unique per ITEM, not per tenant (0028), so two different products can carry
+ * the same manufacturer serial and only the unit id identifies one promise.
+ */
+export async function warrantyForUnit(
+  tx: Tx,
+  ctx: TenantContext,
+  unitId: string,
+  options: { readonly today?: string } = {},
+): Promise<Promise_ | null> {
+  const register = await warrantyRegister(tx, ctx, options);
+  return register.promises.find((p) => p.unitId === unitId) ?? null;
+}
+
 export async function warrantyForSerial(
   tx: Tx,
   ctx: TenantContext,

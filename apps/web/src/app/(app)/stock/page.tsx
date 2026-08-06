@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { api } from '@/lib/api';
+import { api, apiDownload } from '@/lib/api';
 import { displayDate, qty, rm, todayIso } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 
@@ -361,6 +361,7 @@ function PromisesCard() {
             <th className="pb-2 text-right">Covered until</th>
             <th className="pb-2 text-right">Repairs</th>
             <th className="pb-2 text-right"></th>
+            <th className="pb-2 text-right"></th>
           </tr>
         </thead>
         <tbody>
@@ -387,6 +388,26 @@ function PromisesCard() {
                 >
                   {p.status === 'EXPIRING_SOON' ? 'ENDING SOON' : p.status}
                 </span>
+              </td>
+              {/*
+                Offered on EXPIRED rows too. A customer who lost the card and
+                wants to know when cover ran out is asking a fair question, and
+                the card answers it in words rather than leaving them to work
+                it out from an invoice date.
+              */}
+              <td className="py-2 text-right">
+                <button
+                  type="button"
+                  className="text-xs text-emerald-700 underline-offset-2 hover:underline"
+                  onClick={() =>
+                    void apiDownload(
+                      `/v1/stock/warranties/${encodeURIComponent(p.serialNo)}/card.pdf`,
+                      `warranty-${p.serialNo}.pdf`,
+                    ).catch((e: Error) => window.alert(e.message))
+                  }
+                >
+                  Card
+                </button>
               </td>
             </tr>
           ))}

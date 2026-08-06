@@ -2,6 +2,8 @@ import { Money } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { toIsoDate } from './internal.js';
 import { sellerBlock, type SellerBlock } from './document-data.js';
+import { warrantyForSerial, warrantyForUnit, type Promise_ } from './warranty.js';
+import type { PromiseStatus } from '@emil/domain';
 
 /**
  * Everything the two printed repair documents need, in one read.
@@ -191,5 +193,99 @@ export async function repairDocumentData(
     invoiceNo: job.invoice_no,
     photos: evidence.filter((r) => r.kind === 'PHOTO').map(toEvidence),
     signatures: evidence.filter((r) => r.kind === 'SIGNATURE').map(toEvidence),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// The warranty card
+// ---------------------------------------------------------------------------
+
+/**
+ * The promise on one unit, ready to print.
+ *
+ * Lives beside the repair documents rather than in `warranty.ts` for the same
+ * reason `document-data.ts` exists at all: `warranty.ts` owns the register —
+ * what the shop still owes, across everything — and a card is a presentation
+ * of one row of it plus the letterhead. Keeping the seller block out of the
+ * register keeps the register free of anything a screen does not need.
+ */
+export interface WarrantyCard {
+  readonly seller: SellerBlock;
+  readonly unitId: string;
+  readonly serialNo: string;
+  readonly itemCode: string;
+  readonly itemName: string;
+  readonly customerName: string | null;
+  readonly invoiceNo: string | null;
+  readonly soldOn: string;
+  readonly expiresOn: string;
+  readonly warrantyMonths: number;
+  readonly status: PromiseStatus;
+  /** Repair jobs booked against this serial since the sale. */
+  readonly claims: number;
+}
+
+/**
+ * `WARRANTY_NOT_FOUND` rather than `NO_PROMISE`: the exception filter maps any
+ * code ending `_NOT_FOUND` to 404, and following that convention is better
+ * than teaching the filter one more special case.
+ */
+export class WarrantyCardError extends Error {
+  constructor(readonly code: 'WARRANTY_NOT_FOUND', message: string) {
+    super(message);
+    this.name = 'WarrantyCardError';
+  }
+}
+
+/**
+ * By serial, because that is what somebody reads off the back of a machine.
+ *
+ * Refuses rather than printing an empty card when this shop has no promise on
+ * the serial — a warranty card for a device nobody can show was sold here is
+ * a document that would be believed, and it should not exist.
+ */
+export async function warrantyCardData(
+  tx: Tx,
+  ctx: TenantContext,
+  serialNo: string,
+): Promise<WarrantyCard> {
+  const found = await warrantyForSerial(tx, ctx, serialNo);
+  if (!found.promise) {
+    throw new WarrantyCardError(
+      'WARRANTY_NOT_FOUND',
+      `No warranty on serial ${found.serialNo}: this shop has no record of selling it, ` +
+        'or the item it belongs to carries no warranty period.',
+    );
+  }
+  return cardOf(await sellerBlock(tx, ctx), found.promise);
+}
+
+/** By unit, for the fingerprint — see the note on `Promise_.unitId`. */
+export async function warrantyCardForUnit(
+  tx: Tx,
+  ctx: TenantContext,
+  unitId: string,
+): Promise<WarrantyCard> {
+  const promise = await warrantyForUnit(tx, ctx, unitId);
+  if (!promise) {
+    throw new WarrantyCardError('WARRANTY_NOT_FOUND', `No warranty on unit ${unitId}`);
+  }
+  return cardOf(await sellerBlock(tx, ctx), promise);
+}
+
+function cardOf(seller: SellerBlock, promise: Promise_): WarrantyCard {
+  return {
+    seller,
+    unitId: promise.unitId,
+    serialNo: promise.serialNo,
+    itemCode: promise.itemCode,
+    itemName: promise.itemName,
+    customerName: promise.customerName,
+    invoiceNo: promise.invoiceNo,
+    soldOn: promise.soldOn,
+    expiresOn: promise.expiresOn,
+    warrantyMonths: promise.warrantyMonths,
+    status: promise.status,
+    claims: promise.claims,
   };
 }

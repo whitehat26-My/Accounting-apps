@@ -1,6 +1,6 @@
 import type { Sql, TenantContext, Tx } from './client.js';
 import { invoiceDocumentData, receiptDocumentData } from './document-data.js';
-import { repairDocumentData } from './repair-document.js';
+import { repairDocumentData, warrantyCardForUnit } from './repair-document.js';
 import { hashDocument } from './proof.js';
 
 /**
@@ -24,7 +24,7 @@ import { hashDocument } from './proof.js';
  * ---------------------------------------------------------------------------
  */
 
-export type DocumentType = 'INVOICE' | 'RECEIPT' | 'REPAIR_JOB';
+export type DocumentType = 'INVOICE' | 'RECEIPT' | 'REPAIR_JOB' | 'WARRANTY';
 
 /**
  * What `verify_document_digest` can answer for.
@@ -63,7 +63,9 @@ export async function fingerprintDocument(
       ? await invoiceFingerprint(tx, ctx, documentId)
       : documentType === 'RECEIPT'
         ? await receiptFingerprint(tx, ctx, documentId)
-        : await repairFingerprint(tx, ctx, documentId);
+        : documentType === 'REPAIR_JOB'
+          ? await repairFingerprint(tx, ctx, documentId)
+          : await warrantyFingerprint(tx, ctx, documentId);
 
   /*
    * ON CONFLICT DO NOTHING, then read back. Re-rendering the same invoice
@@ -132,6 +134,35 @@ async function repairFingerprint(tx: Tx, ctx: TenantContext, id: string) {
       })),
     }),
     issuedOn: document.collectedOn ?? document.receivedOn,
+  };
+}
+
+/**
+ * A warranty card, hashed over the promise it states.
+ *
+ * ---------------------------------------------------------------------------
+ * `status` AND `claims` ARE EXCLUDED, AND THAT MATTERS MORE HERE THAN ELSEWHERE.
+ *
+ * Both move with time and use: a card printed on the day of sale reads ACTIVE
+ * and shows no claims, and eleven months later the same card reads
+ * EXPIRING_SOON with two repairs against it. If either were in the digest, a
+ * genuine card would stop verifying the moment the customer most needs it —
+ * near the end of the cover, which is exactly when somebody checks.
+ *
+ * What IS hashed is the promise: this unit, this item, sold on this date,
+ * covered until this one. Those cannot change without the sale itself being
+ * undone, and a card for a unit that has since been returned should stop
+ * verifying — the promise it states no longer exists.
+ * ---------------------------------------------------------------------------
+ */
+async function warrantyFingerprint(tx: Tx, ctx: TenantContext, unitId: string) {
+  const card = await warrantyCardForUnit(tx, ctx, unitId);
+  const { status, claims, seller, ...promise } = card;
+  void status;
+  void claims;
+  return {
+    digest: hashDocument({ ...promise, seller: seller.name }),
+    issuedOn: card.soldOn,
   };
 }
 
