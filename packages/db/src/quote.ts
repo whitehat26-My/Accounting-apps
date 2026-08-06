@@ -72,6 +72,8 @@ export interface QuoteView {
     readonly unitPrice: string;
     readonly itemId: string | null;
     readonly discountBasisPoints: number;
+    /** quantity x price, less this line's discount. Presentation only. */
+    readonly lineTotal: string;
   }[];
 }
 
@@ -435,6 +437,7 @@ function toView(q: QuoteRow, lines: LineRow[], today: string): QuoteView {
       unitPrice: l.unit_price,
       itemId: l.item_id,
       discountBasisPoints: l.discount_basis_points,
+      lineTotal: lineTotalOf(l, q.currency).toDecimalString(),
     })),
   };
 }
@@ -462,24 +465,36 @@ function toView(q: QuoteRow, lines: LineRow[], today: string): QuoteView {
  */
 function subtotalOf(lines: LineRow[], currency: string): string {
   let total = Money.zero(currency as Parameters<typeof Money.zero>[0]);
-  for (const l of lines) {
-    const quantityUnits = quantityToUnits(l.quantity);
-    if (quantityUnits === null) {
-      // A quantity the database holds but this cannot parse is a bug, not a
-      // rounding question, and a silently-skipped line would understate a
-      // customer-facing figure.
-      throw new QuoteError(
-        'INVALID_LINES',
-        `Quote line ${l.line_no} has an unreadable quantity (${l.quantity}).`,
-      );
-    }
-    const price = Money.fromDecimal(l.unit_price, total.currency);
-    // quantity is scaled by 10^4, so dividing by that is the ratio, not a fudge.
-    const gross = price.multiplyRatio(quantityUnits, 10_000n);
-    const discount = gross.multiplyRatio(BigInt(l.discount_basis_points), 10_000n);
-    total = total.add(gross.subtract(discount));
-  }
+  for (const l of lines) total = total.add(lineTotalOf(l, currency));
   return total.toDecimalString();
+}
+
+/**
+ * One line's money, which the printed quote needs per row and the subtotal
+ * needs summed.
+ *
+ * Extracted so there is exactly ONE place this arithmetic lives. The obvious
+ * alternative — letting the PDF layer recompute quantity x price x discount —
+ * would put money arithmetic in a renderer and give a printed page its own
+ * opinion about rounding, which is how a document comes to disagree with the
+ * total printed at the bottom of itself.
+ */
+function lineTotalOf(l: LineRow, currency: string): Money {
+  const quantityUnits = quantityToUnits(l.quantity);
+  if (quantityUnits === null) {
+    // A quantity the database holds but this cannot parse is a bug, not a
+    // rounding question, and a silently-skipped line would understate a
+    // customer-facing figure.
+    throw new QuoteError(
+      'INVALID_LINES',
+      `Quote line ${l.line_no} has an unreadable quantity (${l.quantity}).`,
+    );
+  }
+  const price = Money.fromDecimal(l.unit_price, currency as Parameters<typeof Money.zero>[0]);
+  // quantity is scaled by 10^4, so dividing by that is the ratio, not a fudge.
+  const gross = price.multiplyRatio(quantityUnits, 10_000n);
+  const discount = gross.multiplyRatio(BigInt(l.discount_basis_points), 10_000n);
+  return gross.subtract(discount);
 }
 
 async function replaceLines(

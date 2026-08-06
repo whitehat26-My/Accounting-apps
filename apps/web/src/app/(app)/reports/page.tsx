@@ -63,6 +63,13 @@ interface Equity {
   consistent: boolean;
 }
 
+/** The session lives in a header, so the bytes are fetched then handed over. */
+async function openReportPdf(path: string) {
+  const url = await apiBlobUrl(path);
+  window.open(url, '_blank', 'noopener');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 function firstOfMonth(): string {
   return `${todayIso().slice(0, 8)}01`;
 }
@@ -149,6 +156,25 @@ export default function ReportsPage() {
         selling for nothing", and burying the giveaway under the good news
         would defeat it. Blank % means zero revenue, not 0%.
       */}
+      {/* The month-end pack, as paper. The CSVs beside it serve a
+          spreadsheet; this serves the folder an accountant is handed. */}
+      <Card title="Print the sales day book">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-slate-600">
+            Every invoice issued between {displayDate(from)} and {displayDate(to)}, one line
+            each, with what is still owed on it.
+          </p>
+          <Button
+            variant="ghost"
+            onClick={() =>
+              void openReportPdf(`/v1/reports/sales-day-book/pdf?from=${from}&to=${to}`)
+            }
+          >
+            Print
+          </Button>
+        </div>
+      </Card>
+
       <Card title="Margin by item — worst first">
         {margins.data && margins.data.rows.length > 0 ? (
           <>

@@ -1,11 +1,15 @@
-import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import {
+  Body, Controller, Get, Headers, Inject, Param, Post, Query, Req, Res,
+} from '@nestjs/common';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { decimal, isoDate, positiveDecimal, uuid } from '@emil/contracts';
 import {
   convertQuoteToInvoice,
   createQuote,
+  getContact,
   getQuote,
+  sellerBlock,
   listQuotes,
   transitionQuote,
   updateQuoteLines,
@@ -17,6 +21,7 @@ import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
+import { renderQuotePdf } from '../pdf/render.js';
 
 /**
  * Sales quotes.
@@ -55,6 +60,58 @@ export class QuotesController {
     return withTenant(this.sql, ctx, (tx) => getQuote(tx, ctx, parse(uuid, id)));
   }
 
+
+  /**
+   * The quote as paper.
+   *
+   * `quote.read` rather than a print-specific permission: anybody trusted to
+   * see the figures is trusted to hand them to the customer they were quoted
+   * for, and a separate permission would only mean the person at the counter
+   * cannot print the thing they just prepared.
+   */
+  @Requires('quote.read')
+  @Get(':id/pdf')
+  async pdf(
+    @Param('id') id: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = tenantContextOf(request);
+    const doc = await withTenant(this.sql, ctx, async (tx) => {
+      const quote = await getQuote(tx, ctx, parse(uuid, id));
+      const [seller, customer] = await Promise.all([
+        sellerBlock(tx, ctx),
+        getContact(tx, ctx, quote.contactId),
+      ]);
+
+      return {
+        seller,
+        quoteNo: quote.quoteNo,
+        quoteDate: quote.quoteDate,
+        validUntil: quote.validUntil,
+        lapsed: quote.lapsed,
+        status: quote.status,
+        currency: quote.currency,
+        reference: quote.reference,
+        notes: quote.notes,
+        customer: { name: customer.name, tin: customer.tin ?? null },
+        lines: quote.lines.map((line) => ({
+          description: line.description,
+          quantity: line.quantity,
+          unitPrice: line.unitPrice,
+          discountBasisPoints: line.discountBasisPoints,
+          lineTotal: line.lineTotal,
+        })),
+        subtotal: quote.subtotal,
+      };
+    });
+
+    const pdf = await renderQuotePdf(doc);
+    void reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="${doc.quoteNo}.pdf"`)
+      .send(pdf);
+  }
   @Requires('quote.write')
   @Doc({ request: () => createQuoteSchema })
   @Post()

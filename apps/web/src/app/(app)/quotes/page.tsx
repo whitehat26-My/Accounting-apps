@@ -2,9 +2,16 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, apiBlobUrl } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
+
+/** The session lives in a header, so the bytes are fetched then handed over. */
+async function openQuotePdf(id: string) {
+  const url = await apiBlobUrl(`/v1/quotes/${id}/pdf`);
+  window.open(url, '_blank', 'noopener');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
 
 /**
  * Quotes: what a job would cost, before anybody owes anything.
@@ -243,6 +250,12 @@ function QuoteRow({
       </div>
 
       <div className="mt-3 flex flex-wrap gap-2">
+        {/* Available at every status, including DRAFT: the point of printing a
+            quote is to put it in front of somebody before it is sent. */}
+        <Button variant="ghost" onClick={() => void openQuotePdf(quote.id)}>
+          Print
+        </Button>
+
         {quote.status === 'DRAFT' ? (
           <Button
             variant="ghost"

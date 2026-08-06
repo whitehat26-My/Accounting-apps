@@ -214,3 +214,48 @@ describe('the counter, as the SALES role', () => {
     expect(sale.body['message']).toMatch(/30\.0000.*35\.0000/);
   });
 });
+
+describe('the day sheet', () => {
+  /*
+   * Printed by the SALES user on purpose. Closing up is the counter's job, and
+   * a Z-report only the owner can print is one nobody prints at 9pm — so the
+   * route rides `pos.sale`, the same permission that rang the sales it totals.
+   */
+  const till = (url: string) => ({ url, token: salesToken, tenantId: tenant.tenantId });
+
+  it('prints the Z-report the shop signs and files', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...till('/v1/pos/takings/pdf?date=2026-08-05'),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    expect(response.body.startsWith('%PDF')).toBe(true);
+
+    const text = pdfText(response.body);
+    expect(text).toContain('DAY SHEET');
+    expect(text).toContain('05/08/2026'); // rule 8, on paper
+
+    /*
+     * The two numbers a shop confuses, under headings that say which question
+     * each answers. If these ever merge into one block the document has lost
+     * the thing it was built to prevent.
+     */
+    expect(text).toContain('MONEY IN TODAY');
+    expect(text).toContain('WHAT THE DAY SOLD');
+
+    // The control: a box for a person to write what they actually counted.
+    expect(text).toContain('COUNTED BY HAND');
+    expect(text).toContain('Cash counted');
+    expect(text).toContain('Counted by');
+    expect(text).toContain('Checked by');
+  });
+
+  it('prints a quiet day honestly rather than as an empty table', async () => {
+    const text = pdfText(
+      (await callRaw(api, { method: 'GET', ...till('/v1/pos/takings/pdf?date=2019-01-01') })).body,
+    );
+    expect(text).toContain('Nothing was taken today');
+  });
+});

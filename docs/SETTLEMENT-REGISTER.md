@@ -639,6 +639,54 @@ decide whether supplier bank details are stored at all — the same argument `00
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
 
+### 5.24 Printed documents — day sheet, quotation, sales day book — BUILT (no migration)
+
+`GET /v1/pos/takings/pdf?date=` (`pos.sale`), `GET /v1/quotes/:id/pdf` (`quote.read`),
+`GET /v1/reports/sales-day-book/pdf?from=&to=` (`report.read`). Before this the app could
+print an invoice, a receipt, a statement, a payslip and an EA sheet — but not the document a
+shop prints EVERY day, nor the one it hands a customer before doing the work.
+
+**The day sheet states two numbers a shop routinely confuses, under headings that say which
+question each answers.** "Money in today" is cash and settlements RECEIVED, including
+payments against older invoices. "What the day sold" is what was INVOICED, paid or not. On
+any day the shop sells on account they differ, and the most common bookkeeping argument in a
+small business is two people each quoting one of them as "today's sales". They are separate
+blocks, never adjacent columns that invite the reader to treat one as a check on the other.
+**The counting box is deliberately left blank** — its entire value is a person counting the
+drawer and writing what they found; printing our own expectation into it would turn a control
+into a formality.
+
+**The quotation says it is not a tax invoice, and stamps itself when it lapses.** An expired
+quote prints with an amber band and `QUOTATION (EXPIRED)` rather than being quietly reprinted
+looking current; reissuing is the shop's decision, not a printer's. No tax is shown, because
+the treatment is resolved at the tax point from the codes then in force — a quote that
+guessed would disagree with the invoice that follows, and the page says so.
+
+**`quote.lineTotal` now comes from the service, not the renderer.** The per-line figure and
+the subtotal are the same arithmetic (`lineTotalOf`), extracted so there is exactly one place
+quantity × price × discount lives. The alternative — letting the PDF layer recompute it —
+gives a printed page its own opinion about rounding, which is how a document comes to
+disagree with the total printed at the bottom of itself.
+
+**The sales day book reads the FROZEN figures** from `invoice`, never re-summing lines: a
+re-computation under today's rounding and today's tax-code versions would produce a day book
+that disagrees with the invoices it lists, with the newer document looking correct. DRAFT
+invoices are excluded — a draft is not a sale.
+
+**The shared chrome changed for all documents, and one bug went with it.** `build()` now
+buffers pages, so the footer is stamped on EVERY page with `Page N of M`; it used to be a
+single call writing at absolute y=780, which footed one page of a multi-page document and
+left the rest bare. One page carries no number, because "Page 1 of 1" is noise. `tableRow`
+breaks BEFORE a row and redraws the column headings on the new sheet — without it the second
+page of a day book is four unlabelled columns of money, and the reader's guess about which is
+tax ends up in a return. Verified against a real 34- and 60-invoice month.
+
+⚠️ **Still not printable, and named here rather than left to be discovered:** credit notes,
+and the P&L / balance sheet as a standalone download — `renderFinancialStatementsPdf` exists
+but is reachable only inside the hundred-year archive (§5.23). **Unblocker for both: a route
+each; the renderers and the data are already there.** Deferred by decision this pass, not by
+oversight.
+
 ### 5.23 The hundred-year archive — BUILT (no migration)
 
 `GET /v1/reports/archive/:fiscalYearId` (`report.read`) returns one ZIP per financial year:

@@ -908,3 +908,97 @@ describe('the hundred-year archive', () => {
     expect(response.status).toBe(403);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Printed documents
+// ---------------------------------------------------------------------------
+
+describe('the sales day book', () => {
+  it('lists every issued invoice in the period, with totals that add up', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/sales-day-book/pdf?from=2026-01-01&to=2026-12-31'),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    expect(response.body.startsWith('%PDF')).toBe(true);
+
+    const text = pdfText(response.body);
+    expect(text).toContain('SALES DAY BOOK');
+    expect(text).toContain('Reports Sdn Bhd');
+    // The period, stated in the meta block in DD/MM/YYYY (rule 8).
+    expect(text).toContain('01/01/2026');
+    expect(text).toContain('Totals');
+  });
+
+  it('says so plainly when a period had no sales, rather than printing a blank grid', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/sales-day-book/pdf?from=2020-01-01&to=2020-01-31'),
+    });
+    expect(response.status).toBe(200);
+    expect(pdfText(response.body)).toContain('No invoices were issued in this period');
+  });
+
+  it('numbers its pages once there is more than one', async () => {
+    /*
+     * The reason `build()` buffers pages at all. A day book of a busy month
+     * runs to several sheets, and a reader has no way to know whether the copy
+     * they were handed is complete unless every sheet says which of how many
+     * it is. One page deliberately carries NO number — "Page 1 of 1" is noise.
+     */
+    const short = pdfText(
+      (await callRaw(api, {
+        method: 'GET',
+        ...as('/v1/reports/sales-day-book/pdf?from=2020-01-01&to=2020-01-31'),
+      })).body,
+    );
+    expect(short).not.toContain('Page 1 of');
+
+    // 60 invoices will not fit on one page.
+    const contact = await call(api, {
+      method: 'POST',
+      ...as('/v1/contacts'),
+      body: { name: 'Volume Buyer Sdn Bhd', isCustomer: true },
+    });
+    for (let i = 0; i < 60; i++) {
+      await call(api, {
+        method: 'POST',
+        ...as('/v1/invoices'),
+        idempotencyKey: randomUUID(),
+        body: {
+          contactId: contact.body['id'],
+          issueDate: '2026-09-10',
+          dueDate: '2026-10-10',
+          lines: [{ description: `Bulk line ${i + 1}`, quantity: '1', unitPrice: '125.00',
+                    accountId: tenant.accounts['4000'], taxCodeId: tenant.taxCodes['NONE'] }],
+        },
+      });
+    }
+
+    const long = pdfText(
+      (await callRaw(api, {
+        method: 'GET',
+        ...as('/v1/reports/sales-day-book/pdf?from=2026-09-01&to=2026-09-30'),
+      })).body,
+    );
+    expect(long).toContain('Page 1 of');
+    expect(long).toContain('Page 2 of');
+    // The column headings are redrawn on the continuation sheet — without
+    // this the second page is four unlabelled columns of money.
+    expect(long.match(/Still due/g)!.length).toBeGreaterThan(1);
+  });
+
+  it('refuses SALES — a month of every customer’s prices is not a till download', async () => {
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const response = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/sales-day-book/pdf?from=2026-01-01&to=2026-12-31',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(response.status).toBe(403);
+  });
+});

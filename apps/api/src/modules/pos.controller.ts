@@ -1,13 +1,14 @@
-import { Body, Controller, Get, Headers, Inject, Post, Query, Req } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import { Body, Controller, Get, Headers, Inject, Post, Query, Req, Res } from '@nestjs/common';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { isoDate, positiveDecimal, uuid } from '@emil/contracts';
-import { dailyTakings, recordCashSale, withTenant, type Sql } from '@emil/db';
+import { dailyTakings, recordCashSale, sellerBlock, withTenant, type Sql } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
+import { renderDaySheetPdf } from '../pdf/render.js';
 
 /**
  * The till.
@@ -46,6 +47,35 @@ export class PosController {
     const { date: parsed } = parse(takingsSchema, { date });
     const ctx = tenantContextOf(request);
     return withTenant(this.sql, ctx, (tx) => dailyTakings(tx, ctx, parsed));
+  }
+
+  /**
+   * The same Z-report as paper, to sign and file.
+   *
+   * A shop that closes up at 9pm wants one page it can put in a folder, not a
+   * screen it has to remember. The counting box on it is left blank on
+   * purpose — the control is a person counting the drawer, and printing our
+   * own expectation into that box would make it a formality.
+   */
+  @Requires('pos.sale')
+  @Get('takings/pdf')
+  async takingsPdf(
+    @Query('date') date: string | undefined,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const { date: parsed } = parse(takingsSchema, { date });
+    const ctx = tenantContextOf(request);
+    const { takings, seller } = await withTenant(this.sql, ctx, async (tx) => ({
+      takings: await dailyTakings(tx, ctx, parsed),
+      seller: await sellerBlock(tx, ctx),
+    }));
+
+    const pdf = await renderDaySheetPdf({ seller, ...takings });
+    void reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="day-sheet-${takings.date}.pdf"`)
+      .send(pdf);
   }
 }
 

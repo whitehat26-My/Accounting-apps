@@ -92,7 +92,6 @@ export function renderInvoicePdf(
     pdf.font('Helvetica');
 
     if (verification) verificationBlock(pdf, verification);
-    footer(pdf);
   });
 }
 
@@ -127,7 +126,6 @@ export function renderReceiptPdf(
     }
 
     if (verification) verificationBlock(pdf, verification);
-    footer(pdf);
   });
 }
 
@@ -318,7 +316,6 @@ function drawEa(pdf: PDFKit.PDFDocument, doc: EaDocument): void {
   }
   pdf.fillColor('#000000');
 
-  footer(pdf);
 }
 
 /**
@@ -460,8 +457,6 @@ function drawPayslip(pdf: PDFKit.PDFDocument, doc: PayslipDocument): void {
       pdf.text(note, MARGIN, pdf.y, { width: 495, lineGap: 1.5 });
     }
     pdf.fillColor('#000000');
-
-    footer(pdf);
   }
 }
 
@@ -647,24 +642,87 @@ export function renderStatementPdf(
     );
     pdf.fillColor('#000000');
 
-    footer(pdf);
-  });
+    });
 }
 
 // ------------------------------------------------------------------ helpers
 
 
 
-function build(draw: (pdf: PDFKit.PDFDocument) => void): Promise<Buffer> {
+/**
+ * Every document is built here, and every page is finished here.
+ *
+ * ---------------------------------------------------------------------------
+ * THE FOOTER IS STAMPED ON EVERY PAGE, NOT DRAWN ONCE.
+ *
+ * It used to be a single `footer(pdf)` call at the end of each renderer,
+ * writing at absolute y=780. On a one-page invoice that is the same thing; on
+ * anything that paginates it silently footed ONE page and left the rest bare —
+ * and a page of somebody's ledger with no shop name on it is a loose sheet.
+ *
+ * `bufferPages` keeps every page open until the document closes, which is also
+ * the only way to know the page COUNT while there is still a page to write it
+ * on. "Page 2 of 5" is what tells a reader whether the copy they were handed
+ * is complete, and it cannot be written on page 2 until page 5 exists.
+ * ---------------------------------------------------------------------------
+ */
+function build(
+  draw: (pdf: PDFKit.PDFDocument) => void,
+  options: { readonly footNote?: string } = {},
+): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const pdf = new PDFDocument({ size: 'A4', margin: MARGIN, compress: false });
+    const pdf = new PDFDocument({ size: 'A4', margin: MARGIN, compress: false, bufferPages: true });
     const chunks: Buffer[] = [];
     pdf.on('data', (chunk: Buffer) => chunks.push(chunk));
     pdf.on('end', () => resolve(Buffer.concat(chunks)));
     pdf.on('error', reject);
-    draw(pdf);
+
+    try {
+      draw(pdf);
+      stampPages(pdf, options.footNote);
+    } catch (error) {
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
     pdf.end();
   });
+}
+
+/** The note under the rule on every page, and the page number beside it. */
+function stampPages(pdf: PDFKit.PDFDocument, footNote?: string): void {
+  const range = pdf.bufferedPageRange();
+  const note = footNote ?? 'Computer-generated document. Figures are stated in the document currency.';
+
+  for (let i = 0; i < range.count; i++) {
+    pdf.switchToPage(range.start + i);
+
+    /*
+     * Writing this close to the paper's edge would otherwise trip pdfkit's own
+     * bottom margin and append a page — inside a loop over pages, which never
+     * terminates. Dropping the margin for the stamp is the documented way out.
+     */
+    const bottom = pdf.page.margins.bottom;
+    pdf.page.margins.bottom = 0;
+
+    pdf.strokeColor('#e4e4e7');
+    pdf.moveTo(MARGIN, 772).lineTo(545, 772).stroke();
+    pdf.strokeColor('#000000');
+
+    pdf.font('Helvetica').fontSize(7).fillColor('#71717a');
+    pdf.text(note, MARGIN, 778, { width: 400, align: 'left', lineBreak: false });
+    if (range.count > 1) {
+      pdf.text(`Page ${i + 1} of ${range.count}`, 445, 778, {
+        width: 100,
+        align: 'right',
+        lineBreak: false,
+      });
+    }
+    pdf.fillColor('#000000');
+
+    pdf.page.margins.bottom = bottom;
+  }
+
+  pdf.flushPages();
 }
 
 /**
@@ -698,6 +756,38 @@ function header(
   pdf.fillColor('#000000');
   pdf.font('Helvetica').fontSize(9);
   pdf.moveDown(0.5);
+}
+
+/**
+ * The same letterhead, plus the document's own identity set right.
+ *
+ * Invoices and receipts print their reference as `Label: value` pairs down the
+ * left, which reads fine on a page whose whole subject is one document. The
+ * REPORTS — a day sheet, a day book — are about a period rather than a
+ * document, and want the period stated once, prominently, where a reader
+ * checks first: top right, beside the title.
+ */
+function reportHeader(
+  pdf: PDFKit.PDFDocument,
+  seller: InvoiceDocument['seller'],
+  title: string,
+  meta: readonly [string, string][],
+): void {
+  const top = pdf.y;
+  header(pdf, seller, title);
+  const afterTitle = pdf.y;
+
+  pdf.font('Helvetica').fontSize(8.5);
+  let y = top + MARGIN - 4;
+  for (const [label, value] of meta) {
+    pdf.fillColor('#71717a').text(label, 330, y, { width: 100, align: 'right', lineBreak: false });
+    pdf.fillColor('#18181b').font('Helvetica-Bold')
+      .text(value, 435, y, { width: 110, align: 'right', lineBreak: false });
+    pdf.font('Helvetica');
+    y += 13;
+  }
+  pdf.fillColor('#000000');
+  pdf.y = Math.max(afterTitle, y + 4);
 }
 
 function pair(pdf: PDFKit.PDFDocument, label: string, value: string): void {
@@ -778,17 +868,95 @@ function verificationBlock(
   pdf.y = Math.max(pdf.y, top + matrix.length * MODULE);
 }
 
-function footer(pdf: PDFKit.PDFDocument): void {
-  pdf
-    .fontSize(7)
-    .fillColor('#666666')
-    .text(
-      'Computer-generated document. Figures are stated in the document currency.',
-      MARGIN,
-      780,
-      { width: 495, align: 'center' },
-    )
-    .fillColor('#000000');
+/**
+ * A place for two people to sign, with a printed name under each rule.
+ *
+ * On a day sheet this is the whole point of printing it: the drawer was
+ * counted by one person and the sheet accepted by another, and the signatures
+ * are what make that a control rather than a note. Kept off the page bottom so
+ * the stamped footer never collides with it.
+ */
+function signatureBlock(
+  pdf: PDFKit.PDFDocument,
+  left: { role: string; name?: string },
+  right: { role: string; name?: string },
+): void {
+  if (pdf.y > 660) pdf.addPage();
+  pdf.moveDown(2);
+  const y = Math.max(pdf.y, 640);
+
+  pdf.strokeColor('#a1a1aa');
+  pdf.moveTo(MARGIN, y).lineTo(MARGIN + 200, y).stroke();
+  pdf.moveTo(320, y).lineTo(520, y).stroke();
+  pdf.strokeColor('#000000');
+
+  /*
+   * Both captions are placed at the SAME absolute y. Written relative to
+   * `pdf.y` they drifted apart by a line, because the left column advanced the
+   * cursor and the right one then measured from wherever that left it — two
+   * labels under two rules, sitting at different heights.
+   */
+  pdf.font('Helvetica').fontSize(8).fillColor('#52525b');
+  pdf.text(left.role, MARGIN, y + 5, { width: 200, lineBreak: false });
+  pdf.text(right.role, 320, y + 5, { width: 200, lineBreak: false });
+  if (left.name) pdf.text(left.name, MARGIN, y + 16, { width: 200, lineBreak: false });
+  if (right.name) pdf.text(right.name, 320, y + 16, { width: 200, lineBreak: false });
+  pdf.fillColor('#000000');
+  pdf.y = y + 34;
+}
+
+/**
+ * A table that survives a page break.
+ *
+ * The column headings are redrawn at the top of each new page, because a
+ * continuation sheet of bare numbers is unreadable and — on a sales day book
+ * an accountant is checking — genuinely dangerous: the second page's third
+ * column is not obviously the tax column.
+ */
+interface Column {
+  readonly label: string;
+  readonly x: number;
+  readonly width: number;
+  readonly align?: 'left' | 'right';
+}
+
+function tableHeader(pdf: PDFKit.PDFDocument, columns: readonly Column[]): void {
+  pdf.font('Helvetica-Bold').fontSize(8).fillColor('#3f3f46');
+  const y = pdf.y;
+  for (const column of columns) {
+    pdf.text(column.label, column.x, y, {
+      width: column.width,
+      align: column.align ?? 'left',
+      lineBreak: false,
+    });
+  }
+  pdf.fillColor('#000000');
+  pdf.y = y + 12;
+  rule(pdf);
+  pdf.font('Helvetica').fontSize(8.5);
+}
+
+function tableRow(
+  pdf: PDFKit.PDFDocument,
+  columns: readonly Column[],
+  cells: readonly string[],
+): void {
+  // 730 leaves room for the stamped footer; break BEFORE the row, never
+  // through it.
+  if (pdf.y > 730) {
+    pdf.addPage();
+    tableHeader(pdf, columns);
+  }
+  const y = pdf.y;
+  let bottom = y;
+  columns.forEach((column, i) => {
+    pdf.text(cells[i] ?? '', column.x, y, {
+      width: column.width,
+      align: column.align ?? 'left',
+    });
+    bottom = Math.max(bottom, pdf.y);
+  });
+  pdf.y = bottom + 3;
 }
 
 /** '1234.5000' → '1,234.50'. Wire scale is 4dp; a printed RM amount is 2dp. */
@@ -877,4 +1045,372 @@ export function renderFinancialStatementsPdf(input: {
     );
     pdf.fillColor('#000000');
   });
+}
+
+// ---------------------------------------------------------------------------
+// The day sheet
+// ---------------------------------------------------------------------------
+
+export interface DaySheetDocument {
+  readonly seller: InvoiceDocument['seller'];
+  readonly date: string;
+  readonly byMethod: readonly {
+    readonly method: string;
+    readonly depositAccount: string;
+    readonly total: string;
+    readonly count: number;
+  }[];
+  readonly receiptsTotal: string;
+  readonly invoicedTotal: string;
+  readonly invoiceCount: number;
+  readonly costOfGoodsSold: string;
+  readonly grossProfit: string;
+}
+
+/**
+ * What the shop prints at closing time, signs, and puts in the folder.
+ *
+ * ---------------------------------------------------------------------------
+ * TWO NUMBERS THAT ARE NOT THE SAME NUMBER, SAID SO PLAINLY.
+ *
+ * "Takings" is what came IN today — the drawer and the settlements. "Invoiced"
+ * is what was SOLD today, whether or not anybody paid. A shop that invoices on
+ * account will see them diverge every single day, and the most common
+ * bookkeeping argument in a small business is two people each quoting one of
+ * them as "today's sales". They are printed in separate blocks, each labelled
+ * with what it answers, rather than adjacent in a way that invites the reader
+ * to think one is a check on the other.
+ *
+ * The counting box is left BLANK on purpose. Its whole value is that a person
+ * physically counts the drawer and writes the figure next to what the system
+ * expected — printing our own number into it would turn a control into a
+ * formality.
+ * ---------------------------------------------------------------------------
+ */
+export function renderDaySheetPdf(doc: DaySheetDocument): Promise<Buffer> {
+  return build(
+    (pdf) => {
+      reportHeader(pdf, doc.seller, 'DAY SHEET', [
+        ['Trading day', displayDate(doc.date)],
+        ['Printed', displayDate(new Date().toISOString().slice(0, 10))],
+      ]);
+
+      // ---- Money in ----------------------------------------------------------
+      sectionHeading(pdf, 'MONEY IN TODAY — COUNT THE DRAWER AGAINST THIS');
+      const methodCols: Column[] = [
+        { label: 'Payment method', x: MARGIN, width: 150 },
+        { label: 'Lands in', x: 200, width: 180 },
+        { label: 'Count', x: 390, width: 55, align: 'right' },
+        { label: 'Amount (RM)', x: 455, width: 90, align: 'right' },
+      ];
+      tableHeader(pdf, methodCols);
+
+      if (doc.byMethod.length === 0) {
+        pdf.fillColor('#71717a').text('Nothing was taken today.', MARGIN, pdf.y);
+        pdf.fillColor('#000000');
+        pdf.y += 14;
+      } else {
+        for (const row of doc.byMethod) {
+          tableRow(pdf, methodCols, [
+            row.method.replace(/_/g, ' '),
+            row.depositAccount,
+            String(row.count),
+            money(row.total),
+          ]);
+        }
+      }
+      rule(pdf);
+      pdf.font('Helvetica-Bold').fontSize(10);
+      const takingsY = pdf.y;
+      pdf.text('Total taken', MARGIN, takingsY, { width: 340 });
+      pdf.text(`RM ${money(doc.receiptsTotal)}`, 400, takingsY, { width: 145, align: 'right' });
+      pdf.font('Helvetica').fontSize(9);
+      pdf.y = takingsY + 20;
+
+      // ---- The count ---------------------------------------------------------
+      const boxY = pdf.y;
+      pdf.rect(MARGIN, boxY, 495, 54).lineWidth(0.8).strokeColor('#a1a1aa').stroke();
+      pdf.strokeColor('#000000').lineWidth(1);
+      pdf.font('Helvetica-Bold').fontSize(8.5).fillColor('#3f3f46');
+      pdf.text('COUNTED BY HAND', MARGIN + 12, boxY + 9, { width: 200 });
+      pdf.font('Helvetica').fontSize(8).fillColor('#71717a');
+      pdf.text('Cash counted', MARGIN + 12, boxY + 26, { width: 90 });
+      pdf.text('Difference', 280, boxY + 26, { width: 80 });
+      pdf.strokeColor('#a1a1aa');
+      pdf.moveTo(MARGIN + 105, boxY + 36).lineTo(MARGIN + 215, boxY + 36).stroke();
+      pdf.moveTo(360, boxY + 36).lineTo(520, boxY + 36).stroke();
+      pdf.strokeColor('#000000').fillColor('#000000');
+      pdf.y = boxY + 66;
+
+      // ---- What the day made -------------------------------------------------
+      sectionHeading(pdf, 'WHAT THE DAY SOLD — NOT THE SAME AS WHAT CAME IN');
+      amountRow(pdf, 'Invoiced today', `${doc.invoiceCount} invoice${doc.invoiceCount === 1 ? '' : 's'}`, doc.invoicedTotal);
+      amountRow(pdf, 'Cost of the goods sold', 'weighted average', doc.costOfGoodsSold);
+      subtotalRow(pdf, 'Gross profit', doc.grossProfit);
+
+      pdf.moveDown(0.6);
+      pdf.fontSize(7.5).fillColor('#71717a');
+      pdf.text(
+        'Takings are money RECEIVED today, including settlements of older invoices. ' +
+          'Invoiced is what was SOLD today, whether or not it has been paid. On any day ' +
+          'the shop sells on account the two differ, and neither is wrong.',
+        MARGIN,
+        pdf.y,
+        { width: 495, lineGap: 1.5 },
+      );
+      pdf.fillColor('#000000').fontSize(9);
+
+      signatureBlock(pdf, { role: 'Counted by' }, { role: 'Checked by' });
+    },
+    { footNote: 'Day sheet — file with the day’s receipts.' },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The quote
+// ---------------------------------------------------------------------------
+
+export interface QuoteDocument {
+  readonly seller: InvoiceDocument['seller'];
+  readonly quoteNo: string;
+  readonly quoteDate: string;
+  readonly validUntil: string | null;
+  readonly lapsed: boolean;
+  readonly status: string;
+  readonly currency: string;
+  readonly reference: string | null;
+  readonly notes: string | null;
+  readonly customer: { readonly name: string; readonly tin: string | null };
+  readonly lines: readonly {
+    readonly description: string;
+    readonly quantity: string;
+    readonly unitPrice: string;
+    readonly discountBasisPoints: number;
+    readonly lineTotal: string;
+  }[];
+  readonly subtotal: string;
+}
+
+/**
+ * The paper a customer is handed before agreeing to anything.
+ *
+ * ---------------------------------------------------------------------------
+ * A QUOTE IS AN OFFER, AND THE PAGE SAYS WHEN IT STOPS BEING ONE.
+ *
+ * The validity date is printed in the meta block AND repeated in words above
+ * the acceptance lines, because "quoted RM 4,200 in March" is an argument
+ * every repair shop has had. A lapsed quote is stamped as such rather than
+ * quietly reprinted looking current — reissuing is a decision for the shop,
+ * not something a printer does on its behalf.
+ *
+ * No tax is shown. The quote records agreed PRICES; the tax treatment is
+ * resolved when the invoice is issued, from the tax codes then in force, and
+ * a quote that guessed at it would disagree with the invoice that follows.
+ * That is stated on the page rather than left for someone to notice.
+ * ---------------------------------------------------------------------------
+ */
+export function renderQuotePdf(doc: QuoteDocument): Promise<Buffer> {
+  return build(
+    (pdf) => {
+      const meta: [string, string][] = [
+        ['Quote no', doc.quoteNo],
+        ['Date', displayDate(doc.quoteDate)],
+      ];
+      if (doc.validUntil) meta.push(['Valid until', displayDate(doc.validUntil)]);
+
+      reportHeader(pdf, doc.seller, doc.lapsed ? 'QUOTATION (EXPIRED)' : 'QUOTATION', meta);
+
+      if (doc.lapsed) {
+        const y = pdf.y;
+        pdf.rect(MARGIN, y, 495, 26).fill('#fef3c7');
+        pdf.fillColor('#92400e').font('Helvetica-Bold').fontSize(9);
+        pdf.text(
+          `This quotation lapsed on ${displayDate(doc.validUntil!)}. Ask the shop to reissue it.`,
+          MARGIN + 12,
+          y + 9,
+          { width: 471 },
+        );
+        pdf.fillColor('#000000').font('Helvetica').fontSize(9);
+        pdf.y = y + 34;
+      }
+
+      pair(pdf, 'Prepared for', doc.customer.name);
+      if (doc.customer.tin) pair(pdf, 'Customer TIN', doc.customer.tin);
+      if (doc.reference) pair(pdf, 'Reference', doc.reference);
+      pdf.moveDown(1);
+
+      const cols: Column[] = [
+        { label: 'Description', x: MARGIN, width: 250 },
+        { label: 'Qty', x: 310, width: 45, align: 'right' },
+        { label: 'Unit price', x: 365, width: 70, align: 'right' },
+        { label: 'Discount', x: 440, width: 50, align: 'right' },
+        { label: 'Amount', x: 495, width: 50, align: 'right' },
+      ];
+      tableHeader(pdf, cols);
+      for (const line of doc.lines) {
+        tableRow(pdf, cols, [
+          line.description,
+          trimQty(line.quantity),
+          money(line.unitPrice),
+          line.discountBasisPoints > 0 ? `${(line.discountBasisPoints / 100).toFixed(1)}%` : '—',
+          money(line.lineTotal),
+        ]);
+      }
+      rule(pdf);
+
+      pdf.font('Helvetica-Bold').fontSize(11);
+      const totalY = pdf.y;
+      pdf.text('Total', 330, totalY, { width: 100, align: 'right' });
+      pdf.text(
+        `${doc.currency === 'MYR' ? 'RM ' : `${doc.currency} `}${money(doc.subtotal)}`,
+        435,
+        totalY,
+        { width: 110, align: 'right' },
+      );
+      pdf.font('Helvetica').fontSize(9);
+      pdf.y = totalY + 22;
+
+      if (doc.notes) {
+        sectionHeading(pdf, 'NOTES');
+        pdf.fontSize(8.5).text(doc.notes, MARGIN, pdf.y, { width: 495, lineGap: 1.5 });
+        pdf.fontSize(9);
+        pdf.moveDown(0.8);
+      }
+
+      pdf.fontSize(7.5).fillColor('#71717a');
+      pdf.text(
+        doc.validUntil
+          ? `This quotation is valid until ${displayDate(doc.validUntil)}. Prices are as quoted; ` +
+            'any sales tax due is applied when the invoice is issued.'
+          : 'Prices are as quoted; any sales tax due is applied when the invoice is issued.',
+        MARGIN,
+        pdf.y,
+        { width: 495, lineGap: 1.5 },
+      );
+      pdf.fillColor('#000000').fontSize(9);
+
+      signatureBlock(
+        pdf,
+        { role: 'Accepted by (customer)' },
+        { role: 'For and on behalf of', name: doc.seller.name },
+      );
+    },
+    { footNote: 'Quotation — not a tax invoice. No payment is due on this document.' },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The sales day book
+// ---------------------------------------------------------------------------
+
+export interface SalesDayBookDocument {
+  readonly seller: InvoiceDocument['seller'];
+  readonly from: string;
+  readonly to: string;
+  readonly currency: string;
+  readonly rows: readonly {
+    readonly issueDate: string;
+    readonly invoiceNo: string;
+    readonly customer: string;
+    readonly status: string;
+    readonly subtotal: string;
+    readonly taxTotal: string;
+    readonly total: string;
+    readonly amountDue: string;
+  }[];
+  readonly totals: {
+    readonly subtotal: string;
+    readonly taxTotal: string;
+    readonly total: string;
+    readonly amountDue: string;
+  };
+}
+
+/**
+ * Every invoice issued in a period, one line each — what an accountant asks
+ * for at month end and what a shop currently rebuilds by hand.
+ *
+ * ---------------------------------------------------------------------------
+ * IT PAGINATES, AND THE COLUMN HEADINGS COME WITH IT.
+ *
+ * This is the first document here that routinely runs past one page: a busy
+ * month is a hundred invoices. `tableRow` breaks BEFORE a row rather than
+ * through it and redraws the headings on the new page, because the second
+ * sheet of a day book otherwise arrives as four unlabelled columns of money —
+ * and the reader's guess about which one is tax is the sort of thing that ends
+ * up in a return.
+ *
+ * `Still due` is carried per row so the page doubles as a debtors list at the
+ * period end without anyone cross-referencing a second report.
+ * ---------------------------------------------------------------------------
+ */
+export function renderSalesDayBookPdf(doc: SalesDayBookDocument): Promise<Buffer> {
+  return build(
+    (pdf) => {
+      reportHeader(pdf, doc.seller, 'SALES DAY BOOK', [
+        ['Period', `${displayDate(doc.from)} – ${displayDate(doc.to)}`],
+        ['Invoices', String(doc.rows.length)],
+      ]);
+
+      const cols: Column[] = [
+        { label: 'Date', x: MARGIN, width: 55 },
+        { label: 'Invoice', x: 108, width: 68 },
+        { label: 'Customer', x: 180, width: 150 },
+        { label: 'Net', x: 334, width: 58, align: 'right' },
+        { label: 'Tax', x: 396, width: 48, align: 'right' },
+        { label: 'Total', x: 448, width: 55, align: 'right' },
+        { label: 'Still due', x: 507, width: 38, align: 'right' },
+      ];
+      tableHeader(pdf, cols);
+
+      if (doc.rows.length === 0) {
+        pdf.fillColor('#71717a')
+          .text('No invoices were issued in this period.', MARGIN, pdf.y, { width: 495 });
+        pdf.fillColor('#000000');
+        pdf.y += 16;
+      }
+
+      for (const row of doc.rows) {
+        tableRow(pdf, cols, [
+          displayDate(row.issueDate),
+          row.invoiceNo,
+          row.customer,
+          money(row.subtotal),
+          money(row.taxTotal),
+          money(row.total),
+          row.amountDue === '0.0000' ? '—' : money(row.amountDue),
+        ]);
+      }
+
+      // Keep the totals with the last rows rather than orphaned on a page of
+      // their own — a total sheet with nothing above it means nothing.
+      if (pdf.y > 700) pdf.addPage();
+      rule(pdf);
+      pdf.font('Helvetica-Bold').fontSize(9);
+      const y = pdf.y;
+      pdf.text(`Totals — ${doc.rows.length} invoice${doc.rows.length === 1 ? '' : 's'}`,
+        MARGIN, y, { width: 280 });
+      pdf.text(money(doc.totals.subtotal), 334, y, { width: 58, align: 'right' });
+      pdf.text(money(doc.totals.taxTotal), 396, y, { width: 48, align: 'right' });
+      pdf.text(money(doc.totals.total), 448, y, { width: 55, align: 'right' });
+      pdf.text(
+        doc.totals.amountDue === '0.0000' ? '—' : money(doc.totals.amountDue),
+        507, y, { width: 38, align: 'right' },
+      );
+      pdf.font('Helvetica').fontSize(9);
+      pdf.y = y + 20;
+
+      pdf.fontSize(7.5).fillColor('#71717a');
+      pdf.text(
+        'Every invoice issued in the period, at the figures frozen when it was issued. ' +
+          '“Still due” is what remains unpaid today, not at the period end — a row can be ' +
+          'settled after the period it belongs to.',
+        MARGIN,
+        pdf.y,
+        { width: 495, lineGap: 1.5 },
+      );
+      pdf.fillColor('#000000').fontSize(9);
+    },
+    { footNote: 'Sales day book — figures as issued.' },
+  );
 }

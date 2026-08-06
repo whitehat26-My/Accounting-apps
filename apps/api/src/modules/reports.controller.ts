@@ -37,13 +37,14 @@ import {
   whatChanged,
   lockMoments,
   listFiscalYears,
+  salesDayBook,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
-import { renderStatementPdf } from '../pdf/render.js';
+import { renderSalesDayBookPdf, renderStatementPdf } from '../pdf/render.js';
 import { buildArchive } from '../archive/build.js';
 import { NotFoundError } from '../errors.js';
 
@@ -433,6 +434,34 @@ export class ReportsController {
    * archive because a proof that depends on downloading its own checker is
    * not a proof.
    */
+  /**
+   * The sales day book as paper — every invoice issued in a period.
+   *
+   * The CSV exports beside it serve a spreadsheet; this serves the folder an
+   * accountant is handed, which is still how most Malaysian SMEs close a month.
+   */
+  @Requires('report.read')
+  @Get('reports/sales-day-book/pdf')
+  async salesDayBookPdf(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const window = { from: parse(isoDate, from), to: parse(isoDate, to) };
+    const { book, seller } = await withTenant(this.sql, ctx, async (tx) => ({
+      book: await salesDayBook(tx, ctx, window),
+      seller: await sellerBlock(tx, ctx),
+    }));
+
+    const pdf = await renderSalesDayBookPdf({ seller, ...book });
+    void reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="sales-day-book-${window.from}-to-${window.to}.pdf"`)
+      .send(pdf);
+  }
+
   @Requires('report.read')
   @Get('reports/archive/:fiscalYearId')
   async archive(

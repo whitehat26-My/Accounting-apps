@@ -1,9 +1,12 @@
+import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   accessTokenFor,
   call,
+  callRaw,
   createTestApi,
   makeUser,
+  pdfText,
   seedTenant,
   type TestApi,
   type Tenant,
@@ -119,5 +122,82 @@ describe('quoting over HTTP', () => {
       body: { ...body(), lines: [] },
     });
     expect(empty.status).toBe(422);
+  });
+});
+
+describe('the printed quotation', () => {
+  it('prints the offer, its validity, and a place to accept it', async () => {
+    const quote = await call(api, {
+      method: 'POST',
+      ...as('/v1/quotes'),
+      idempotencyKey: randomUUID(),
+      body: {
+        contactId: tenant.customerId,
+        quoteDate: '2026-08-01',
+        validUntil: '2026-08-31',
+        notes: 'Parts subject to availability. Turnaround is 3 working days.',
+        lines: [
+          { description: 'Replace display panel', quantity: '1', unitPrice: '780.00',
+            accountId, taxCodeId },
+          { description: 'Labour — screen fitting', quantity: '2', unitPrice: '90.00',
+            accountId, taxCodeId, discountBasisPoints: 1000 },
+        ],
+      },
+    });
+    expect(quote.status, JSON.stringify(quote.body)).toBe(201);
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/quotes/${quote.body['id']}/pdf`),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    const text = pdfText(response.body);
+
+    expect(text).toContain('QUOTATION');
+    expect(text).toContain('Replace display panel');
+    expect(text).toContain('31/08/2026'); // valid until, DD/MM/YYYY
+    // The discount is shown as a rate, not silently folded into the price.
+    expect(text).toContain('10.0%');
+    // 780 + (180 less 10%) = 942.00
+    expect(text).toContain('942.00');
+
+    /*
+     * A quote is an OFFER, and the page has to say so — a document a customer
+     * could mistake for a tax invoice is a real problem under SST, and one
+     * they could mistake for a demand for payment is a different one.
+     */
+    expect(text).toContain('not a tax invoice');
+    expect(text).toContain('Accepted by');
+  });
+
+  it('stamps an expired quote rather than reprinting it as if it were live', async () => {
+    const quote = await call(api, {
+      method: 'POST',
+      ...as('/v1/quotes'),
+      idempotencyKey: randomUUID(),
+      body: {
+        contactId: tenant.customerId,
+        quoteDate: '2020-01-01',
+        validUntil: '2020-01-31',
+        lines: [{ description: 'Old job', quantity: '1', unitPrice: '100.00',
+                  accountId, taxCodeId }],
+      },
+    });
+
+    const text = pdfText(
+      (await callRaw(api, { method: 'GET', ...as(`/v1/quotes/${quote.body['id']}/pdf`) })).body,
+    );
+    expect(text).toContain('QUOTATION (EXPIRED)');
+    expect(text).toContain('lapsed on 31/01/2020');
+  });
+
+  it('answers 404 for a quote that is not this tenant’s', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/quotes/${randomUUID()}/pdf`),
+    });
+    expect(response.status).toBe(404);
   });
 });

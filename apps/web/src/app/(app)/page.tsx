@@ -1,9 +1,9 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, apiBlobUrl } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
-import { Card, Skeleton } from '@/components/ui';
+import { Button, Card, Skeleton } from '@/components/ui';
 import { Money } from '@/components/money';
 import { can, useMe } from '@/lib/me';
 
@@ -54,6 +54,14 @@ interface Takings {
   grossProfit: string;
 }
 
+/** Fetch with the session attached, then hand the bytes to the browser —
+    a plain window.open cannot carry the Authorization header. */
+async function openPdf(path: string) {
+  const url = await apiBlobUrl(path);
+  window.open(url, '_blank', 'noopener');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 export default function TodayPage() {
   const date = todayIso();
   const me = useMe();
@@ -97,7 +105,19 @@ export default function TodayPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Today — {displayDate(date)}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Today — {displayDate(date)}</h1>
+        {/* Closing up is the counter's job, so this rides pos.sale — the same
+            permission that rang the sales it totals. */}
+        {seesTakings ? (
+          <Button
+            variant="ghost"
+            onClick={() => void openPdf(`/v1/pos/takings/pdf?date=${date}`)}
+          >
+            Print the day sheet
+          </Button>
+        ) : null}
+      </div>
 
       {seesTakings ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
