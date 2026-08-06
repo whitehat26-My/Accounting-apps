@@ -4,6 +4,7 @@ import {
   call,
   callRaw,
   createTestApi,
+  pdfText,
   makeUser,
   seedTenant,
   type TestApi,
@@ -69,6 +70,24 @@ afterAll(async () => {
 
 const as = (url: string) => ({ url, token, tenantId: tenant.tenantId });
 
+/** A real 1x1 PNG — a stand-in for a camera shot and for a signature pad. */
+const PNG_1PX =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+/** Evidence, as the counter and the bench actually post it. */
+const attach = (job: string, kind: 'PHOTO' | 'SIGNATURE', stage: string, caption?: string) =>
+  call(api, {
+    method: 'POST',
+    ...as(`/v1/repairs/${job}/photos`),
+    body: {
+      kind,
+      stage,
+      contentType: 'image/png',
+      imageBase64: PNG_1PX,
+      ...(caption !== undefined ? { caption } : {}),
+    },
+  });
+
 describe('the workshop over HTTP', () => {
   it('runs intake → quote → approve → fitted → collect, and the money is right', async () => {
     const intake = await call(api, {
@@ -79,11 +98,28 @@ describe('the workshop over HTTP', () => {
         deviceDescription: 'Lenovo IdeaPad, blue',
         reportedFault: 'Very slow; freezes with many tabs',
         receivedOn: '2026-08-04',
+        accessories: ['Charger', 'Sleeve'],
       },
     });
     expect(intake.status).toBe(201);
     expect(intake.body['jobNo']).toMatch(/^JOB-/);
     jobId = intake.body['id'] as string;
+
+    // Naming a price is the first commercial act, and the app refuses it until
+    // the device has been photographed. See migration 0048.
+    const unphotographed = await call(api, {
+      method: 'POST',
+      ...as(`/v1/repairs/${jobId}/quote`),
+      body: {
+        diagnosis: 'Needs more memory',
+        lines: [{ description: 'RAM upgrade', quantity: '1', unitPrice: '280.00' }],
+      },
+    });
+    expect(unphotographed.status).toBe(422);
+    expect(unphotographed.body['message']).toMatch(/Photograph the device/);
+
+    expect((await attach(jobId, 'PHOTO', 'RECEIVED', 'As received')).status).toBe(201);
+    expect((await attach(jobId, 'SIGNATURE', 'RECEIVED')).status).toBe(201);
 
     const quote = await call(api, {
       method: 'POST',
@@ -118,6 +154,17 @@ describe('the workshop over HTTP', () => {
       ...as(`/v1/repairs/${jobId}/status`),
       body: { to: 'READY' },
     });
+
+    // And it will not leave the shop until the customer signs for it leaving.
+    const unsigned = await call(api, {
+      method: 'POST',
+      ...as(`/v1/repairs/${jobId}/collect`),
+      body: { collectDate: '2026-08-05' },
+    });
+    expect(unsigned.status).toBe(422);
+    expect(unsigned.body['message']).toMatch(/sign for the device/);
+
+    expect((await attach(jobId, 'SIGNATURE', 'COLLECTED')).status).toBe(201);
 
     const collect = await call(api, {
       method: 'POST',
@@ -185,9 +232,6 @@ describe('the workshop over HTTP', () => {
  * still open.
  */
 describe('photographs on a job', () => {
-  const PNG_1PX =
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
-
   let photoJobId: string;
   let photoId: string;
 
@@ -305,5 +349,94 @@ describe('photographs on a job', () => {
       ...as(`/v1/repairs/${photoJobId}/photos/${photoId}`),
     });
     expect(again.status).toBe(404);
+  });
+});
+
+/**
+ * The two documents the workshop prints.
+ *
+ * Asserted on the TEXT INSIDE the PDF, not merely on the content type. The
+ * renderer runs with `compress: false` precisely so a test can read what a
+ * customer will read — a 200 with a valid-but-blank PDF is the failure this
+ * catches, and it is the failure that would otherwise reach the counter.
+ */
+describe('the printed repair documents', () => {
+  it('prints the intake slip with the device, the accessories and the photograph', async () => {
+    const raw = await callRaw(api, { method: 'GET', ...as(`/v1/repairs/${jobId}/slip.pdf`) });
+
+    expect(raw.status).toBe(200);
+    expect(raw.headers['content-type']).toContain('application/pdf');
+    expect(raw.headers['content-disposition']).toMatch(/JOB-\d+-received\.pdf/);
+    expect(raw.body.startsWith('%PDF-')).toBe(true);
+
+    const text = pdfText(raw.body);
+    expect(text).toContain('DEVICE RECEIVED');
+    expect(text).toContain('Lenovo IdeaPad');
+    // The accessories ticked at the counter — the answer to "I gave you the
+    // charger", printed on the copy the customer walks out holding.
+    expect(text).toContain('Charger');
+    expect(text).toContain('Sleeve');
+    expect(text).toContain('Fault as reported by the customer');
+  });
+
+  it('prints the job report with the work, the total and the photographic record', async () => {
+    const raw = await callRaw(api, { method: 'GET', ...as(`/v1/repairs/${jobId}/report.pdf`) });
+
+    expect(raw.status).toBe(200);
+    const text = pdfText(raw.body);
+    expect(text).toContain('REPAIR JOB REPORT');
+    expect(text).toContain('What we found');
+    expect(text).toContain('Work carried out');
+    // The agreed figures, not the catalogue's.
+    expect(text).toContain('320.00');
+    expect(text).toContain('Photographic record');
+    // The serial actually fitted sits beside the part it belongs to.
+    expect(text).toContain('DDR-02');
+  });
+
+  it('carries a fingerprint that the public verify route recognises', async () => {
+    const raw = await callRaw(api, { method: 'GET', ...as(`/v1/repairs/${jobId}/report.pdf`) });
+    // Printed in four groups of sixteen so a person can read it aloud without
+    // losing their place; whitespace between them is presentation, not data.
+    const digest = /([0-9a-f]{16})\s*([0-9a-f]{16})\s*([0-9a-f]{16})\s*([0-9a-f]{16})/
+      .exec(pdfText(raw.body));
+    expect(digest).not.toBeNull();
+
+    // No token, no tenant header: this is the route a customer holding the
+    // paper uses, and it must work for somebody with no account at all.
+    const verified = await call(api, {
+      method: 'POST',
+      url: '/public/verify',
+      body: { digest: digest!.slice(1, 5).join('') },
+    });
+    expect(verified.status).toBe(201);
+    expect(verified.body['verdict']).toBe('GENUINE');
+    expect(verified.body['documentType']).toBe('REPAIR_JOB');
+  });
+
+  it('answers 404 for another tenant’s job rather than confirming it exists', async () => {
+    const other = await seedTenant(api.admin, 'Rival Workshop Sdn Bhd');
+    const rival = await makeUser(api, { tenantId: other.tenantId, role: 'OWNER' });
+    const { accessToken: rivalToken } = await accessTokenFor(
+      api, rival.refreshToken, other.tenantId,
+    );
+    const theirs = await call(api, {
+      method: 'POST',
+      url: '/v1/repairs',
+      token: rivalToken,
+      tenantId: other.tenantId,
+      body: {
+        contactId: other.customerId,
+        deviceDescription: 'Their machine',
+        reportedFault: 'Their problem',
+        receivedOn: '2026-08-05',
+      },
+    });
+
+    const peek = await call(api, {
+      method: 'GET',
+      ...as(`/v1/repairs/${theirs.body['id'] as string}/report.pdf`),
+    });
+    expect(peek.status).toBe(404);
   });
 });

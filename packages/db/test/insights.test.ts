@@ -6,6 +6,7 @@ import { createItem } from '../src/item.js';
 import { recordCashSale } from '../src/pos.js';
 import { countStock } from '../src/inventory.js';
 import {
+  addRepairPhoto,
   collectRepairJob,
   createRepairJob,
   quoteRepairJob,
@@ -13,6 +14,12 @@ import {
 } from '../src/repair.js';
 import { itemMargins, repairProfitability, stockAgeing } from '../src/insights.js';
 import { createTestDatabase, seedTenant, type Tenant } from './helpers.js';
+
+/** A real 1x1 PNG — enough to satisfy the evidence gates of migration 0048. */
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
 
 /**
  * The owner-insight reports, against the real books.
@@ -183,6 +190,25 @@ describe('repair profitability', () => {
         idempotencyKey: randomUUID(),
       }),
     );
+
+    // The evidence the workshop cannot skip: photographed before it is priced,
+    // signed for on the way in and on the way out. See migration 0048.
+    for (const [kind, stage] of [
+      ['PHOTO', 'RECEIVED'],
+      ['SIGNATURE', 'RECEIVED'],
+      ['SIGNATURE', 'COLLECTED'],
+    ] as const) {
+      await withTenant(sql, ctx, (tx) =>
+        addRepairPhoto(tx, ctx, {
+          repairJobId: job.id,
+          kind,
+          stage,
+          contentType: 'image/png',
+          image: PNG_1PX,
+        }),
+      );
+    }
+
     await withTenant(sql, ctx, (tx) =>
       quoteRepairJob(tx, ctx, job.id, {
         diagnosis: 'Failed drive. Replace and reinstall.',

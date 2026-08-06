@@ -7,6 +7,7 @@ import { api, apiBlobUrl } from '@/lib/api';
 import { displayDate, qty, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 import { RepairPhotos } from '@/components/repair-photos';
+import { RepairSignatures } from '@/components/signature-pad';
 
 /**
  * One job, driven through its life: quote it, record the approval, mark it
@@ -31,6 +32,7 @@ interface Job {
   status: string;
   approvalNote: string | null;
   invoiceId: string | null;
+  accessories: string[];
   lines: JobLine[];
 }
 
@@ -141,11 +143,40 @@ function RepairDetail() {
         {/* Whether to charge for this repair is the first question anybody
             asks, and until now it was answered from memory. */}
         {j.deviceSerial ? <WarrantyLine serialNo={j.deviceSerial} /> : null}
+
+        {/* "I gave you the charger" is the dispute a photograph of the laptop
+            cannot answer. What was ticked at the counter is shown here and
+            printed on the customer's slip. */}
+        <div className="mt-3">
+          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            Came in with the device
+          </div>
+          {j.accessories.length === 0 ? (
+            <p className="mt-1 text-sm text-slate-500">
+              Nothing — the device was handed over on its own.
+            </p>
+          ) : (
+            <ul className="mt-1 flex flex-wrap gap-1.5">
+              {j.accessories.map((item) => (
+                <li
+                  key={item}
+                  className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-700"
+                >
+                  {item}
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
       </Card>
 
       {/* Directly under the device, because the photograph of the machine as it
           arrived belongs with the description of the machine as it arrived. */}
       <RepairPhotos jobId={j.id} jobStatus={j.status} />
+
+      <RepairSignatures jobId={j.id} jobStatus={j.status} onChanged={refresh} />
+
+      <PrintRow job={j} />
 
       {j.lines.length > 0 ? (
         <Card title="Quote — agreed prices">
@@ -261,15 +292,39 @@ function RepairDetail() {
         </Card>
       ) : null}
 
-      {j.status === 'COLLECTED' && j.invoiceId ? (
-        <Button
-          variant="ghost"
-          onClick={() =>
-            void apiBlobUrl(`/v1/invoices/${j.invoiceId}/pdf`)
-              .then((url) => window.open(url, '_blank'))
-              .catch((e: Error) => window.alert(e.message))
-          }
-        >
+    </div>
+  );
+}
+
+/**
+ * The paper this job can produce, at every stage of its life.
+ *
+ * The slip is offered from the moment the device is on the counter, because
+ * that is when the customer needs something to walk out with; the report only
+ * once there is a diagnosis to report. A button that opens a document about
+ * work nobody has done yet is a button that teaches people not to trust the
+ * others beside it.
+ */
+function PrintRow({ job }: { job: Job }) {
+  const open = (path: string) => {
+    void apiBlobUrl(path)
+      .then((url) => window.open(url, '_blank'))
+      .catch((e: Error) => window.alert(e.message));
+  };
+  const reportable = !['RECEIVED'].includes(job.status);
+
+  return (
+    <div className="flex flex-wrap gap-2">
+      <Button variant="ghost" onClick={() => open(`/v1/repairs/${job.id}/slip.pdf`)}>
+        Print device receipt
+      </Button>
+      {reportable ? (
+        <Button variant="ghost" onClick={() => open(`/v1/repairs/${job.id}/report.pdf`)}>
+          Print job report
+        </Button>
+      ) : null}
+      {job.status === 'COLLECTED' && job.invoiceId ? (
+        <Button variant="ghost" onClick={() => open(`/v1/invoices/${job.invoiceId}/pdf`)}>
           Print invoice
         </Button>
       ) : null}

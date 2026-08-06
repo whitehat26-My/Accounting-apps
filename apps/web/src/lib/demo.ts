@@ -69,6 +69,7 @@ interface DemoJob {
   invoiceId: string | null;
   receivedOn: string;
   collectedOn: string | null;
+  accessories: string[];
   lines: { lineNo: number; description: string; quantity: string; unitPrice: string; itemId: string | null; serialNumbers: string[] | null }[];
 }
 
@@ -309,7 +310,8 @@ function seed(): DemoStore {
         deviceDescription: 'Acer Aspire 5, silver', deviceSerial: 'NXHS8SM00123',
         reportedFault: 'Does not boot; clicking noise from the drive bay',
         diagnosis: null, status: 'RECEIVED', approvalNote: null, closedReason: null,
-        invoiceId: null, receivedOn: today(), collectedOn: null, lines: [],
+        invoiceId: null, receivedOn: today(), collectedOn: null,
+        accessories: ['Charger', 'Bag / sleeve'], lines: [],
       },
     ],
     invoiceSeq: 3,
@@ -1232,13 +1234,14 @@ export function demoApi(
   // ---- repairs -------------------------------------------------------------
   if (p === '/v1/repairs' && method === 'GET') return { jobs: store.jobs };
   if (p === '/v1/repairs' && method === 'POST') {
-    const input = b as { deviceDescription: string; deviceSerial?: string; reportedFault: string; receivedOn: string; contactId: string };
+    const input = b as { deviceDescription: string; deviceSerial?: string; reportedFault: string; receivedOn: string; contactId: string; accessories?: string[] };
     const job: DemoJob = {
       id: uid(), jobNo: `JOB-${String(store.jobSeq++).padStart(5, '0')}`,
       contactId: input.contactId, deviceDescription: input.deviceDescription,
       deviceSerial: input.deviceSerial ?? null, reportedFault: input.reportedFault,
       diagnosis: null, status: 'RECEIVED', approvalNote: null, closedReason: null,
-      invoiceId: null, receivedOn: input.receivedOn, collectedOn: null, lines: [],
+      invoiceId: null, receivedOn: input.receivedOn, collectedOn: null,
+      accessories: input.accessories ?? [], lines: [],
     };
     store.jobs.unshift(job);
     save(store);
@@ -1258,6 +1261,17 @@ export function demoApi(
     // worse than a card that honestly shows nothing — the card's own empty
     // state already explains what the feature is for.
     if (action === '/photos' && method === 'GET') return { photos: [] };
+
+    // A signature, like a photograph, is image bytes — and for the same reason
+    // the static demo cannot hold one. Said plainly rather than by 404, because
+    // the person tapping the pad has just drawn their name on it.
+    if (action === '/photos' && method === 'POST') {
+      throw demoError(
+        501,
+        'Photographs and signatures are stored by the real server; the static demo ' +
+          'keeps nothing but the text you can see.',
+      );
+    }
 
     if (action === '/quote') {
       const input = b as { diagnosis: string; lines: { description: string; quantity: string; unitPrice: string }[] };

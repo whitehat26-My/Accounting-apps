@@ -1,5 +1,6 @@
 import type { Sql, TenantContext, Tx } from './client.js';
 import { invoiceDocumentData, receiptDocumentData } from './document-data.js';
+import { repairDocumentData } from './repair-document.js';
 import { hashDocument } from './proof.js';
 
 /**
@@ -23,7 +24,17 @@ import { hashDocument } from './proof.js';
  * ---------------------------------------------------------------------------
  */
 
-export type DocumentType = 'INVOICE' | 'RECEIPT';
+export type DocumentType = 'INVOICE' | 'RECEIPT' | 'REPAIR_JOB';
+
+/**
+ * What `verify_document_digest` can answer for.
+ *
+ * Wider than `DocumentType` because migration 0048 also matches a repair
+ * PHOTOGRAPH's digest — the photo is not a document and is never fingerprinted
+ * here, but the digest printed beside it on a report is checkable, which is
+ * the whole reason for photographing the device.
+ */
+export type VerifiableType = DocumentType | 'REPAIR_PHOTO';
 
 export interface Fingerprint {
   readonly documentType: DocumentType;
@@ -50,7 +61,9 @@ export async function fingerprintDocument(
   const { digest, issuedOn } =
     documentType === 'INVOICE'
       ? await invoiceFingerprint(tx, ctx, documentId)
-      : await receiptFingerprint(tx, ctx, documentId);
+      : documentType === 'RECEIPT'
+        ? await receiptFingerprint(tx, ctx, documentId)
+        : await repairFingerprint(tx, ctx, documentId);
 
   /*
    * ON CONFLICT DO NOTHING, then read back. Re-rendering the same invoice
@@ -87,9 +100,44 @@ async function receiptFingerprint(tx: Tx, ctx: TenantContext, id: string) {
   return { digest: hashDocument(document), issuedOn: document.paymentDate };
 }
 
+/**
+ * A repair job report, hashed over the account of the work — not the images.
+ *
+ * ---------------------------------------------------------------------------
+ * THE PHOTOGRAPHS ARE IN THE DIGEST, BUT ONLY BY THEIR OWN DIGESTS.
+ *
+ * Hashing megabytes of JPEG on every render would be slow and pointless: each
+ * photograph already carries a SHA-256 computed when it was stored, so listing
+ * those hashes binds the report to exactly those images. Substituting a
+ * picture changes its digest, which changes the report's digest, which fails
+ * verification — the same guarantee, at the cost of a few hundred bytes.
+ *
+ * `status` is excluded, as it is for an invoice: a report printed at handover
+ * must still verify when the job is later re-opened as a warranty return.
+ * ---------------------------------------------------------------------------
+ */
+async function repairFingerprint(tx: Tx, ctx: TenantContext, id: string) {
+  const document = await repairDocumentData(tx, ctx, id);
+  const { status, seller, photos, signatures, ...rest } = document;
+  void status;
+  return {
+    digest: hashDocument({
+      ...rest,
+      seller: seller.name,
+      evidence: [...photos, ...signatures].map((p) => ({
+        kind: p.kind,
+        stage: p.stage,
+        digest: p.digest,
+        takenOn: p.takenOn,
+      })),
+    }),
+    issuedOn: document.collectedOn ?? document.receivedOn,
+  };
+}
+
 export interface VerificationResult {
   readonly verdict: 'GENUINE' | 'UNKNOWN';
-  readonly documentType: DocumentType | null;
+  readonly documentType: VerifiableType | null;
   readonly issuedOn: string | null;
 }
 
@@ -110,7 +158,7 @@ export async function verifyDocumentDigest(sql: Sql, digest: string): Promise<Ve
     return { verdict: 'UNKNOWN', documentType: null, issuedOn: null };
   }
 
-  const rows = await sql<{ document_type: DocumentType; issued_on: Date }[]>`
+  const rows = await sql<{ document_type: VerifiableType; issued_on: Date }[]>`
       SELECT document_type, issued_on FROM verify_document_digest(decode(${digest}, 'hex'))
   `;
   const row = rows[0];

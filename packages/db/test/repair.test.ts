@@ -36,6 +36,28 @@ let ssdId: string;
 let labourId: string;
 let jobId: string;
 
+/** A real 1x1 PNG. Its IHDR is what `measureImage` reads. */
+const PNG_1PX = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+  'base64',
+);
+
+/** Evidence, the shape the counter captures it in. */
+const attach = (
+  job: string,
+  kind: 'PHOTO' | 'SIGNATURE',
+  stage: 'RECEIVED' | 'DIAGNOSIS' | 'IN_PROGRESS' | 'READY' | 'COLLECTED',
+) =>
+  withTenant(sql, ctx, (tx) =>
+    addRepairPhoto(tx, ctx, {
+      repairJobId: job,
+      kind,
+      stage,
+      contentType: 'image/png',
+      image: PNG_1PX,
+    }),
+  );
+
 beforeAll(async () => {
   const db = await createTestDatabase('repair');
   sql = db.sql;
@@ -130,6 +152,35 @@ describe('intake', () => {
   });
 });
 
+describe('the evidence a job cannot run without', () => {
+  const quote = {
+    diagnosis: 'Failed HDD.',
+    lines: [{ description: 'Replace drive', quantity: '1', unitPrice: '200.00' }],
+  };
+
+  it('refuses to name a price for a device nobody photographed', async () => {
+    // Intake succeeded above with no photograph at all — deliberately. The
+    // gate is on the first commercial act, not on accepting the machine.
+    await expect(
+      withTenant(sql, ctx, (tx) => quoteRepairJob(tx, ctx, jobId, quote)),
+    ).rejects.toThrow(/Photograph the device before quoting/);
+  });
+
+  it('takes the intake photograph and the customer signing for its condition', async () => {
+    const photo = await attach(jobId, 'PHOTO', 'RECEIVED');
+    const signature = await attach(jobId, 'SIGNATURE', 'RECEIVED');
+
+    expect(photo.kind).toBe('PHOTO');
+    expect(signature.kind).toBe('SIGNATURE');
+
+    // Both are rows in the same table, with the same digest machinery — a
+    // signature is not a second-class piece of evidence.
+    const all = await withTenant(sql, ctx, (tx) => listRepairPhotos(tx, ctx, jobId));
+    expect(all.map((p) => p.kind).sort()).toEqual(['PHOTO', 'SIGNATURE']);
+    expect(all.every((p) => /^[0-9a-f]{64}$/.test(p.digest))).toBe(true);
+  });
+});
+
 describe('quoting and approval', () => {
   it('quotes parts and labour at agreed prices', async () => {
     const view = await withTenant(sql, ctx, (tx) =>
@@ -188,6 +239,22 @@ describe('collection', () => {
     await expect(
       withTenant(sql, ctx, (tx) => transitionRepairJob(tx, ctx, jobId, { to: 'COLLECTED' })),
     ).rejects.toThrow(/invoicing it/);
+
+    /*
+     * Nor without the customer signing for the device leaving. Checked before
+     * anything is invoiced, so a missing signature can never leave a job
+     * half-collected — an invoice raised against a machine still on the shelf.
+     */
+    await expect(
+      withTenant(sql, ctx, (tx) =>
+        collectRepairJob(tx, ctx, jobId, {
+          collectDate: '2026-08-06',
+          idempotencyKey: randomUUID(),
+        }),
+      ),
+    ).rejects.toThrow(/must sign for the device before it leaves/);
+
+    await attach(jobId, 'SIGNATURE', 'COLLECTED');
 
     /*
      * The exact unit fitted is decided on the bench, so the serial arrives at
@@ -280,9 +347,12 @@ describe('declines and the queue', () => {
         deviceDescription: 'Dell XPS 13',
         reportedFault: 'Cracked screen',
         receivedOn: '2026-08-05',
+        accessories: ['Charger', 'Sleeve'],
         idempotencyKey: randomUUID(),
       }),
     );
+
+    await attach(job.id, 'PHOTO', 'RECEIVED');
 
     await withTenant(sql, ctx, (tx) =>
       quoteRepairJob(tx, ctx, job.id, {
@@ -310,6 +380,10 @@ describe('declines and the queue', () => {
 
     const quoted = await withTenant(sql, ctx, (tx) => listRepairJobs(tx, ctx, { status: 'QUOTED' }));
     expect(quoted.some((j) => j.id === job.id)).toBe(true);
+
+    // What came in with it, carried back out on the view the slip prints from.
+    const view = await withTenant(sql, ctx, (tx) => getRepairJob(tx, ctx, job.id));
+    expect(view.accessories).toEqual(['Charger', 'Sleeve']);
   });
 
   it('answers not-found for another tenant’s job', async () => {
@@ -347,12 +421,6 @@ describe('the books after the workshop', () => {
  * record around the bytes, not the bytes themselves.
  */
 describe('repair job photographs', () => {
-  // A real 1x1 PNG. Its IHDR is what `measureImage` reads.
-  const PNG_1PX = Buffer.from(
-    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-    'base64',
-  );
-
   let photoJobId: string;
 
   beforeAll(async () => {

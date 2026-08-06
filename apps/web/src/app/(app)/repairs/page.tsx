@@ -36,6 +36,8 @@ export default function RepairsPage() {
   const [device, setDevice] = useState('');
   const [serial, setSerial] = useState('');
   const [fault, setFault] = useState('');
+  const [accessories, setAccessories] = useState<string[]>([]);
+  const [otherAccessory, setOtherAccessory] = useState('');
 
   const intake = useMutation({
     mutationFn: async () => {
@@ -51,6 +53,7 @@ export default function RepairsPage() {
           ...(serial ? { deviceSerial: serial } : {}),
           reportedFault: fault,
           receivedOn: todayIso(),
+          ...(accessories.length > 0 ? { accessories } : {}),
         },
       });
     },
@@ -60,6 +63,8 @@ export default function RepairsPage() {
       setDevice('');
       setSerial('');
       setFault('');
+      setAccessories([]);
+      setOtherAccessory('');
       void queryClient.invalidateQueries({ queryKey: ['repairs'] });
     },
   });
@@ -156,6 +161,13 @@ export default function RepairsPage() {
                 placeholder="Does not boot; clicking noise"
               />
             </Field>
+            <AccessoryPicker
+              chosen={accessories}
+              onChange={setAccessories}
+              other={otherAccessory}
+              onOther={setOtherAccessory}
+            />
+
             <ErrorNote error={intake.error} />
             <Button type="submit" disabled={intake.isPending} className="w-full">
               {intake.isPending ? 'Saving…' : 'Take in'}
@@ -163,6 +175,111 @@ export default function RepairsPage() {
           </form>
         </Card>
       </div>
+    </div>
+  );
+}
+
+/**
+ * What came in with the device.
+ *
+ * ---------------------------------------------------------------------------
+ * TICKED, NOT TYPED — AND THAT IS THE WHOLE DESIGN.
+ *
+ * "I gave you the charger" is the second most common repair dispute after
+ * "that scratch was not there", and unlike the scratch a photograph of the
+ * laptop does not answer it. It is only ever answered by a list agreed at the
+ * counter while both people are standing there.
+ *
+ * A free-text box would not get filled in, because typing "Charger" while a
+ * customer waits is friction and the counter will skip it. Six taps that cover
+ * nine intakes out of ten will not be skipped. The tenth gets the box.
+ * ---------------------------------------------------------------------------
+ */
+const COMMON_ACCESSORIES = [
+  'Charger',
+  'Battery',
+  'Bag / sleeve',
+  'SIM card',
+  'Memory card',
+  'Cable',
+] as const;
+
+function AccessoryPicker({
+  chosen, onChange, other, onOther,
+}: {
+  chosen: string[];
+  onChange: (next: string[]) => void;
+  other: string;
+  onOther: (value: string) => void;
+}) {
+  const toggle = (item: string) =>
+    onChange(chosen.includes(item) ? chosen.filter((c) => c !== item) : [...chosen, item]);
+
+  const addOther = () => {
+    const trimmed = other.trim();
+    // Twenty is the CHECK on the column; stopping here means the counter finds
+    // out now rather than losing the whole intake form to a 422.
+    if (!trimmed || chosen.includes(trimmed) || chosen.length >= 20) return;
+    onChange([...chosen, trimmed]);
+    onOther('');
+  };
+
+  const custom = chosen.filter((c) => !COMMON_ACCESSORIES.includes(c as never));
+
+  return (
+    <div>
+      <div className="text-xs font-medium text-slate-600">Came in with it</div>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {COMMON_ACCESSORIES.map((item) => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => toggle(item)}
+            aria-pressed={chosen.includes(item)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              chosen.includes(item)
+                ? 'bg-slate-900 text-white'
+                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+            }`}
+          >
+            {item}
+          </button>
+        ))}
+        {custom.map((item) => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => toggle(item)}
+            aria-pressed
+            className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white"
+          >
+            {item} ✕
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex gap-2">
+        <Input
+          value={other}
+          onChange={(e) => onOther(e.target.value)}
+          placeholder="Anything else"
+          maxLength={60}
+          // Enter would otherwise submit the intake form and take the device
+          // in with the accessory still sitting unadded in this box.
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addOther();
+            }
+          }}
+        />
+        <Button variant="ghost" onClick={addOther} disabled={!other.trim()}>
+          Add
+        </Button>
+      </div>
+      <p className="mt-1 text-xs text-slate-500">
+        Printed on the receipt the customer takes away — it is what settles “I gave you the
+        charger”.
+      </p>
     </div>
   );
 }

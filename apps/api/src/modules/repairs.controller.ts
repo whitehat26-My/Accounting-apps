@@ -7,6 +7,8 @@ import { isoDate, positiveDecimal, uuid } from '@emil/contracts';
 import {
   addRepairPhoto,
   collectRepairJob,
+  fingerprintDocument,
+  repairDocumentData,
   createRepairJob,
   deleteRepairPhoto,
   getRepairJob,
@@ -25,6 +27,16 @@ import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
+import { renderRepairIntakeSlipPdf, renderRepairReportPdf } from '../pdf/render.js';
+import { verifyUrl } from '../config.js';
+
+/** Every printed repair document leaves by the same door. */
+function send(reply: FastifyReply, pdf: Buffer, filename: string): void {
+  void reply
+    .header('content-type', 'application/pdf')
+    .header('content-disposition', `inline; filename="${filename}"`)
+    .send(pdf);
+}
 
 /**
  * The workshop.
@@ -129,6 +141,7 @@ export class RepairsController {
     return withTenant(this.sql, ctx, (tx) =>
       addRepairPhoto(tx, ctx, {
         repairJobId: parse(uuid, id),
+        kind: input.kind,
         stage: input.stage,
         contentType: input.contentType,
         image,
@@ -150,6 +163,54 @@ export class RepairsController {
       deleteRepairPhoto(tx, ctx, parse(uuid, id), parse(uuid, photoId)),
     );
     return { removed: true };
+  }
+
+  // -------------------------------------------------------------------------
+  // The two printed documents. See `apps/api/src/pdf/render.ts`.
+  //
+  // Both carry the job's fingerprint, so the customer's copy can be checked
+  // against the shop's records by anybody holding it — which is the point of
+  // photographing a device at all. The slip is the same document at intake;
+  // the report is the finished account of the work.
+  // -------------------------------------------------------------------------
+
+  @Requires('repair.read')
+  @Get(':id/slip.pdf')
+  async slipPdf(
+    @Param('id') id: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const { doc, digest } = await this.printable(request, parse(uuid, id));
+    const pdf = await renderRepairIntakeSlipPdf(doc, { digest, verifyUrl: verifyUrl() });
+    send(reply, pdf, `${doc.jobNo}-received.pdf`);
+  }
+
+  @Requires('repair.read')
+  @Get(':id/report.pdf')
+  async reportPdf(
+    @Param('id') id: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const { doc, digest } = await this.printable(request, parse(uuid, id));
+    const pdf = await renderRepairReportPdf(doc, { digest, verifyUrl: verifyUrl() });
+    send(reply, pdf, `${doc.jobNo}-report.pdf`);
+  }
+
+  /**
+   * One read for both documents, fingerprint included.
+   *
+   * The fingerprint is computed HERE rather than at collection, for the same
+   * reason invoices do it at print time: every job already in the system gains
+   * a verifiable reference the next time somebody prints it, with no backfill.
+   */
+  private async printable(request: FastifyRequest, jobId: string) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, async (tx) => ({
+      doc: await repairDocumentData(tx, ctx, jobId),
+      digest: (await fingerprintDocument(tx, ctx, 'REPAIR_JOB', jobId)).digest,
+    }));
   }
 
   @Requires('repair.write')
@@ -239,6 +300,8 @@ const intakeSchema = z.object({
   deviceSerial: z.string().min(1).max(120).optional(),
   reportedFault: z.string().min(1).max(2000),
   receivedOn: isoDate,
+  /** What came in with it. Twenty entries is the CHECK in 0048. */
+  accessories: z.array(z.string().min(1).max(60)).max(20).optional(),
 });
 
 const quoteSchema = z.object({
@@ -279,6 +342,8 @@ const fittedSchema = z.object({
  * checks, and the authoritative one is the one nearest the data.
  */
 const addPhotoSchema = z.object({
+  /** SIGNATURE is the customer's mark, stored as an image — see 0048. */
+  kind: z.enum(['PHOTO', 'SIGNATURE']).default('PHOTO'),
   stage: z.enum(['RECEIVED', 'DIAGNOSIS', 'IN_PROGRESS', 'READY', 'COLLECTED']),
   caption: z.string().min(1).max(300).optional(),
   contentType: z.enum(['image/jpeg', 'image/png', 'image/webp']),

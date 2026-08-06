@@ -214,6 +214,28 @@ plausible-but-wrong failure that explicit profiles exist to prevent.
 
 No blocker. Not done.
 
+### 4.0 Repair photo retention and the PDPA notice — NOT STARTED
+
+Two related gaps left open by §5.25, recorded here so neither survives only as a
+conversation.
+
+**No automatic expiry on repair evidence.** Photographs and signatures live for as long as
+the job row does, which is forever. That is defensible while a warranty could still be
+claimed and indefensible once it cannot: these are pictures of customers' property and
+images of their signatures. What is needed is a retention window per tenant, a worker job
+that deletes the BYTES while leaving the metadata and digest in place (so the audit trail
+still records that a photograph existed and what it hashed to), and a line on the slip
+saying how long the shop keeps them. Deliberately not guessed at: the right window is a
+business decision, and a default that silently deletes evidence before a dispute is settled
+would be worse than keeping everything.
+
+**No data-protection declaration on the intake slip.** The slip records personal data —
+name, phone, a device serial, and a signature — and Malaysian practice under the PDPA is to
+say so at the point of collection. The wording of a lawful-basis notice is a legal question,
+not a drafting one, and a plausible-looking wrong notice is worse than none: it tells the
+customer they have been informed when they have not. **Unblocker:** wording confirmed
+against the PDPA and, ideally, whatever the shop already uses on its other paperwork.
+
 ### 4.1 `apps/web` — SHOP SCREENS BUILT; accounting screens outstanding
 
 Next.js 15 + Tailwind 4 + TanStack Query. Built: login/register with organisation switch,
@@ -638,6 +660,77 @@ and read as "checked, nothing found", which is worse than an absent check. **Unb
 decide whether supplier bank details are stored at all — the same argument `0041` settled
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
+
+### 5.25 The workshop's evidence — photographs, signatures, accessories — BUILT (`0048`)
+
+Migration `0048`, `packages/domain/src/repair.ts`, `packages/db/src/repair-document.ts`,
+`GET /v1/repairs/:id/slip.pdf` and `GET /v1/repairs/:id/report.pdf` (both `repair.read`).
+
+**The app now REFUSES two things it used to allow, and the refusals are the feature.** A job
+cannot become `QUOTED` until the device has been photographed, and cannot be collected until
+the customer has signed both for the condition recorded at intake and for the device leaving.
+Both gates live in the pure domain (`checkRepairTransition`), so the rule is one function and
+every path — quoting, the generic status transition, and collection — asks the same question.
+
+**The gates are on the TRANSITIONS, not on intake.** A device can still be taken in with
+nothing but a description, because the counter is sometimes a courier handing over a box, and
+a shop that cannot record a job it has physically accepted keeps no record at all. Naming a
+price is the first commercial act, and by then somebody has had the device in their hands with
+a camera in their pocket. At collection the customer is definitely present, so a signature
+missed at drop-off is caught rather than lost. `CANCELLED` is deliberately ungated: it is the
+escape hatch for "we could not fix it, take it back", and gating it would strand devices in
+the workshop forever.
+
+**A signature is stored as a photograph, on purpose.** `repair_job_photo` already solves every
+problem a signature has — a SHA-256 recorded in the audit log, the bytes in a separate
+un-audited table so a substitution is DETECTABLE, a size ceiling, and a `stage` saying when it
+was captured. A second pair of tables for an image needing exactly those properties would have
+been duplication with a worse integrity story. So `kind = 'SIGNATURE'` and `stage` says which
+signature it is. The web pad exports PNG rather than JPEG: a few black strokes on white is
+precisely the content JPEG's block transform ruins and PNG flattens to nothing — smaller AND
+cleaner.
+
+**Accessories are a `TEXT[]` on the job, ticked at the counter.** "I gave you the charger" is
+the second most common repair dispute after "that scratch was not there", and unlike the
+scratch a photograph of the laptop does not answer it. A free-text box would not get filled
+in; six taps that cover nine intakes out of ten will not be skipped, and the tenth gets the
+box. Not its own table: it is a checklist on one document, never queried across jobs, and
+never needs a foreign key.
+
+**Two documents.** The intake slip is printed at the counter and is the only document that
+exists at the moment the shop takes on responsibility for somebody else's property — device,
+serial, accessories, fault, and the photographs of how it arrived, so the customer leaves
+holding the same evidence the shop keeps. Evidence only one side holds is not evidence. The
+job report is the finished account: fault, diagnosis, how approval was given, the work at the
+AGREED prices, the serial actually fitted beside the part it belongs to, and the photographic
+record grouped by stage. It points at the invoice for the money rather than restating it as
+authority — one document is the authority on what was charged.
+
+**Every photograph on the report prints its own digest**, and `verify_document_digest` now
+matches a repair photograph as well as a document. Sixteen hex characters under each picture
+is 64 bits — nobody collides with it by accident — and typing it into the verify page answers
+"yes, this shop stored that exact image on that date", which is the whole reason for
+photographing a device. The report itself is fingerprinted as `REPAIR_JOB`, hashed over the
+account of the work plus each photograph's stored digest rather than over megabytes of JPEG:
+substituting a picture changes its digest, changes the report's digest, and fails
+verification — same guarantee, a few hundred bytes.
+
+**Four real layout defects were found by rendering the documents and looking at them**, not by
+reading the code. (1) The verification block clamped itself to y=690 and drew straight through
+the signature rules and over the stamped footer — on invoices and receipts too, not only here;
+it now measures the QR (whose size depends on the digest length, so it cannot be a constant)
+and places the whole foot as one unit. (2) A stage heading could sit at the bottom of one page
+with its photographs on the next, reading as a section containing nothing; the heading now
+travels with its first row. (3) The accessory ticks printed as empty boxes — Helvetica's
+WinAnsi encoding has no U+2713, so a checklist said the exact opposite of what it is for; the
+tick is now drawn with strokes. (4) Fixing (1) naively turned a one-page counter slip into two
+pages, the second holding nothing but a QR code — nobody prints that twice a day.
+
+**What this does NOT do.** The `PDPA` data-protection declaration on the slip was considered
+and left out: the wording of a lawful-basis notice is a legal question, and a plausible-looking
+wrong one is worse than none. The slip's terms say only things this shop actually does. Photo
+retention has no automatic expiry. Both gaps are recorded at §4.0 with what would unblock
+them.
 
 ### 5.24 Printed documents — day sheet, quotation, sales day book — BUILT (no migration)
 

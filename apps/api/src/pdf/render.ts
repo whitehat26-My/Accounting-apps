@@ -9,6 +9,8 @@ import type {
   InvoiceDocument,
   PayslipDocument,
   ReceiptDocument,
+  RepairDocument,
+  RepairEvidencePhoto,
 } from '@emil/db';
 
 /**
@@ -838,7 +840,19 @@ function verificationBlock(
 ): void {
   const matrix = encodeQr(`${verification.verifyUrl}#d=${verification.digest}`);
   const MODULE = 3;
-  const top = Math.min(pdf.y + 12, 690);
+
+  /*
+   * Take a new page rather than clamp.
+   *
+   * This used to be `Math.min(pdf.y + 12, 690)`, which on any document whose
+   * body reached the bottom of the page drew the QR straight through whatever
+   * was already there — and, at 690 plus an 87-point symbol, over the stamped
+   * footer as well. A verification block on top of a signature line verifies
+   * nothing and ruins both. The footer rule sits at 772; leave it alone.
+   */
+  const height = matrix.length * MODULE;
+  if (pdf.y + height + 12 > 760) pdf.addPage();
+  const top = pdf.y + 12;
 
   pdf.fillColor('#000000');
   for (let row = 0; row < matrix.length; row++) {
@@ -1551,5 +1565,480 @@ export function renderCreditNotePdf(doc: CreditNoteDocument): Promise<Buffer> {
       pdf.fillColor('#000000').fontSize(9);
     },
     { footNote: 'Credit note — retain with the invoice it corrects.' },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The workshop's two documents
+// ---------------------------------------------------------------------------
+
+/**
+ * A photograph, printed at a size somebody can actually judge.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THE DIGEST IS PRINTED UNDER EVERY PICTURE.
+ *
+ * A photograph on a page is only evidence if the page can be checked against
+ * something. Under each shot goes the date it was taken, who took it, and the
+ * first sixteen characters of its SHA-256 — enough to type into the verify
+ * page and be told "yes, this shop stored that exact image on that date".
+ * Sixteen hex characters is 64 bits: nobody is producing a second photograph
+ * that collides with it by accident, and the full digest is one lookup away.
+ *
+ * WebP is stored but cannot be embedded — pdfkit reads PNG and JPEG only. The
+ * web app encodes every capture as JPEG, so this is the path nothing takes in
+ * practice; it prints an honest placeholder rather than throwing, because a
+ * report that fails to render is worse than one that says a picture is
+ * missing and names it.
+ * ---------------------------------------------------------------------------
+ */
+const PHOTO_W = 160;
+const PHOTO_H = 120;
+
+const PHOTO_ROW = PHOTO_H + 46;
+
+/**
+ * @param heading printed immediately above the first row, and — importantly —
+ *   on the SAME page as it. Drawing the heading separately left "As received"
+ *   stranded at the foot of one page with its photographs on the next, which
+ *   reads as a section containing nothing.
+ */
+function photoGrid(
+  pdf: PDFKit.PDFDocument,
+  photos: readonly RepairEvidencePhoto[],
+  heading?: string,
+  perRow = 3,
+): void {
+  if (photos.length === 0) return;
+
+  const gap = 12;
+  const headingHeight = heading === undefined ? 0 : 16;
+  if (pdf.y + headingHeight + PHOTO_ROW > 740) pdf.addPage();
+
+  if (heading !== undefined) {
+    pdf.font('Helvetica-Bold').fontSize(8.5).fillColor('#3f3f46');
+    pdf.text(heading, MARGIN, pdf.y);
+    pdf.fillColor('#000000');
+    pdf.y += 6;
+  }
+
+  let column = 0;
+  let rowTop = pdf.y;
+
+  for (const photo of photos) {
+    if (column === perRow) {
+      column = 0;
+      rowTop += PHOTO_ROW;
+      // Break before a row, never through one — half a photograph at a page
+      // break is worse than a page with three photographs on it.
+      if (rowTop + PHOTO_ROW > 740) {
+        pdf.addPage();
+        rowTop = pdf.y;
+      }
+    }
+
+    const x = MARGIN + column * (PHOTO_W + gap);
+    pdf.rect(x, rowTop, PHOTO_W, PHOTO_H).fillAndStroke('#fafafa', '#d4d4d8');
+    pdf.fillColor('#000000');
+
+    if (photo.contentType === 'image/jpeg' || photo.contentType === 'image/png') {
+      pdf.image(photo.image, x + 2, rowTop + 2, {
+        fit: [PHOTO_W - 4, PHOTO_H - 4],
+        align: 'center',
+        valign: 'center',
+      });
+    } else {
+      pdf.font('Helvetica').fontSize(7).fillColor('#a1a1aa');
+      pdf.text(`${photo.contentType} — stored, not printable`, x + 6, rowTop + PHOTO_H / 2 - 4, {
+        width: PHOTO_W - 12,
+        align: 'center',
+        lineBreak: false,
+      });
+      pdf.fillColor('#000000');
+    }
+
+    let y = rowTop + PHOTO_H + 4;
+    pdf.font('Helvetica-Bold').fontSize(7).fillColor('#3f3f46');
+    pdf.text(photo.caption ?? stageLabel(photo.stage), x, y, {
+      width: PHOTO_W,
+      height: 16,
+      ellipsis: true,
+    });
+    y += 9;
+    pdf.font('Helvetica').fontSize(6.5).fillColor('#71717a');
+    pdf.text(
+      photo.takenByName
+        ? `${displayDate(photo.takenOn)} · ${photo.takenByName}`
+        : displayDate(photo.takenOn),
+      x,
+      y,
+      { width: PHOTO_W, lineBreak: false },
+    );
+    pdf.font('Courier').fontSize(6).fillColor('#a1a1aa');
+    pdf.text(photo.digest.slice(0, 16), x, y + 8, { width: PHOTO_W, lineBreak: false });
+    pdf.font('Helvetica').fillColor('#000000');
+
+    column += 1;
+  }
+
+  pdf.y = rowTop + PHOTO_ROW;
+}
+
+const STAGE_LABELS: Record<string, string> = {
+  RECEIVED: 'As received',
+  DIAGNOSIS: 'During diagnosis',
+  IN_PROGRESS: 'On the bench',
+  READY: 'Work completed',
+  COLLECTED: 'At collection',
+};
+
+function stageLabel(stage: string): string {
+  return STAGE_LABELS[stage] ?? stage;
+}
+
+/**
+ * A block of prose under a small heading — fault, diagnosis, how approval came.
+ *
+ * Set narrower than the page and with line spacing, because these are the
+ * paragraphs anyone actually reads on a repair document, and the surrounding
+ * tables have already used up the reader's patience for dense type.
+ */
+function narrative(pdf: PDFKit.PDFDocument, heading: string, body: string): void {
+  if (pdf.y > 700) pdf.addPage();
+  pdf.font('Helvetica-Bold').fontSize(8.5).fillColor('#3f3f46').text(heading, MARGIN, pdf.y);
+  pdf.font('Helvetica').fontSize(9).fillColor('#18181b');
+  pdf.text(body, MARGIN, pdf.y + 2, { width: 495, lineGap: 2 });
+  pdf.fillColor('#000000');
+  pdf.moveDown(0.7);
+}
+
+/**
+ * The accessories, as ticked boxes.
+ *
+ * "I gave you the charger" is the second most common repair dispute after "that
+ * scratch was not there", and a photograph of the laptop does not answer it. A
+ * filled box beside each item, on the slip the customer walks out holding, does.
+ * An empty list says so in words rather than printing a heading over nothing —
+ * "nothing else came with it" is itself a claim worth recording.
+ */
+function accessoryChecklist(pdf: PDFKit.PDFDocument, accessories: readonly string[]): void {
+  pdf.font('Helvetica-Bold').fontSize(8.5).fillColor('#3f3f46');
+  pdf.text('Accessories received with the device', MARGIN, pdf.y);
+  pdf.fillColor('#000000');
+
+  if (accessories.length === 0) {
+    pdf.font('Helvetica').fontSize(9).fillColor('#71717a');
+    pdf.text('None — the device was handed over on its own.', MARGIN, pdf.y + 3, { width: 495 });
+    pdf.fillColor('#000000');
+    pdf.moveDown(0.7);
+    return;
+  }
+
+  let y = pdf.y + 5;
+  accessories.forEach((item, i) => {
+    const x = MARGIN + (i % 3) * 165;
+    if (i % 3 === 0 && i > 0) y += 15;
+    pdf.rect(x, y, 9, 9).fillAndStroke('#1875BE', '#1875BE');
+    /*
+     * The tick is DRAWN, not typed. Helvetica's WinAnsi encoding has no U+2713,
+     * so `pdf.text('✓')` printed a blank box on every line — a checklist of
+     * empty boxes, which says the opposite of what it is there to say.
+     */
+    pdf.save();
+    pdf.strokeColor('#ffffff').lineWidth(1.2).lineCap('round');
+    pdf.moveTo(x + 2, y + 4.6).lineTo(x + 3.7, y + 6.4).lineTo(x + 7, y + 2.6).stroke();
+    pdf.restore();
+    pdf.fillColor('#18181b').font('Helvetica').fontSize(8.5);
+    pdf.text(item, x + 13, y - 0.5, { width: 148, lineBreak: false });
+  });
+  pdf.fillColor('#000000');
+  pdf.y = y + 20;
+}
+
+/**
+ * The customer's signature, printed where a blank rule would otherwise be.
+ *
+ * When the signature exists it IS the block: an image of the mark over a rule,
+ * with the date it was captured. When it does not — an intake slip printed
+ * before the customer has signed, which is the normal case at the counter —
+ * it falls back to an empty rule for a pen.
+ */
+function signatureFor(
+  pdf: PDFKit.PDFDocument,
+  x: number,
+  y: number,
+  caption: string,
+  signature: RepairEvidencePhoto | undefined,
+): void {
+  if (
+    signature &&
+    (signature.contentType === 'image/jpeg' || signature.contentType === 'image/png')
+  ) {
+    pdf.image(signature.image, x, y - 34, { fit: [180, 32], valign: 'bottom' });
+  }
+
+  pdf.strokeColor('#a1a1aa');
+  pdf.moveTo(x, y).lineTo(x + 200, y).stroke();
+  pdf.strokeColor('#000000');
+
+  pdf.font('Helvetica').fontSize(8).fillColor('#52525b');
+  pdf.text(caption, x, y + 5, { width: 200, lineBreak: false });
+  pdf.text(
+    signature ? `Signed ${displayDate(signature.takenOn)}` : 'Date: ______________',
+    x,
+    y + 16,
+    { width: 200, lineBreak: false },
+  );
+  pdf.fillColor('#000000');
+}
+
+/**
+ * Signatures and the verification block, placed together at the foot.
+ *
+ * ---------------------------------------------------------------------------
+ * MEASURED FIRST, THEN PLACED — BOTH WANT THE BOTTOM OF THE PAGE.
+ *
+ * Left to themselves the signature rules pinned to y=690 and the QR started
+ * wherever the body ended, and the two drew straight through each other. Fixing
+ * that by giving the QR its own page break traded one bad outcome for another:
+ * a one-page counter slip became two pages, the second holding nothing but a
+ * QR code. Nobody prints that twice a day.
+ *
+ * So the height is computed BEFORE anything is drawn — the QR's size depends on
+ * how long the verify URL is, which depends on the digest, so it cannot be a
+ * constant — and the whole foot is placed as low as it fits. One page whenever
+ * one page is possible, and never an overlap.
+ * ---------------------------------------------------------------------------
+ */
+function documentFoot(
+  pdf: PDFKit.PDFDocument,
+  left: { caption: string; signature?: RepairEvidencePhoto },
+  right: { caption: string; signature?: RepairEvidencePhoto },
+  verification?: DocumentVerification,
+): void {
+  const matrix = verification
+    ? encodeQr(`${verification.verifyUrl}#d=${verification.digest}`)
+    : null;
+  const qrHeight = matrix ? matrix.length * 3 + 14 : 0;
+  const needed = 40 + 40 + qrHeight;
+  const floor = 750;
+
+  if (pdf.y + needed > floor) pdf.addPage();
+  const signY = Math.max(pdf.y + 40, floor - needed + 40);
+
+  signatureFor(pdf, MARGIN, signY, left.caption, left.signature);
+  signatureFor(pdf, 320, signY, right.caption, right.signature);
+  pdf.y = signY + 40;
+
+  if (verification) verificationBlock(pdf, verification);
+}
+
+/**
+ * THE SLIP THE CUSTOMER WALKS OUT WITH.
+ *
+ * ---------------------------------------------------------------------------
+ * This is printed at the counter, before any work is done, and it is the only
+ * document that exists at the moment the shop takes on responsibility for
+ * somebody else's property. Everything on it is a claim being agreed to while
+ * both parties are standing there: this device, this serial, these
+ * accessories, this fault, and — in the photographs — this condition.
+ *
+ * It prints the job number large, because the customer's next interaction is
+ * quoting it over the phone, and it prints the intake photographs so that the
+ * customer leaves holding the same evidence the shop keeps. Evidence only one
+ * side holds is not evidence; it is an assertion.
+ * ---------------------------------------------------------------------------
+ */
+export function renderRepairIntakeSlipPdf(
+  doc: RepairDocument,
+  verification?: DocumentVerification,
+): Promise<Buffer> {
+  return build(
+    (pdf) => {
+      reportHeader(pdf, doc.seller, 'DEVICE RECEIVED', [
+        ['Job no', doc.jobNo],
+        ['Received', displayDate(doc.receivedOn)],
+      ]);
+
+      pair(pdf, 'Customer', doc.customer.name);
+      if (doc.customer.phone) pair(pdf, 'Phone', doc.customer.phone);
+      pdf.moveDown(0.3);
+      pair(pdf, 'Device', doc.deviceDescription);
+      pair(pdf, 'Serial / IMEI', doc.deviceSerial ?? 'Not recorded');
+      pdf.moveDown(0.7);
+
+      narrative(pdf, 'Fault as reported by the customer', doc.reportedFault);
+      accessoryChecklist(pdf, doc.accessories);
+
+      photoGrid(
+        pdf,
+        doc.photos.filter((p) => p.stage === 'RECEIVED'),
+        'Condition photographed at the counter',
+      );
+
+      // The terms. Short, in plain words, and only things this shop actually
+      // does — a wall of boilerplate nobody reads protects nobody.
+      if (pdf.y > 620) pdf.addPage();
+      const termsTop = Math.min(pdf.y + 6, 600);
+      pdf.rect(MARGIN, termsTop, 495, 62).fillAndStroke('#f4f4f5', '#e4e4e7');
+      pdf.fillColor('#3f3f46').font('Helvetica').fontSize(7.5);
+      pdf.text(
+        'No work is carried out until you approve a quotation. If you decline the quotation, ' +
+          'only the agreed inspection charge (if any) applies. Please bring this slip when ' +
+          'you collect the device. Data on the device is your responsibility — back it up ' +
+          'before leaving it with us where you can. The photographs above record the ' +
+          'condition of the device at this moment and are kept with the job.',
+        MARGIN + 10,
+        termsTop + 8,
+        { width: 475, lineGap: 1.5 },
+      );
+      pdf.fillColor('#000000').fontSize(9);
+      pdf.y = termsTop + 70;
+
+      const intakeSignature = doc.signatures.find((s) => s.stage === 'RECEIVED');
+      documentFoot(
+        pdf,
+        {
+          caption: 'Customer — condition above agreed',
+          ...(intakeSignature ? { signature: intakeSignature } : {}),
+        },
+        { caption: 'Received by (shop)' },
+        verification,
+      );
+    },
+    { footNote: 'Device receipt — please bring this when you collect.' },
+  );
+}
+
+/**
+ * THE FINISHED JOB, WITH ITS EVIDENCE.
+ *
+ * ---------------------------------------------------------------------------
+ * The report answers the question a customer asks weeks later: what was wrong
+ * with it, what did you do, what did you charge, and can you show me. The
+ * photographs are the "show me", which is why they are in the document rather
+ * than behind a login the customer does not have.
+ *
+ * It deliberately restates the QUOTED figures rather than the invoice's. They
+ * are the same numbers — collection copies quote lines verbatim — but this
+ * document is about the work, and pointing at the invoice number for the money
+ * keeps one document as the authority on what was charged.
+ * ---------------------------------------------------------------------------
+ */
+export function renderRepairReportPdf(
+  doc: RepairDocument,
+  verification?: DocumentVerification,
+): Promise<Buffer> {
+  return build(
+    (pdf) => {
+      const meta: [string, string][] = [
+        ['Job no', doc.jobNo],
+        ['Received', displayDate(doc.receivedOn)],
+      ];
+      if (doc.collectedOn) meta.push(['Collected', displayDate(doc.collectedOn)]);
+      meta.push(['Status', doc.status.replace(/_/g, ' ')]);
+      if (doc.invoiceNo) meta.push(['Invoice', doc.invoiceNo]);
+
+      reportHeader(pdf, doc.seller, 'REPAIR JOB REPORT', meta);
+
+      pair(pdf, 'Customer', doc.customer.name);
+      if (doc.customer.phone) pair(pdf, 'Phone', doc.customer.phone);
+      pdf.moveDown(0.3);
+      pair(pdf, 'Device', doc.deviceDescription);
+      pair(pdf, 'Serial / IMEI', doc.deviceSerial ?? 'Not recorded');
+      pdf.moveDown(0.7);
+
+      narrative(pdf, 'Fault as reported', doc.reportedFault);
+      if (doc.diagnosis) narrative(pdf, 'What we found', doc.diagnosis);
+      if (doc.approvalNote) narrative(pdf, 'How the quotation was approved', doc.approvalNote);
+      if (doc.closedReason) narrative(pdf, 'Why the job was closed', doc.closedReason);
+
+      if (doc.lines.length > 0) {
+        pdf.font('Helvetica-Bold').fontSize(8.5).fillColor('#3f3f46');
+        pdf.text('Work carried out', MARGIN, pdf.y);
+        pdf.fillColor('#000000');
+        pdf.y += 8;
+
+        const cols: Column[] = [
+          { label: 'Description', x: MARGIN, width: 300 },
+          { label: 'Qty', x: 360, width: 45, align: 'right' },
+          { label: 'Unit price', x: 412, width: 65, align: 'right' },
+          { label: 'Amount', x: 484, width: 61, align: 'right' },
+        ];
+        tableHeader(pdf, cols);
+        for (const line of doc.lines) {
+          // The serial of the part actually fitted belongs beside the part, not
+          // in a separate list — it is what a warranty claim is checked against.
+          const description =
+            line.serialNumbers && line.serialNumbers.length > 0
+              ? `${line.description}\nSerial fitted: ${line.serialNumbers.join(', ')}`
+              : line.description;
+          tableRow(pdf, cols, [
+            description,
+            trimQty(line.quantity),
+            money(line.unitPrice),
+            money(line.lineTotal),
+          ]);
+        }
+        rule(pdf);
+        pdf.font('Helvetica-Bold');
+        totalRow(pdf, 'Total for this job', doc.currency, doc.total);
+        pdf.font('Helvetica');
+
+        if (doc.invoiceNo) {
+          pdf.fontSize(7.5).fillColor('#71717a');
+          pdf.text(
+            `Charged on invoice ${doc.invoiceNo}, which is the authority on what was paid ` +
+              'and on any tax. This report is the account of the work.',
+            MARGIN,
+            pdf.y + 4,
+            { width: 495, lineGap: 1.5 },
+          );
+          pdf.fillColor('#000000').fontSize(9);
+        }
+        pdf.moveDown(1);
+      }
+
+      accessoryChecklist(pdf, doc.accessories);
+
+      if (doc.photos.length > 0) {
+        if (pdf.y > 560) pdf.addPage();
+        pdf.font('Helvetica-Bold').fontSize(10).fillColor(BRAND);
+        pdf.text('Photographic record', MARGIN, pdf.y);
+        pdf.font('Helvetica').fontSize(7.5).fillColor('#71717a');
+        pdf.text(
+          'Each photograph carries the date it was taken and the first half of its ' +
+            'fingerprint. Any of them can be checked against the shop’s records at the ' +
+            'address below — a substituted picture will not match.',
+          MARGIN,
+          pdf.y + 2,
+          { width: 495, lineGap: 1.5 },
+        );
+        pdf.fillColor('#000000').fontSize(9);
+        pdf.y += 8;
+
+        // Grouped by stage and in the order the job actually happened, so the
+        // page reads as a sequence rather than as an album.
+        for (const stage of ['RECEIVED', 'DIAGNOSIS', 'IN_PROGRESS', 'READY', 'COLLECTED']) {
+          photoGrid(pdf, doc.photos.filter((p) => p.stage === stage), stageLabel(stage));
+        }
+      }
+
+      const atIntake = doc.signatures.find((s) => s.stage === 'RECEIVED');
+      const atCollection = doc.signatures.find((s) => s.stage === 'COLLECTED');
+      documentFoot(
+        pdf,
+        {
+          caption: 'Customer — condition at intake',
+          ...(atIntake ? { signature: atIntake } : {}),
+        },
+        {
+          caption: 'Customer — device collected',
+          ...(atCollection ? { signature: atCollection } : {}),
+        },
+        verification,
+      );
+    },
+    { footNote: 'Repair job report — keep with your receipt for any warranty claim.' },
   );
 }

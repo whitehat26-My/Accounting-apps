@@ -18,6 +18,7 @@ import { Button, Card, ErrorNote } from '@/components/ui';
 
 interface Photo {
   id: string;
+  kind: string;
   stage: string;
   caption: string | null;
   byteSize: number;
@@ -83,6 +84,7 @@ export function RepairPhotos({ jobId, jobStatus }: { jobId: string; jobStatus: s
         await api(`/v1/repairs/${jobId}/photos`, {
           method: 'POST',
           body: {
+            kind: 'PHOTO',
             stage,
             contentType: prepared.contentType,
             imageBase64: prepared.base64,
@@ -100,7 +102,13 @@ export function RepairPhotos({ jobId, jobStatus }: { jobId: string; jobStatus: s
     }
   }
 
-  const list = photos.data?.photos ?? [];
+  /*
+   * Photographs only. Signatures live in the same table — same digest, same
+   * freeze, same audit row (migration 0048) — but a customer's signature is
+   * not a picture of the device, and putting the two in one grid would invite
+   * somebody to delete a signature while tidying up blurred shots.
+   */
+  const list = (photos.data?.photos ?? []).filter((p) => p.kind !== 'SIGNATURE');
 
   return (
     <Card

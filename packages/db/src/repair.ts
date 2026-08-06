@@ -67,6 +67,8 @@ export interface RepairJobView {
   readonly invoiceId: string | null;
   readonly receivedOn: string;
   readonly collectedOn: string | null;
+  /** What came in with the device: charger, bag, SIM, SD card — see 0048. */
+  readonly accessories: readonly string[];
   readonly lines: readonly {
     readonly lineNo: number;
     readonly description: string;
@@ -87,6 +89,8 @@ export interface IntakeInput {
   readonly deviceSerial?: string;
   readonly reportedFault: string;
   readonly receivedOn: string;
+  /** Ticked at the counter; printed on the slip the customer takes away. */
+  readonly accessories?: readonly string[];
   readonly idempotencyKey: string;
 }
 
@@ -129,11 +133,12 @@ export async function createRepairJob(
   const [job] = await tx<{ id: string; job_no: string }[]>`
       INSERT INTO repair_job (
           tenant_id, job_no, contact_id, device_description, device_serial,
-          reported_fault, received_on, created_by, created_idempotency_key
+          reported_fault, received_on, accessories, created_by, created_idempotency_key
       ) VALUES (
           ${ctx.tenantId}, ${numbered!.allocate_document_number}, ${input.contactId},
           ${input.deviceDescription}, ${input.deviceSerial ?? null},
-          ${input.reportedFault}, ${input.receivedOn}, ${ctx.userId ?? null},
+          ${input.reportedFault}, ${input.receivedOn},
+          ${(input.accessories ?? []) as string[]}, ${ctx.userId ?? null},
           ${input.idempotencyKey}
       )
       RETURNING id, job_no
@@ -168,6 +173,7 @@ export async function quoteRepairJob(
 
   const check = checkRepairTransition(job.status, 'QUOTED', {
     quoteLineCount: input.lines.length,
+    ...(await evidenceCounts(tx, ctx, jobId)),
   });
   if (isErr(check)) {
     throw new RepairError('ILLEGAL_TRANSITION', describeRepairViolation(check.error), check.error);
@@ -270,8 +276,11 @@ export async function transitionRepairJob(
        WHERE tenant_id = ${ctx.tenantId} AND repair_job_id = ${jobId}
   `;
 
+  const evidence = await evidenceCounts(tx, ctx, jobId);
+
   const check = checkRepairTransition(job.status, input.to, {
     quoteLineCount: lineCount!.n,
+    ...evidence,
     ...(input.reason !== undefined ? { reason: input.reason } : {}),
   });
   if (isErr(check)) {
@@ -349,6 +358,7 @@ export async function collectRepairJob(
   const check = checkRepairTransition(job.status, 'COLLECTED', {
     quoteLineCount: 0,
     viaCollection: true,
+    ...(await evidenceCounts(tx, ctx, jobId)),
   });
   if (isErr(check)) {
     throw new RepairError(
@@ -495,7 +505,7 @@ export async function listRepairJobs(
 const JOB_COLUMNS = `
     id, job_no, contact_id, device_description, device_serial, reported_fault,
     diagnosis, status, approval_note, approved_at, closed_reason, invoice_id,
-    received_on, collected_on, collect_idempotency_key, collected_paid
+    received_on, collected_on, accessories, collect_idempotency_key, collected_paid
 `;
 
 interface JobRow {
@@ -503,7 +513,7 @@ interface JobRow {
   device_serial: string | null; reported_fault: string; diagnosis: string | null;
   status: RepairStatus; approval_note: string | null; approved_at: Date | null;
   closed_reason: string | null; invoice_id: string | null;
-  received_on: Date; collected_on: Date | null;
+  received_on: Date; collected_on: Date | null; accessories: string[];
   collect_idempotency_key: string | null; collected_paid: boolean | null;
 }
 
@@ -539,6 +549,7 @@ function toView(
     invoiceId: job.invoice_id,
     receivedOn: toIsoDate(job.received_on),
     collectedOn: job.collected_on ? toIsoDate(job.collected_on) : null,
+    accessories: job.accessories,
     lines: lines.map((l) => ({
       lineNo: l.line_no,
       description: l.description,
@@ -568,8 +579,11 @@ export const REPAIR_PHOTO_MAX_BYTES = 2 * 1024 * 1024;
 export type RepairPhotoStage =
   | 'RECEIVED' | 'DIAGNOSIS' | 'IN_PROGRESS' | 'READY' | 'COLLECTED';
 
+export type RepairPhotoKind = 'PHOTO' | 'SIGNATURE';
+
 export interface RepairPhotoView {
   readonly id: string;
+  readonly kind: RepairPhotoKind;
   readonly stage: RepairPhotoStage;
   readonly caption: string | null;
   readonly contentType: string;
@@ -582,6 +596,8 @@ export interface RepairPhotoView {
 
 export interface AddRepairPhotoInput {
   readonly repairJobId: string;
+  /** Defaults to PHOTO; SIGNATURE stores the customer's mark — see 0048. */
+  readonly kind?: RepairPhotoKind;
   readonly stage: RepairPhotoStage;
   readonly caption?: string;
   readonly contentType: 'image/jpeg' | 'image/png' | 'image/webp';
@@ -646,15 +662,15 @@ export async function addRepairPhoto(
 
   const [row] = await tx<PhotoRow[]>`
       INSERT INTO repair_job_photo (
-          tenant_id, repair_job_id, stage, caption, content_type,
+          tenant_id, repair_job_id, kind, stage, caption, content_type,
           byte_size, width, height, digest, taken_by
       ) VALUES (
-          ${ctx.tenantId}, ${input.repairJobId}, ${input.stage},
+          ${ctx.tenantId}, ${input.repairJobId}, ${input.kind ?? 'PHOTO'}, ${input.stage},
           ${input.caption ?? null}, ${input.contentType},
           ${input.image.byteLength}, ${size?.width ?? null}, ${size?.height ?? null},
           ${digest}, ${ctx.userId ?? null}
       )
-      RETURNING id, stage, caption, content_type, byte_size, width, height, digest, created_at
+      RETURNING id, kind, stage, caption, content_type, byte_size, width, height, digest, created_at
   `;
 
   await tx`
@@ -672,12 +688,45 @@ export async function listRepairPhotos(
   repairJobId: string,
 ): Promise<RepairPhotoView[]> {
   const rows = await tx<PhotoRow[]>`
-      SELECT id, stage, caption, content_type, byte_size, width, height, digest, created_at
+      SELECT id, kind, stage, caption, content_type, byte_size, width, height, digest, created_at
         FROM repair_job_photo
        WHERE tenant_id = ${ctx.tenantId} AND repair_job_id = ${repairJobId}
        ORDER BY created_at
   `;
   return rows.map(toPhotoView);
+}
+
+/**
+ * What evidence this job actually holds.
+ *
+ * Counted in one round trip and handed to the PURE guard, which owns the rule.
+ * The service's job is to tell the domain what is true; deciding what that
+ * means is not a decision that belongs in a query.
+ */
+async function evidenceCounts(
+  tx: Tx,
+  ctx: TenantContext,
+  repairJobId: string,
+): Promise<{
+  intakePhotoCount: number;
+  intakeSignatureCount: number;
+  collectionSignatureCount: number;
+}> {
+  const [row] = await tx<
+    { intake_photos: number; intake_signatures: number; collection_signatures: number }[]
+  >`
+      SELECT
+        COUNT(*) FILTER (WHERE kind = 'PHOTO'     AND stage = 'RECEIVED')::int  AS intake_photos,
+        COUNT(*) FILTER (WHERE kind = 'SIGNATURE' AND stage = 'RECEIVED')::int  AS intake_signatures,
+        COUNT(*) FILTER (WHERE kind = 'SIGNATURE' AND stage = 'COLLECTED')::int AS collection_signatures
+      FROM repair_job_photo
+     WHERE tenant_id = ${ctx.tenantId} AND repair_job_id = ${repairJobId}
+  `;
+  return {
+    intakePhotoCount: row?.intake_photos ?? 0,
+    intakeSignatureCount: row?.intake_signatures ?? 0,
+    collectionSignatureCount: row?.collection_signatures ?? 0,
+  };
 }
 
 export interface RepairPhotoBytes {
@@ -761,11 +810,13 @@ interface PhotoRow {
   height: number | null;
   digest: string;
   created_at: Date;
+  kind: RepairPhotoKind;
 }
 
 function toPhotoView(r: PhotoRow): RepairPhotoView {
   return {
     id: r.id,
+    kind: r.kind,
     stage: r.stage,
     caption: r.caption,
     contentType: r.content_type,
