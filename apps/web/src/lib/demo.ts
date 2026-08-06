@@ -1205,6 +1205,22 @@ export function demoApi(
   if (movementMatch) {
     return { movements: store.movements.filter((m) => m.itemId === movementMatch[1]) };
   }
+  /*
+   * The promises register. The demo store has no serialised sales, so the
+   * honest answer is an empty register — the card hides itself on an empty
+   * list rather than showing a fabricated warranty, and a lookup answers
+   * "no record", which is what the real route says for an unknown serial.
+   */
+  if (p === '/v1/stock/warranties') {
+    return {
+      today: new Date().toISOString().slice(0, 10),
+      promises: [], active: 0, expiringSoon: 0, expiringSoonDays: 30,
+    };
+  }
+  const warrantyMatch = /^\/v1\/stock\/warranties\/([^/]+)$/.exec(p);
+  if (warrantyMatch) {
+    return { serialNo: decodeURIComponent(warrantyMatch[1]!).toUpperCase(), promise: null };
+  }
 
   // ---- repairs -------------------------------------------------------------
   if (p === '/v1/repairs' && method === 'GET') return { jobs: store.jobs };

@@ -140,6 +140,11 @@ const itemSchema = z.object({
   isTracked: z.boolean().optional(),
   /** Serial-number tracking. Requires isTracked. */
   isSerialised: z.boolean().optional(),
+  /**
+   * Months of warranty promised when a serialised unit of this item sells.
+   * Ten years is the ceiling the CHECK enforces; 0 means no promise.
+   */
+  warrantyMonths: z.number().int().min(0).max(120).optional(),
   sale: sideSchema,
   purchase: sideSchema,
 });

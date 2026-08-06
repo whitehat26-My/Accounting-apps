@@ -57,6 +57,8 @@ export interface ItemView {
   readonly isTracked: boolean;
   /** Every unit carries a serial. Requires isTracked. */
   readonly isSerialised: boolean;
+  /** Months promised when a serialised unit sells. 0 = no promise. */
+  readonly warrantyMonths: number;
   readonly isActive: boolean;
   readonly sale: { unitPrice: string | null; accountId: string | null; taxCodeId: string | null };
   readonly purchase: { unitPrice: string | null; accountId: string | null; taxCodeId: string | null };
@@ -77,6 +79,7 @@ export interface UpsertItemInput {
   readonly isPurchased?: boolean;
   readonly isTracked?: boolean;
   readonly isSerialised?: boolean;
+  readonly warrantyMonths?: number;
   readonly sale?: { unitPrice?: string; accountId?: string; taxCodeId?: string };
   readonly purchase?: { unitPrice?: string; accountId?: string; taxCodeId?: string };
 }
@@ -88,7 +91,7 @@ export interface UpsertItemInput {
 const SELECT_COLUMNS = `
     i.id, i.code, i.name, i.description, i.barcode, i.item_type, i.unit_of_measure,
     i.uom_code, i.classification_code, i.is_sold, i.is_purchased, i.is_tracked,
-    i.is_serialised, i.is_active,
+    i.is_serialised, i.warranty_months, i.is_active,
     i.sale_unit_price, i.sale_account_id, i.sale_tax_code_id,
     i.purchase_unit_price, i.purchase_account_id, i.purchase_tax_code_id
 `;
@@ -99,6 +102,7 @@ interface ItemRow {
   item_type: ItemType; unit_of_measure: string; uom_code: string | null;
   classification_code: string | null;
   is_sold: boolean; is_purchased: boolean; is_tracked: boolean; is_serialised: boolean;
+  warranty_months: number;
   is_active: boolean;
   sale_unit_price: string | null; sale_account_id: string | null; sale_tax_code_id: string | null;
   purchase_unit_price: string | null; purchase_account_id: string | null;
@@ -191,6 +195,7 @@ export async function createItem(
       INSERT INTO item (
           tenant_id, code, name, description, barcode, item_type, unit_of_measure, uom_code,
           classification_code, is_sold, is_purchased, is_tracked, is_serialised,
+          warranty_months,
           sale_unit_price, sale_account_id, sale_tax_code_id,
           purchase_unit_price, purchase_account_id, purchase_tax_code_id
       ) VALUES (
@@ -200,6 +205,7 @@ export async function createItem(
           ${input.uomCode ?? null}, ${input.classificationCode ?? null},
           ${draft.isSold}, ${draft.isPurchased}, ${input.isTracked ?? false},
           ${input.isSerialised ?? false},
+          ${input.warrantyMonths ?? 0},
           ${input.sale?.unitPrice ?? null}, ${input.sale?.accountId ?? null},
           ${input.sale?.taxCodeId ?? null},
           ${input.purchase?.unitPrice ?? null}, ${input.purchase?.accountId ?? null},
@@ -309,6 +315,7 @@ export async function updateItem(
              is_purchased         = ${draft.isPurchased},
              is_tracked           = ${input.isTracked ?? current.isTracked},
              is_serialised        = ${input.isSerialised ?? current.isSerialised},
+             warranty_months      = ${input.warrantyMonths ?? current.warrantyMonths},
              sale_unit_price      = ${input.sale?.unitPrice ?? null},
              sale_account_id      = ${input.sale?.accountId ?? null},
              sale_tax_code_id     = ${input.sale?.taxCodeId ?? null},
@@ -599,6 +606,7 @@ function toView(row: ItemRow, baseCurrency: string): ItemView {
     isPurchased: row.is_purchased,
     isTracked: row.is_tracked,
     isSerialised: row.is_serialised,
+    warrantyMonths: row.warranty_months,
     isActive: row.is_active,
     sale: {
       unitPrice: row.sale_unit_price,

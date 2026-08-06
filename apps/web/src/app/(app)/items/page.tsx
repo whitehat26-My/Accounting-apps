@@ -43,6 +43,7 @@ export default function ItemsPage() {
   const [kind, setKind] = useState<'GOODS' | 'SERVICE'>('GOODS');
   const [tracked, setTracked] = useState(true);
   const [serialised, setSerialised] = useState(false);
+  const [warrantyMonths, setWarrantyMonths] = useState('');
 
   const items = useQuery({
     queryKey: ['items', ''],
@@ -75,6 +76,12 @@ export default function ItemsPage() {
           isPurchased: kind === 'GOODS',
           isTracked: kind === 'GOODS' && tracked,
           isSerialised: kind === 'GOODS' && tracked && serialised,
+          // Only meaningful with serials: the promise is derived from the
+          // sale of a NAMED unit, so an unserialised item has nothing to
+          // hang it on. Sent as 0 rather than omitted so the intent is
+          // explicit in the request.
+          warrantyMonths:
+            kind === 'GOODS' && tracked && serialised ? Number(warrantyMonths || 0) : 0,
           sale: { unitPrice: price, accountId: revenue.id, taxCodeId: none.id },
           ...(kind === 'GOODS' && purchases
             ? { purchase: { accountId: purchases.id, taxCodeId: none.id } }
@@ -87,6 +94,7 @@ export default function ItemsPage() {
       setName('');
       setBarcode('');
       setPrice('');
+      setWarrantyMonths('');
       void queryClient.invalidateQueries({ queryKey: ['items'] });
     },
   });
@@ -172,6 +180,19 @@ export default function ItemsPage() {
                     />
                     Every unit has a serial number
                   </label>
+                ) : null}
+                {tracked && serialised ? (
+                  <Field label="Warranty (months) — 0 for none">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={120}
+                      inputMode="numeric"
+                      value={warrantyMonths}
+                      onChange={(e) => setWarrantyMonths(e.target.value)}
+                      placeholder="12"
+                    />
+                  </Field>
                 ) : null}
               </div>
             ) : null}

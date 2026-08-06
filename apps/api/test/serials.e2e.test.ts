@@ -133,3 +133,78 @@ describe('a serialised unit, door to door', () => {
     expect(drift.body['serialDrift']).toEqual([]);
   });
 });
+
+describe('the promises register', () => {
+  it('reports what the shop still owes, derived from the sale alone', async () => {
+    // The router above was created with no warranty. Give it one, sell the
+    // second unit, and the promise appears — no warranty row was ever written.
+    const patched = await call(api, {
+      method: 'PATCH',
+      ...as(`/v1/items/${itemId}`),
+      body: {
+        code: 'RTR-AX3',
+        name: 'Wi-Fi router AX3000',
+        itemType: 'GOODS',
+        isTracked: true,
+        isSerialised: true,
+        isSold: true,
+        isPurchased: true,
+        warrantyMonths: 24,
+        sale: {
+          unitPrice: '320.00',
+          accountId: tenant.accounts['4000'],
+          taxCodeId: tenant.taxCodes['NONE'],
+        },
+        purchase: { accountId: tenant.accounts['5000'], taxCodeId: tenant.taxCodes['NONE'] },
+      },
+    });
+    expect(patched.status, JSON.stringify(patched.body)).toBe(200);
+    expect(patched.body['warrantyMonths']).toBe(24);
+
+    const register = await call(api, { method: 'GET', ...as('/v1/stock/warranties') });
+    expect(register.status).toBe(200);
+
+    const promises = register.body['promises'] as Record<string, unknown>[];
+    const sold = promises.find((p) => p['serialNo'] === 'AX3-777')!;
+    expect(sold).toBeDefined();
+    // Sold 04/08/2026 with 24 months on it.
+    expect(sold['soldOn']).toBe('2026-08-04');
+    expect(sold['expiresOn']).toBe('2028-08-04');
+    expect(sold['warrantyMonths']).toBe(24);
+    // The unit still on the shelf owes nobody anything.
+    expect(promises.map((p) => p['serialNo'])).not.toContain('AX3-778');
+  });
+
+  it('answers the counter question, and says so plainly when it has no record', async () => {
+    const covered = await call(api, {
+      method: 'GET',
+      ...as('/v1/stock/warranties/ax3-777'),
+    });
+    expect(covered.status).toBe(200);
+    // Normalised on the way in: the lowercase scan is the same machine.
+    expect(covered.body['serialNo']).toBe('AX3-777');
+    expect((covered.body['promise'] as Record<string, unknown>)['expiresOn']).toBe('2028-08-04');
+
+    const stranger = await call(api, {
+      method: 'GET',
+      ...as('/v1/stock/warranties/SOMEONE-ELSES-99'),
+    });
+    expect(stranger.status).toBe(200);
+    expect(stranger.body['promise']).toBeNull();
+  });
+
+  it('is stock.read — a SALES user at the counter can answer it', async () => {
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const response = await call(api, {
+      method: 'GET',
+      url: '/v1/stock/warranties/AX3-777',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    // Deliberately NOT gated tighter: the person facing the customer is
+    // exactly who needs this, and it exposes no figure a till user cannot
+    // already see on the invoice they raised.
+    expect(response.status).toBe(200);
+  });
+});

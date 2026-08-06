@@ -4,7 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { api, apiBlobUrl } from '@/lib/api';
-import { qty, rm, todayIso } from '@/lib/display';
+import { displayDate, qty, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 import { RepairPhotos } from '@/components/repair-photos';
 
@@ -138,6 +138,9 @@ function RepairDetail() {
           {j.diagnosis ? <Row label="Diagnosis" value={j.diagnosis} /> : null}
           {j.approvalNote ? <Row label="Approval" value={j.approvalNote} /> : null}
         </dl>
+        {/* Whether to charge for this repair is the first question anybody
+            asks, and until now it was answered from memory. */}
+        {j.deviceSerial ? <WarrantyLine serialNo={j.deviceSerial} /> : null}
       </Card>
 
       {/* Directly under the device, because the photograph of the machine as it
@@ -280,5 +283,49 @@ function Row({ label, value }: { label: string; value: string }) {
       <dt className="w-32 shrink-0 text-slate-500">{label}</dt>
       <dd>{value}</dd>
     </div>
+  );
+}
+
+/**
+ * Is this machine still ours to fix for free?
+ *
+ * Silent when the shop has no record of selling this serial, which is the
+ * common case — most devices on the counter were bought somewhere else, and a
+ * line saying "not covered" for one of those would be noise that trains people
+ * to ignore the line that matters.
+ */
+function WarrantyLine({ serialNo }: { serialNo: string }) {
+  const warranty = useQuery({
+    queryKey: ['warranty', serialNo],
+    queryFn: () =>
+      api<{ promise: { expiresOn: string; status: string; itemName: string } | null }>(
+        `/v1/stock/warranties/${encodeURIComponent(serialNo)}`,
+      ),
+  });
+
+  const promise = warranty.data?.promise;
+  if (!promise) return null;
+
+  const covered = promise.status !== 'EXPIRED';
+  return (
+    <p
+      className={`mt-3 rounded-lg px-3 py-2 text-sm ring-1 ring-inset ${
+        covered
+          ? 'bg-emerald-50 text-emerald-900 ring-emerald-200'
+          : 'bg-slate-50 text-slate-700 ring-slate-200'
+      }`}
+    >
+      {covered ? (
+        <>
+          <strong>In warranty</strong> until {displayDate(promise.expiresOn)} — this shop sold
+          it.
+        </>
+      ) : (
+        <>
+          <strong>Warranty ended</strong> {displayDate(promise.expiresOn)} — this shop sold it,
+          but the promise has run out.
+        </>
+      )}
+    </p>
   );
 }

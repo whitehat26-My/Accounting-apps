@@ -125,6 +125,7 @@ export default function StockPage() {
         </Card>
       </div>
       <AgeingCard />
+      <PromisesCard />
     </div>
   );
 }
@@ -269,6 +270,131 @@ function AgeingCard() {
       <p className="mt-2 text-xs text-slate-500">
         DEAD is six months without a sale — usually a part that outlived the machines it
         fits. Count it down or discount it out; the shelf space is worth more.
+      </p>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The promises register
+// ---------------------------------------------------------------------------
+
+interface Promise_ {
+  serialNo: string;
+  itemCode: string;
+  itemName: string;
+  customerName: string | null;
+  invoiceNo: string | null;
+  soldOn: string;
+  expiresOn: string;
+  status: 'ACTIVE' | 'EXPIRING_SOON' | 'EXPIRED';
+  warrantyMonths: number;
+  claims: number;
+}
+
+interface Register {
+  today: string;
+  promises: Promise_[];
+  active: number;
+  expiringSoon: number;
+  expiringSoonDays: number;
+}
+
+const PROMISE_STYLE: Record<Promise_['status'], string> = {
+  ACTIVE: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
+  EXPIRING_SOON: 'bg-amber-50 text-amber-800 ring-amber-200',
+  EXPIRED: 'bg-slate-100 text-slate-600 ring-slate-200',
+};
+
+/**
+ * What the shop still owes the people it sold to.
+ *
+ * A warranty is a liability the accounts never mention and nobody tracks —
+ * until three of them walk back through the door in the same week. Every row
+ * here is derived from a sold serialised unit, so there is nothing to keep up
+ * to date and nothing that can be forgotten: sell a unit and the promise
+ * exists, take it back and it is gone.
+ */
+function PromisesCard() {
+  const [showExpired, setShowExpired] = useState(false);
+  const register = useQuery({
+    queryKey: ['warranties'],
+    queryFn: () => api<Register>('/v1/stock/warranties'),
+  });
+
+  const data = register.data;
+  if (!data || data.promises.length === 0) return null;
+
+  const rows = showExpired ? data.promises : data.promises.filter((p) => p.status !== 'EXPIRED');
+  const expired = data.promises.length - data.promises.filter((p) => p.status !== 'EXPIRED').length;
+
+  return (
+    <Card
+      title="Promises — what you still owe"
+      action={
+        expired > 0 ? (
+          <Button variant="ghost" onClick={() => setShowExpired(!showExpired)}>
+            {showExpired ? 'Hide' : `Show ${expired} expired`}
+          </Button>
+        ) : null
+      }
+    >
+      <p className="mb-3 text-sm text-slate-600">
+        <strong>{data.active}</strong> unit{data.active === 1 ? '' : 's'} still under
+        warranty
+        {data.expiringSoon > 0 ? (
+          <>
+            {' '}
+            — <span className="font-medium text-amber-700">{data.expiringSoon}</span> running
+            out within {data.expiringSoonDays} days
+          </>
+        ) : null}
+        .
+      </p>
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-slate-500">
+            <th className="pb-2">Serial</th>
+            <th className="pb-2">Item</th>
+            <th className="pb-2">Sold to</th>
+            <th className="pb-2 text-right">Sold</th>
+            <th className="pb-2 text-right">Covered until</th>
+            <th className="pb-2 text-right">Repairs</th>
+            <th className="pb-2 text-right"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((p) => (
+            <tr key={p.serialNo} className="border-t border-slate-100">
+              <td className="py-2 font-mono text-xs">{p.serialNo}</td>
+              <td className="py-2">
+                <span className="text-xs text-slate-500">{p.itemCode}</span> {p.itemName}
+              </td>
+              <td className="py-2 text-slate-600">
+                {p.customerName ?? <span className="text-slate-400">walk-in</span>}
+                {p.invoiceNo ? (
+                  <span className="ml-1 text-xs text-slate-400">{p.invoiceNo}</span>
+                ) : null}
+              </td>
+              <td className="py-2 text-right text-xs text-slate-500">{displayDate(p.soldOn)}</td>
+              <td className="py-2 text-right font-medium">{displayDate(p.expiresOn)}</td>
+              <td className="py-2 text-right">
+                {p.claims === 0 ? <span className="text-slate-300">—</span> : p.claims}
+              </td>
+              <td className="py-2 text-right">
+                <span
+                  className={`rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${PROMISE_STYLE[p.status]}`}
+                >
+                  {p.status === 'EXPIRING_SOON' ? 'ENDING SOON' : p.status}
+                </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <p className="mt-2 text-xs text-slate-500">
+        Derived from serialised sales — set the warranty length on the item. An extended
+        warranty sold separately, or a promise on something without a serial, is not here.
       </p>
     </Card>
   );

@@ -47,6 +47,7 @@ export * from './free-cash.js';
 export * from './proof.js';
 export * from './fraud-watch.js';
 export * from './time-machine.js';
+export * from './warranty.js';
 export * from './year-end-payroll.js';
 export { businessToday } from './internal.js';
 export { migrate } from './migrate.js';

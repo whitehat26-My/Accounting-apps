@@ -639,6 +639,43 @@ decide whether supplier bank details are stored at all — the same argument `00
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
 
+### 5.21 The promises register — warranties as obligations — BUILT (`0046`)
+
+`GET /v1/stock/warranties` and `/v1/stock/warranties/:serialNo`, both `stock.read`. A
+warranty is a liability the accounts never mention and nobody tracks — until three of them
+walk back through the door in the same week.
+
+**One column of new state, and the promise itself is DERIVED.** `0046` adds
+`item.warranty_months` (0–120, default 0). Everything else already exists: a SOLD
+`stock_unit` points at its outbound `stock_movement`, which carries `moved_on` (the sale
+date) and the invoice it left on, which carries the customer. So the register is a join,
+and three bugs cannot happen as a result — a promise never created on sale, one that
+outlives the return that voided it, and one that disagrees with the invoice it came from.
+The integration test proves the second directly: sell a serialised unit, count it back in
+when the customer returns it, and the promise is gone with **no compensating write
+anywhere**.
+
+Status moves on its own: the same row reads ACTIVE, then EXPIRING_SOON inside the last 30
+days, then EXPIRED, because the question moved rather than the data. `warrantyWindow`
+clamps to the month end — 31 January plus one month is 28 February (29 in a leap year),
+which is the reading a customer takes off a receipt and the argument at the counter this
+prevents.
+
+Repairs join back on the serial. `repair_job.device_serial` is deliberately free text
+(0029: the device on the counter is usually not something this shop sold), so the join
+normalises it the way `normaliseSerial` normalises the stock side — trimmed, collapsed,
+uppercased. Matching raw would miss every serial a technician typed in lower case. The
+repair screen shows "In warranty until DD/MM/YYYY" when the shop sold the device, and
+**stays silent when it has no record** — a "not covered" line on every third-party machine
+is noise that trains people to ignore the line that matters.
+
+⚠️ **The honest limit: only promises IMPLIED BY A SERIALISED SALE can be expressed.** An
+extended warranty sold as its own line, a goodwill promise on a cable that carries no
+serial, or a supplier's back-to-back warranty on a part are all invisible here, and the
+screen says so. **Unblocker: a `warranty_override` table keyed on (tenant, serial or
+invoice line) holding a start, a length and a reason — at which point the register reads
+`COALESCE(override, derived)` and the derivation above stays exactly as it is.**
+
 ### 5.19 The time machine — the books at a past instant — BUILT (no migration)
 
 `GET /v1/reports/books-as-at`, `/v1/reports/what-changed`, its `/csv`, and

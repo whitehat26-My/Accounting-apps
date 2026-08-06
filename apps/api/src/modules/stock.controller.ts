@@ -10,6 +10,8 @@ import {
   stockLevels,
   stockMovements,
   stockUnits,
+  warrantyForSerial,
+  warrantyRegister,
   withTenant,
   type Sql,
 } from '@emil/db';
@@ -97,6 +99,31 @@ export class StockController {
   async serial(@Param('serialNo') serialNo: string, @Req() request: FastifyRequest) {
     const ctx = tenantContextOf(request);
     return { matches: await withTenant(this.sql, ctx, (tx) => findSerial(tx, ctx, serialNo)) };
+  }
+
+  /**
+   * The promises register: what this shop still owes the people it sold to.
+   *
+   * Every row is derived from a sold serialised unit — nothing is stored, so
+   * nothing can drift out of step with the sale it came from.
+   */
+  @Requires('stock.read')
+  @Get('warranties')
+  async warranties(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => warrantyRegister(tx, ctx));
+  }
+
+  /**
+   * The counter question: someone is standing there with a device, is it
+   * still covered? `promise: null` for a serial this shop never sold — "we
+   * have no record of selling this" is a real answer, so it is a 200.
+   */
+  @Requires('stock.read')
+  @Get('warranties/:serialNo')
+  async warranty(@Param('serialNo') serialNo: string, @Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => warrantyForSerial(tx, ctx, serialNo));
   }
 
   /**
