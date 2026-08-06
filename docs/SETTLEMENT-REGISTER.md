@@ -661,6 +661,39 @@ decide whether supplier bank details are stored at all — the same argument `00
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
 
+### 5.26 Per-screen permission guard — BUILT (no migration)
+
+`apps/web/src/app/(app)/layout.tsx`, `apps/web/e2e/roles.spec.ts`.
+
+**The defect.** The nav rail had always been role-aware, so a technician never SAW a link to
+Payroll. Typing `/payroll` into the address bar rendered the whole payroll console around
+skeletons that loaded forever. Verified at the time: a technician's token gets `403` from
+`/v1/payroll/employees`, `/v1/reports/trial-balance` and `/v1/pos/takings`, and `200` only
+from `/v1/repairs` — **no figure ever arrived**. But a page that LOOKS like it is loading the
+boss's payroll is a page that invites the next person to try the address bar on something
+else, and "nothing leaked" is a claim the person looking at the screen cannot check.
+
+**The fix is that the nav map is now also the guard.** Hiding a link and refusing the screen
+behind it are the same fact; keeping them in two lists is how they come apart — somebody adds
+a screen, remembers the nav, forgets the guard. `permissionFor(pathname)` reads the same
+`SECTIONS` array the rail renders from, longest prefix winning, so `/repairs/job` is covered
+by `/repairs` without its own entry.
+
+Three decisions on the refusal itself. It renders **nothing until `/v1/auth/me` settles** —
+rendering the page first and swapping it a moment later would flash the headings, and a
+screenshot is instant. When `me` FAILS outright (offline, expired token) the children render
+anyway: the API is the boundary and answers 403 behind every door, and refusing here on a
+failed permission fetch would lock the whole shop out over a dropped WiFi packet. And the
+message **names the role, not the permission** — "You need payroll.read" is written for
+whoever built the app; "you are signed in as Technician" is something the person can act on.
+
+**The Playwright suite now runs a technician, a cashier and an accountant.** For each: the
+link must be absent AND the address must be refused, on the same screen, for the same person.
+Screens are identified by their `<h1>`, not by page text — "Payroll" appears in the rail as
+well, so a text match would pass on a page that never rendered, which is the exact false
+negative that let this sit unnoticed. **The suite was checked against a deliberately disabled
+guard and fails**, so it is testing the fix rather than agreeing with it.
+
 ### 5.25 The workshop's evidence — photographs, signatures, accessories — BUILT (`0048`)
 
 Migration `0048`, `packages/domain/src/repair.ts`, `packages/db/src/repair-document.ts`,
