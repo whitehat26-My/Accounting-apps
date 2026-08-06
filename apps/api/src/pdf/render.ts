@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
+import { encodeQr } from '@emil/domain';
 import type {
   CustomerStatement,
   EaDocument,
@@ -7,6 +8,17 @@ import type {
   PayslipDocument,
   ReceiptDocument,
 } from '@emil/db';
+
+/**
+ * What a document needs to carry its own proof: the digest of its figures and
+ * where to check it. Optional at every call site — a renderer with no
+ * verification simply prints no block, which is what keeps the statement and
+ * payslip renderers unchanged.
+ */
+export interface DocumentVerification {
+  readonly digest: string;
+  readonly verifyUrl: string;
+}
 
 /**
  * PDF rendering — presentation, nothing else.
@@ -25,7 +37,10 @@ import type {
 const MARGIN = 50;
 const LINE = 16;
 
-export function renderInvoicePdf(doc: InvoiceDocument): Promise<Buffer> {
+export function renderInvoicePdf(
+  doc: InvoiceDocument,
+  verification?: DocumentVerification,
+): Promise<Buffer> {
   return build((pdf) => {
     header(pdf, doc.seller, doc.status === 'PAID' ? 'INVOICE (PAID)' : 'INVOICE');
 
@@ -75,11 +90,15 @@ export function renderInvoicePdf(doc: InvoiceDocument): Promise<Buffer> {
     }
     pdf.font('Helvetica');
 
+    if (verification) verificationBlock(pdf, verification);
     footer(pdf);
   });
 }
 
-export function renderReceiptPdf(doc: ReceiptDocument): Promise<Buffer> {
+export function renderReceiptPdf(
+  doc: ReceiptDocument,
+  verification?: DocumentVerification,
+): Promise<Buffer> {
   return build((pdf) => {
     header(pdf, doc.seller, 'OFFICIAL RECEIPT');
 
@@ -106,6 +125,7 @@ export function renderReceiptPdf(doc: ReceiptDocument): Promise<Buffer> {
       }
     }
 
+    if (verification) verificationBlock(pdf, verification);
     footer(pdf);
   });
 }
@@ -701,6 +721,60 @@ function totalRow(pdf: PDFKit.PDFDocument, label: string, currency: string, amou
     { width: 85, align: 'right' },
   );
   pdf.y = y + LINE;
+}
+
+/**
+ * The verification block: a QR, the URL in readable text, and the digest.
+ *
+ * ---------------------------------------------------------------------------
+ * THE QR IS NOT THE ONLY WAY IN, DELIBERATELY.
+ *
+ * This document is meant to still mean something in fifty years, and a QR code
+ * is a bet that a 2076 device will read a 2006 symbology. Probably it will —
+ * but the URL and the digest are also printed as text a person can type, and
+ * the digest alone is enough to verify with. If every scanner on earth stopped
+ * understanding QR tomorrow, the page still works.
+ *
+ * Drawn as one filled rectangle per dark module. At 3 points a module a
+ * version-3 code is about 90 points square — small enough to sit under the
+ * totals, large enough for a phone camera at arm's length.
+ * ---------------------------------------------------------------------------
+ */
+function verificationBlock(
+  pdf: PDFKit.PDFDocument,
+  verification: DocumentVerification,
+): void {
+  const matrix = encodeQr(`${verification.verifyUrl}#d=${verification.digest}`);
+  const MODULE = 3;
+  const top = Math.min(pdf.y + 12, 690);
+
+  pdf.fillColor('#000000');
+  for (let row = 0; row < matrix.length; row++) {
+    for (let col = 0; col < matrix.length; col++) {
+      if (matrix[row]![col]) {
+        pdf.rect(MARGIN + col * MODULE, top + row * MODULE, MODULE, MODULE).fill();
+      }
+    }
+  }
+
+  const textLeft = MARGIN + matrix.length * MODULE + 14;
+  pdf.font('Helvetica-Bold').fontSize(8).fillColor('#000000');
+  pdf.text('Check this document is genuine', textLeft, top + 2, { width: 300 });
+  pdf.font('Helvetica').fontSize(7).fillColor('#444444');
+  pdf.text(
+    `Scan the code, or go to ${verification.verifyUrl} and enter the reference below.`,
+    textLeft,
+    pdf.y + 1,
+    { width: 320 },
+  );
+  pdf.font('Courier').fontSize(6.5).fillColor('#666666');
+  // Broken into groups so somebody can read it aloud or type it without
+  // losing their place in 64 characters of hex.
+  pdf.text(verification.digest.replace(/(.{16})/g, '$1 ').trim(), textLeft, pdf.y + 3, {
+    width: 320,
+  });
+  pdf.font('Helvetica').fillColor('#000000');
+  pdf.y = Math.max(pdf.y, top + matrix.length * MODULE);
 }
 
 function footer(pdf: PDFKit.PDFDocument): void {

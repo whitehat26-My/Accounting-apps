@@ -297,12 +297,16 @@ export async function verifyProofPack(
  *
  * Sorted because a third party reimplementing this must get the same bytes
  * without having to know the order this codebase happened to write them in.
+ *
+ * Exported because `fingerprint.ts` hashes invoices and receipts with it:
+ * one canonicalisation for everything this system asks anybody to verify,
+ * so the rule a third party has to implement is stated once.
  */
-function hashDocument(value: unknown): string {
+export function hashDocument(value: unknown): string {
   return createHash('sha256').update(canonical(value), 'utf8').digest('hex');
 }
 
-function canonical(value: unknown): string {
+export function canonical(value: unknown): string {
   if (value === null || typeof value !== 'object') return JSON.stringify(value) ?? 'null';
   if (Array.isArray(value)) return `[${value.map(canonical).join(',')}]`;
   const entries = Object.entries(value as Record<string, unknown>)

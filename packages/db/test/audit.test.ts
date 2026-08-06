@@ -67,6 +67,10 @@ const AUDIT_EXEMPT: Record<string, string> = {
     'the anchors ARE evidence about the audit log, and auditing them would ' +
     'recurse for the same reason audit_log does. They are append-only by ' +
     'trigger and every insert is itself the record.',
+  document_fingerprint:
+    'a hash of a document whose creation the audit log already records, so ' +
+    'auditing it would store the hash of a hash. Insert-only for emil_app — ' +
+    'no UPDATE or DELETE is granted, so there is no mutation to catch.',
   financial_event_log: 'already append-only evidence, and already the high-signal log',
   outbox_event: 'delivery-mechanism state; the business fact was audited at its source',
   account_period_balance: 'a derived cache of journal_line, which is itself audited',

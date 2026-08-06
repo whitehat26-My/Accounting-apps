@@ -639,6 +639,52 @@ decide whether supplier bank details are stored at all — the same argument `00
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
 
+### 5.22 Receipts that prove themselves — BUILT (`0047`)
+
+Every printed invoice and A4 receipt carries a QR, the verification URL in readable text,
+and a 64-character reference. `POST /public/verify` — unauthenticated — answers whether a
+document with exactly those figures was issued, and when. The web page at `/verify` lives
+outside the authenticated shell because the people it is for (a customer, an accountant, a
+bank assessing a loan) have no account and never will.
+
+**A hand-written QR encoder** — `packages/domain/src/qr.ts`, byte mode, EC level M,
+versions 1–10, GF(256) Reed–Solomon, all eight masks scored. The same argument
+`duitnow-qr.ts` makes for its CRC-16: the specification has not changed since 2006, the
+output is verifiable by pointing a phone at it, and a document meant to be read in fifty
+years is a poor place for a dependency that might be unpublished or silently re-encode on
+a major bump. It is tested three ways — structure, the published BCH format-information
+table from Annex C, and a **round trip through a decoder written separately in the test
+file**, which is what caught the two real bugs: alignment patterns being skipped wherever
+they sit on the timing row (versions 7+), and the second format-info copy being written
+seven-and-eight rather than eight-and-seven, which overwrote the dark module.
+
+**The digest is over the DATA, never the PDF bytes.** The PDF is regenerated on every
+request and is not byte-stable — a pdfkit upgrade or a font metric change would produce
+different bytes for the same invoice and invalidate every document ever issued. The frozen
+figures cannot change without a credit note, which is its own document with its own
+fingerprint. `status` and `amountDue` are excluded from the hash on purpose: both move as
+the invoice is paid, and a receipt handed over at issue must still verify after settlement.
+
+Fingerprints are computed **lazily, at print time**, so every document already in the
+system gains a verifiable QR the next time it is printed — no backfill migration, and the
+digest is a pure function of the frozen figures, so computing it late gives the same answer.
+
+The public route obeys the four rules of `public-pay.controller.ts`, which is why it lives
+in that file: the answer is the document KIND and its DATE and nothing else — no tenant, no
+customer, no amount, no document number. GENUINE and UNKNOWN return the same status and the
+same keys, so they cannot be told apart by anything cheaper than reading the verdict. The
+digest is the capability; 256 bits is not a space anybody enumerates. It rides the existing
+`PUBLIC_RATE_LIMIT`.
+
+⚠️ **The honest limit, stated on the page itself: this is not a signature and not a
+government certification.** It proves the paper agrees with the issuing shop's own books —
+which are append-only and hash-chained, so they cannot be quietly rewritten to match a
+forged document — but the system attesting is the system that issued. **Unblocker for a
+stronger claim: sign the digest with a key the shop does not hold (or publish anchors to a
+third party), at which point the same QR carries an independent attestation.** The QR is
+also deliberately not the only route in: the URL and reference are printed as text, so the
+page still works if nothing in 2076 reads a 2006 symbology.
+
 ### 5.21 The promises register — warranties as obligations — BUILT (`0046`)
 
 `GET /v1/stock/warranties` and `/v1/stock/warranties/:serialNo`, both `stock.read`. A

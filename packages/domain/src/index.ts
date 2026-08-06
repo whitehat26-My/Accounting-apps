@@ -35,6 +35,7 @@ export * from './free-cash.js';
 export * from './fraud-watch.js';
 export * from './time-machine.js';
 export * from './warranty.js';
+export * from './qr.js';
 export * from './reconciliation.js';
 export * from './rbac.js';
 export * from './approval.js';

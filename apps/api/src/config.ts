@@ -89,6 +89,17 @@ const schema = z.object({
    * a canned assistant presented as real is a lie to the person reading it.
    */
   enableFakeAssistant: z.boolean(),
+  /**
+   * Where a printed document tells the reader to go to verify it.
+   *
+   * Printed onto paper that outlives any deployment, so it is configuration
+   * rather than a constant — but it has a default, unlike the secrets above:
+   * a wrong URL on a receipt is a bad link, while a missing one would stop
+   * invoices printing at all. The document also prints the digest as text, so
+   * a reader who cannot reach this address still holds everything needed to
+   * verify through any future address.
+   */
+  publicBaseUrl: z.string().url(),
   nodeEnv: z.string(),
 })
   .refine((c) => !(c.enableFakeGateway && c.nodeEnv === 'production'), {
@@ -140,6 +151,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     enableSandboxValues: env['EMIL_ENABLE_SANDBOX_VALUES'] === '1',
     ...(env['ANTHROPIC_API_KEY'] ? { anthropicApiKey: env['ANTHROPIC_API_KEY'] } : {}),
     enableFakeAssistant: env['EMIL_ENABLE_FAKE_ASSISTANT'] === '1',
+    publicBaseUrl: env['PUBLIC_BASE_URL'] ?? 'http://localhost:3000',
     nodeEnv: env['NODE_ENV'] ?? 'development',
   });
 
@@ -155,4 +167,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   }
 
   return parsed.data;
+}
+
+/**
+ * The address printed on a document's verification block.
+ *
+ * Read from the environment at call time rather than injected: the renderer is
+ * a pure function of its arguments and the controller is the only caller, so
+ * threading config through the PDF layer would buy nothing. Kept beside the
+ * schema so there is one place that knows the variable's name.
+ */
+export function verifyUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return `${(env['PUBLIC_BASE_URL'] ?? 'http://localhost:3000').replace(/\/+$/, '')}/verify`;
 }
