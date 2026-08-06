@@ -1231,6 +1231,11 @@ export function demoApi(
     return { serialNo: decodeURIComponent(warrantyMatch[1]!).toUpperCase(), promise: null };
   }
 
+  // Invitations are an account-level act the static demo has no accounts for.
+  if (p === '/v1/auth/invites') {
+    throw demoError(501, 'Invitations are issued by the real server.');
+  }
+
   // ---- the letterhead ------------------------------------------------------
   // The static demo stores no image bytes (see the repair photos above), so it
   // answers "no logo" honestly rather than 404ing the Settings card.

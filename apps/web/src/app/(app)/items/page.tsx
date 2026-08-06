@@ -197,8 +197,24 @@ export default function ItemsPage() {
               </div>
             ) : null}
             <ErrorNote error={create.error} />
-            <Button type="submit" disabled={create.isPending} className="w-full">
-              {create.isPending ? 'Saving…' : 'Add item'}
+            {/*
+              Disabled until the chart of accounts and the tax codes have
+              arrived. The mutation refuses without them ("Chart not loaded yet
+              — try again"), which is correct but is an error message where a
+              disabled button belongs: the person did nothing wrong, the page
+              was not ready, and telling them to retry is asking them to do the
+              waiting the interface should have done.
+            */}
+            <Button
+              type="submit"
+              disabled={create.isPending || !accounts.data || !taxCodes.data}
+              className="w-full"
+            >
+              {create.isPending
+                ? 'Saving…'
+                : !accounts.data || !taxCodes.data
+                  ? 'Loading the chart…'
+                  : 'Add item'}
             </Button>
           </form>
         </Card>

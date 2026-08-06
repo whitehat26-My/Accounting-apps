@@ -34,7 +34,15 @@ export interface TestApi {
   readonly close: () => Promise<void>;
 }
 
-export async function createTestApi(name: string): Promise<TestApi> {
+export async function createTestApi(
+  name: string,
+  /**
+   * Environment the app is built with, for the few suites whose subject IS a
+   * configuration choice — the invite gate, which cannot be tested under the
+   * `SIGNUP_MODE=open` every other suite needs.
+   */
+  overrides: Record<string, string> = {},
+): Promise<TestApi> {
   const dbName = `emil_api_${name}_${Date.now().toString(36)}`;
   const cluster = postgres(ADMIN_URL, { max: 1, onnotice: () => {} });
 
@@ -68,11 +76,23 @@ export async function createTestApi(name: string): Promise<TestApi> {
   process.env['JWT_SECRET'] = 'test-secret-that-is-long-enough-to-pass-validation';
   process.env['RATE_LIMIT'] = '10000';
   process.env['PUBLIC_RATE_LIMIT'] = '10000';
+  /*
+   * The suite registers users freely, so it runs the OPEN sign-up mode
+   * explicitly. Set here rather than relied on as a default: the default is
+   * `invite`, deliberately, because a default that fails open costs somebody
+   * their instance while one that fails closed costs a line in a harness.
+   * The invite gate has its own tests, which set this to `invite`.
+   */
+  process.env['SIGNUP_MODE'] = 'open';
   // Registers the in-memory FakeGateway, which accepts any signature. Safe
   // only because `loadConfig` refuses this flag when NODE_ENV is production —
   // there is a test below asserting exactly that.
   process.env['EMIL_ENABLE_FAKE_GATEWAY'] = '1';
   process.env['EMIL_ENABLE_SANDBOX_VALUES'] = '1';
+
+  // Applied LAST, so a suite whose subject is a configuration choice can
+  // override any default above.
+  for (const [key, value] of Object.entries(overrides)) process.env[key] = value;
 
   const app = await createApp();
   await app.init();

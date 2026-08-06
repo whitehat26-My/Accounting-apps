@@ -12,7 +12,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "migrate": "tsx src/migrate.ts",
-    "test": "vitest run"
+    "test": "vitest run",
+    "invite": "tsx src/invite-cli.ts"
   },
   "dependencies": {
     "@emil/domain": "workspace:*",

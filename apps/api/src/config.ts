@@ -29,6 +29,24 @@ const schema = z.object({
    */
   publicRateLimit: z.number().int().positive(),
   /**
+   * Who may open an account on this installation.
+   *
+   * ---------------------------------------------------------------------------
+   * DEFAULTS TO `invite`, BECAUSE THE WRONG DEFAULT HAS AN OWNER.
+   *
+   * Registration used to be open to whoever found the URL. That is right for a
+   * shop PC on a LAN or behind Tailscale, where the NETWORK is the gate, and
+   * wrong for anything with a domain name — the operator would learn about the
+   * strangers from the table sizes.
+   *
+   * A default that fails open costs somebody their instance; a default that
+   * fails closed costs a developer one environment variable. So `invite` here,
+   * and `SIGNUP_MODE=open` set explicitly by the dev harness, the e2e harness
+   * and any deployment that genuinely wants self-serve sign-up.
+   * ---------------------------------------------------------------------------
+   */
+  signupMode: z.enum(['open', 'invite']),
+  /**
    * Requests per window for the assistant chat route, keyed PER TENANT.
    *
    * Every other route's cost is a database query; this one's is a paid LLM
@@ -145,6 +163,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     rateLimit: Number(env['RATE_LIMIT'] ?? 600),
     rateLimitWindowMs: Number(env['RATE_LIMIT_WINDOW_MS'] ?? 60_000),
     publicRateLimit: Number(env['PUBLIC_RATE_LIMIT'] ?? 30),
+    signupMode: env['SIGNUP_MODE'] ?? 'invite',
     assistantRateLimit: Number(env['ASSISTANT_RATE_LIMIT'] ?? 30),
     trustProxy: parseTrustProxy(env['TRUST_PROXY']),
     enableFakeGateway: env['EMIL_ENABLE_FAKE_GATEWAY'] === '1',

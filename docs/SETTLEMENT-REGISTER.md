@@ -661,6 +661,68 @@ decide whether supplier bank details are stored at all — the same argument `00
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
 
+### 5.29 Invite-only sign-up, and the upgrade runbook — BUILT (`0051`)
+
+Migration `0051`, `packages/db/src/invite.ts`, `SIGNUP_MODE`,
+`POST /v1/auth/invites` (`user.manage`), `pnpm --filter @emil/db invite`.
+
+**Registration was open to whoever found the URL.** `POST /v1/auth/register` and
+`POST /v1/organisations` are both public — right for a shop PC behind Tailscale, where the
+NETWORK is the gate, and wrong for anything with a domain name: strangers could create
+accounts and tenants and the operator would learn about it from the table sizes.
+
+**The default is `invite`, and the default is the decision.** A default that fails open costs
+somebody their instance; one that fails closed costs a line in a harness. So the API test
+helper and the Playwright config set `SIGNUP_MODE=open` explicitly, and the one suite whose
+subject IS the gate runs `invite`.
+
+**The FIRST account on an empty installation is let through without a code.** Requiring one
+would mean running a CLI before you can use the server you just deployed, to protect a server
+with nothing on it. The window that opens — between the containers starting and the operator
+registering — is real, small, and NAMED in `DEPLOY.md`, because the mitigation is "register
+immediately" and that only works if you know.
+
+**Minting is an operator act the database enforces.** `emil_app` holds SELECT and UPDATE on
+`signup_invite` and NOT INSERT, so the internet-facing API cannot mint an invitation even if a
+route for it were added by mistake. The CLI connects as the migrating role. A test asserts the
+app role's direct INSERT is refused, so it is a checked property rather than a comment.
+
+**`UPDATE … WHERE used_at IS NULL … RETURNING` is the check.** Reading a row, deciding it is
+usable and then marking it used is a check-then-act race — two registrations arriving together
+both see an unused invite. One statement can match, so one caller wins. The claim shares the
+registration's transaction, so an attempt that fails afterwards does not spend the invitation
+(asserted: a duplicate email does not burn the code).
+
+**The gate created a dead end, and closing it was the harder half.** `POST /v1/auth/members`
+refuses an email with no account — "ask them to register first" — and under invite-only that
+person cannot. A shop owner hiring a cashier would have had to telephone whoever runs the
+server. So `POST /v1/auth/invites` (`user.manage`, the same permission as adding a member,
+because it is the same act one step earlier) mints a code BOUND to that address, surfaced on
+the Team page exactly when the server has just said the account does not exist. It goes
+through `create_signup_invite`, a SECURITY DEFINER function, so the app role still cannot
+write an arbitrary row — a backdated invitation, an eternal one, or one already marked used
+stays impossible.
+
+**`signup_invite` is exempt from the RLS invariant, with its reason recorded.** An invitation
+predates the tenant it will create, so there is no `tenant_id` to scope it to and no policy
+that could express the rule — the same category as `app_user` and `user_session`. Invariant
+#14 failed the moment the table appeared, which is the invariant working: a new table must
+either carry RLS or be exempted deliberately.
+
+**`docs/DEPLOY.md` gained the runbook that was missing.** Back up before every upgrade and
+check the dump is non-empty; deploy a TAG rather than tracking a branch, so "which version is
+running" has an answer; verify with `GET /v1/ledger/integrity` — the app's own check that the
+books still add up — rather than only with container status. And plainly: **rollback is a
+restore**, costing everything since the backup, because migrations are forward-only and the
+ledger is append-only. Plus what changes when you host somebody else's books: your backups now
+hold their data, and a superuser `psql` bypasses RLS entirely. Said rather than implied.
+
+**One unrelated defect fixed on the way.** The Items screen let somebody submit before the
+chart of accounts had loaded and answered "Chart not loaded yet — try again" — an error
+message where a disabled button belonged. It surfaced because the branding work added one
+request per page and the browser journey started losing a race it used to win; the fix is in
+the screen, not the test.
+
 ### 5.28 Per-tenant branding — the app stops being one company's — BUILT (`0050`)
 
 Migration `0050`, `sellerBlock`, `apps/api/src/pdf/render.ts`,

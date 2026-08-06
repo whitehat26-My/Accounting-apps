@@ -5,6 +5,11 @@ import { z } from 'zod';
 import { DEFAULT_SESSION_POLICY, type Permission } from '@emil/domain';
 import {
   addMember,
+  attributeInvite,
+  claimInvite,
+  inviteMember,
+  describeInviteRefusal,
+  isFirstUser,
   listMembers,
   userIdForEmail,
   authenticate,
@@ -24,7 +29,7 @@ import type { ApiConfig } from '../config.js';
 import { Public, Requires } from '../guards/decorators.js';
 import { Doc } from '../openapi/doc.decorator.js';
 import { principalOf } from '../context/request-context.js';
-import { NotFoundError, UnauthenticatedError, ValidationError } from '../errors.js';
+import { ForbiddenError, NotFoundError, UnauthenticatedError, ValidationError } from '../errors.js';
 import { parse } from '../validation.js';
 
 const credentials = z.object({
@@ -32,7 +37,22 @@ const credentials = z.object({
   password: z.string().min(12, 'Use at least 12 characters'),
 });
 
-const registration = credentials.extend({ fullName: z.string().min(1) });
+const registration = credentials.extend({
+  fullName: z.string().min(1),
+  /**
+   * Required when the installation runs `SIGNUP_MODE=invite` — which is the
+   * default. Optional in the SCHEMA rather than required, because whether it is
+   * needed is a property of the server, not of the request, and a validation
+   * error would say "missing field" where the honest answer is "this server
+   * does not accept open sign-ups".
+   */
+  inviteToken: z.string().min(1).max(200).optional(),
+});
+const inviteSchema = z.object({
+  email: z.string().email(),
+  /** The database refuses anything outside 1–90; this fails earlier and clearer. */
+  days: z.number().int().min(1).max(90).optional(),
+});
 const refreshBody = z.object({ refreshToken: z.string().min(1) });
 const switchBody = z.object({ tenantId: z.string().uuid() });
 
@@ -46,13 +66,49 @@ export class AuthController {
   /**
    * Register. Public, and creates no organisation — a user exists before any
    * membership does, which is what makes one login work across N clients.
+   *
+   * ---------------------------------------------------------------------------
+   * PUBLIC, BUT NOT NECESSARILY OPEN — AND THE FIRST ACCOUNT IS A SPECIAL CASE.
+   *
+   * Under `SIGNUP_MODE=invite` (the default) this needs a token the operator
+   * minted on the server. The exception is an installation with NO USERS AT
+   * ALL: somebody has just deployed this and is about to become its owner, and
+   * making them run a CLI before they can use their own server is a cliff for
+   * no security — there is nothing to protect yet.
+   *
+   * The window that opens is real and small: between the containers starting
+   * and the operator registering, a stranger who knew the address could take
+   * the first account. It is named in DEPLOY.md rather than hidden, because
+   * the mitigation is "register immediately", which only works if you know.
+   *
+   * The claim and the user insert share ONE transaction, so a registration
+   * that fails afterwards does not spend the invite.
+   * ---------------------------------------------------------------------------
    */
   @Public()
   @Doc({ request: () => registration })
   @Post('register')
   async register(@Body() body: unknown) {
     const input = parse(registration, body);
-    const user = await withUser(this.sql, null, (tx) => registerUser(tx, input));
+
+    const user = await withUser(this.sql, null, async (tx) => {
+      const gated = this.config.signupMode === 'invite' && !(await isFirstUser(tx));
+
+      let inviteId: string | undefined;
+      if (gated) {
+        const claim = await claimInvite(tx, input.inviteToken, input.email);
+        if (!claim.ok) throw new ForbiddenError(describeInviteRefusal(claim.reason));
+        inviteId = claim.inviteId;
+      }
+
+      const created = await registerUser(tx, input);
+      // Attribution, once the row exists to point at. Not load-bearing — the
+      // invite was already spent by `claimInvite` — so it stays a second
+      // statement rather than complicating the claim.
+      if (inviteId) await attributeInvite(tx, inviteId, created.id);
+      return created;
+    });
+
     return { id: user.id, email: input.email };
   }
 
@@ -260,6 +316,49 @@ export class AuthController {
         role: input.role,
         ...(input.expiresAt !== undefined ? { expiresAt: input.expiresAt } : {}),
       });
+    });
+  }
+
+  /**
+   * Invite somebody who has no account yet to join this organisation.
+   *
+   * ---------------------------------------------------------------------------
+   * THE OTHER HALF OF `POST /members`, WHICH REFUSES AN UNKNOWN EMAIL.
+   *
+   * Adding a member needs an existing user, and under invite-only sign-up that
+   * person cannot register on their own — so without this a shop owner hiring
+   * a cashier would have to telephone whoever runs the server. The code is
+   * bound to the address it was issued for, so it cannot be passed around.
+   *
+   * `user.manage`, the same permission as adding a member, because it is the
+   * same act one step earlier. The code is returned ONCE; only its digest is
+   * stored, and re-issuing is a second call.
+   *
+   * The member still has to be ADDED after they register — this creates an
+   * account, not a membership, and which role they get is a separate decision
+   * the owner makes with the person in front of them.
+   * ---------------------------------------------------------------------------
+   */
+  @Requires('user.manage')
+  @Doc({ request: () => inviteSchema })
+  @Post('invites')
+  async invite(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const input = parse(inviteSchema, body);
+    const principal = principalOf(request);
+    const ctx = { tenantId: principal.tenantId, userId: principal.userId };
+
+    return withTenant(this.sql, ctx, async (tx) => {
+      if (await userIdForEmail(tx, input.email)) {
+        throw new ValidationError(
+          `${input.email} already has an account — add them as a member directly.`,
+        );
+      }
+      const minted = await inviteMember(tx, {
+        email: input.email,
+        note: `Invited by a member of ${principal.tenantId}`,
+        ...(input.days !== undefined ? { days: input.days } : {}),
+      });
+      return { code: minted.token, email: minted.email, expiresAt: minted.expiresAt };
     });
   }
 

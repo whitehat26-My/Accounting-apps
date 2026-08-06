@@ -64,6 +64,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [fullName, setFullName] = useState('');
+  const [inviteToken, setInviteToken] = useState('');
   const [organisations, setOrganisations] = useState<LoginResponse['organisations'] | null>(null);
   const [refreshToken, setRefreshToken] = useState('');
   const [error, setError] = useState<unknown>(null);
@@ -92,7 +93,15 @@ export default function LoginPage() {
         await api('/v1/auth/register', {
           method: 'POST',
           anonymous: true,
-          body: { email, password, fullName },
+          body: {
+            email,
+            password,
+            fullName,
+            // Sent only when typed. On a server running SIGNUP_MODE=open, and
+            // for the very first account on an empty one, there is no code to
+            // give and an empty string would be a code that is simply wrong.
+            ...(inviteToken.trim() ? { inviteToken: inviteToken.trim() } : {}),
+          },
         });
       }
 
@@ -171,15 +180,33 @@ export default function LoginPage() {
           }}
         >
           {mode === 'register' ? (
-            <Field label="Your name">
-              <Input
-                value={fullName}
-                onChange={(e) => setFullName(e.target.value)}
-                required
-                autoComplete="name"
-                placeholder="Ahmad bin Ismail"
-              />
-            </Field>
+            <>
+              <Field label="Your name">
+                <Input
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  required
+                  autoComplete="name"
+                  placeholder="Ahmad bin Ismail"
+                />
+              </Field>
+              {/*
+                OPTIONAL in the form, because whether a code is needed is a
+                property of the SERVER, not of the person typing. A shop PC on
+                its own LAN accepts open sign-ups and would show a required
+                field nobody can fill; a hosted server refuses without one and
+                says so in the error, which is where that belongs.
+              */}
+              <Field label="Invitation code (if you were given one)">
+                <Input
+                  value={inviteToken}
+                  onChange={(e) => setInviteToken(e.target.value)}
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="Leave blank if you were not given a code"
+                />
+              </Field>
+            </>
           ) : null}
 
           <Field label="Email">

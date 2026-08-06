@@ -32,6 +32,7 @@ export * from './tax-return.js';
 export * from './year-end.js';
 export * from './inventory.js';
 export * from './pos.js';
+export * from './invite.js';
 export * from './repair.js';
 export * from './repair-document.js';
 export * from './quote.js';

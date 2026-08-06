@@ -141,6 +141,20 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     // through a narrow SECURITY DEFINER function. Asserted below.
     app_user: 'global identity; app role has no grant, access via SECURITY DEFINER only',
     user_session: 'global session; app role has no grant, access via SECURITY DEFINER only',
+    /*
+     * An invitation to open an account PREDATES the tenant it will create, so
+     * there is no `tenant_id` to scope it to and no policy that could express
+     * the rule. Same category as `app_user` and `user_session`, and mitigated
+     * the same way: the app role holds SELECT and UPDATE (it verifies and
+     * spends invitations during registration) and NOT INSERT — minting goes
+     * through `create_signup_invite`, a SECURITY DEFINER function that can
+     * only produce a well-formed row. Asserted in the API suite.
+     *
+     * It holds an email, an operator's note and a token digest. Nothing that
+     * belongs to an organisation, and the check below that an exempt table has
+     * no `tenant_id` is what stops that changing quietly.
+     */
+    signup_invite: 'pre-tenant by nature; app role cannot INSERT, minting via SECURITY DEFINER',
     // Scheduled jobs run ACROSS tenants — the rollup-drift canary asks "has
     // any tenant's cache diverged from its journal", and a per-tenant schedule
     // would make the answer depend on whether that tenant happened to have a

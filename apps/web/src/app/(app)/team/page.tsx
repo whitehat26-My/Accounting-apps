@@ -5,6 +5,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, ROLE_LABELS, useMe } from '@/lib/me';
+import { displayDate } from '@/lib/display';
 
 /**
  * Team: who works here, and what each of them can see.
@@ -48,8 +49,28 @@ export default function TeamPage() {
     mutationFn: () => api('/v1/auth/members', { method: 'POST', body: { email, role } }),
     onSuccess: () => {
       setEmail('');
+      setInvite(null);
       void queryClient.invalidateQueries({ queryKey: ['members'] });
     },
+  });
+
+  /*
+   * The other half of adding somebody.
+   *
+   * A member needs an account, and on a server with invite-only sign-up the
+   * person cannot make one on their own — so "no registered account holds
+   * that address" used to be a dead end that ended in a phone call to whoever
+   * runs the server. This mints a code the owner can pass on, bound to that
+   * address so it cannot be handed around.
+   */
+  const [invite, setInvite] = useState<{ code: string; expiresAt: string } | null>(null);
+  const inviteThem = useMutation({
+    mutationFn: () =>
+      api<{ code: string; expiresAt: string }>('/v1/auth/invites', {
+        method: 'POST',
+        body: { email },
+      }),
+    onSuccess: setInvite,
   });
 
   const manages = can(me.data, 'user.manage');
@@ -129,6 +150,49 @@ export default function TeamPage() {
             {add.isError ? <ErrorNote error={add.error} /> : null}
             {add.isSuccess ? (
               <p className="text-sm text-emerald-700">Added. They can sign in now.</p>
+            ) : null}
+
+            {/*
+              Offered only when the server has just said the account does not
+              exist. Showing it always would invite an owner to send a code to
+              somebody who could simply be added — two steps where one would do.
+            */}
+            {add.isError && /No registered account holds/.test(String(add.error)) ? (
+              <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-inset ring-amber-200">
+                <p className="text-sm text-amber-900">
+                  They have no account yet. Send them an invitation and they can create one —
+                  then add them here.
+                </p>
+                <Button
+                  variant="ghost"
+                  className="mt-2"
+                  disabled={inviteThem.isPending}
+                  onClick={() => inviteThem.mutate()}
+                >
+                  {inviteThem.isPending ? 'Creating…' : 'Create an invitation code'}
+                </Button>
+                {inviteThem.isError ? <ErrorNote error={inviteThem.error} /> : null}
+              </div>
+            ) : null}
+
+            {invite ? (
+              <div className="rounded-xl bg-emerald-50 p-3 ring-1 ring-inset ring-emerald-200">
+                <p className="text-xs text-emerald-900">
+                  Send this code to {email}. It works once, only for that address, and
+                  expires {displayDate(invite.expiresAt.slice(0, 10))}.
+                </p>
+                {/*
+                  Selectable and monospaced: it is copied by hand into WhatsApp,
+                  and it is shown ONCE — only its digest is stored, so there is
+                  no screen that can show it again.
+                */}
+                <code className="mt-2 block select-all break-all rounded-lg bg-white px-2 py-1.5 font-mono text-xs text-slate-900 ring-1 ring-inset ring-emerald-200">
+                  {invite.code}
+                </code>
+                <p className="mt-1.5 text-xs text-emerald-800">
+                  It will not be shown again. If it is lost, create another.
+                </p>
+              </div>
             ) : null}
           </div>
         </Card>
