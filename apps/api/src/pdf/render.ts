@@ -3,6 +3,7 @@ import PDFDocument from 'pdfkit';
 import { encodeQr } from '@emil/domain';
 import type { RenderedReport } from '@emil/domain';
 import type {
+  CreditNoteDocument,
   CustomerStatement,
   EaDocument,
   InvoiceDocument,
@@ -996,6 +997,9 @@ export function renderFinancialStatementsPdf(input: {
   to: string;
   profitOrLoss: RenderedReport;
   financialPosition: RenderedReport;
+  /** Where this pack will live — it changes what the provenance line can
+      truthfully claim. Defaults to a standalone download. */
+  context?: 'ARCHIVE' | 'STANDALONE';
 }): Promise<Buffer> {
   return build((pdf) => {
     const statement = (report: RenderedReport, subtitle: string) => {
@@ -1035,10 +1039,19 @@ export function renderFinancialStatementsPdf(input: {
     pdf.addPage();
     statement(input.financialPosition, `As at ${displayDate(input.to)}`);
 
+    /*
+     * The provenance line differs by where the pack came from, and saying the
+     * wrong one is saying something false. Inside the archive the CSVs are
+     * literally alongside it; downloaded on its own there is no archive, and
+     * pointing at files that are not there would send a reader looking.
+     */
     pdf.font('Helvetica').fontSize(7).fillColor('#666666');
     pdf.text(
-      'Prepared from the general ledger. The figures above are reproduced in ' +
-        'trial-balance.csv and journal.csv in this archive, and can be recomputed from them.',
+      input.context === 'ARCHIVE'
+        ? 'Prepared from the general ledger. The figures above are reproduced in ' +
+          'trial-balance.csv and journal.csv in this archive, and can be recomputed from them.'
+        : 'Prepared from the general ledger. Every figure above can be recomputed from the ' +
+          'trial balance and journal for the same period, exported from Reports.',
       MARGIN,
       760,
       { width: 495, align: 'center' },
@@ -1412,5 +1425,131 @@ export function renderSalesDayBookPdf(doc: SalesDayBookDocument): Promise<Buffer
       pdf.fillColor('#000000').fontSize(9);
     },
     { footNote: 'Sales day book — figures as issued.' },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The credit note
+// ---------------------------------------------------------------------------
+
+const CREDIT_REASON: Record<string, string> = {
+  RETURN: 'Goods returned',
+  OVERCHARGE: 'Overcharged on the original invoice',
+  DISCOUNT: 'Discount agreed after invoicing',
+  CANCELLATION: 'Order cancelled',
+  BAD_DEBT: 'Bad debt relief',
+  OTHER: 'Other',
+};
+
+/**
+ * The document a customer files against the invoice it corrects.
+ *
+ * ---------------------------------------------------------------------------
+ * THE REASON IS PRINTED, IN WORDS, BECAUSE IT IS THE POINT OF THE DOCUMENT.
+ *
+ * A credit note without a stated reason is a number somebody has to phone
+ * about, and under SST the reason is what supports the reduction in output
+ * tax. `reason` is a constrained code in the database — this prints the code's
+ * meaning ("Goods returned"), not the code, and adds the free-text detail
+ * beneath it when there is any.
+ *
+ * Amounts are POSITIVE, exactly as stored. The direction of a credit lives in
+ * the journal, not in the sign of a printed figure: a negative number on a
+ * page already headed CREDIT NOTE reads as a double negative to the person
+ * holding it and to the accountant keying it.
+ *
+ * `Still available` is carried because a credit is not always spent at once.
+ * A note applied to one invoice may leave a balance the customer can use
+ * against the next one, and that residue is invisible unless the paper says so.
+ * ---------------------------------------------------------------------------
+ */
+export function renderCreditNotePdf(doc: CreditNoteDocument): Promise<Buffer> {
+  return build(
+    (pdf) => {
+      const meta: [string, string][] = [
+        ['Credit note no', doc.creditNoteNo],
+        ['Date', displayDate(doc.creditDate)],
+      ];
+      if (doc.againstInvoiceNo) meta.push(['Against invoice', doc.againstInvoiceNo]);
+      if (doc.taxPointDate !== doc.creditDate) {
+        meta.push(['Tax point', displayDate(doc.taxPointDate)]);
+      }
+
+      reportHeader(
+        pdf,
+        doc.seller,
+        doc.status === 'VOIDED' ? 'CREDIT NOTE (VOIDED)' : 'CREDIT NOTE',
+        meta,
+      );
+
+      pair(pdf, 'Credit to', doc.customer.name);
+      if (doc.customer.tin) pair(pdf, 'Customer TIN', doc.customer.tin);
+      pdf.moveDown(0.4);
+
+      // The reason, said in words rather than left as a database code.
+      pair(pdf, 'Reason', CREDIT_REASON[doc.reason] ?? doc.reason);
+      if (doc.reasonDetail) {
+        pdf.fontSize(8.5).fillColor('#52525b');
+        pdf.text(doc.reasonDetail, MARGIN, pdf.y + 1, { width: 495, lineGap: 1.5 });
+        pdf.fillColor('#000000').fontSize(9);
+      }
+      pdf.moveDown(1);
+
+      const cols: Column[] = [
+        { label: 'Description', x: MARGIN, width: 240 },
+        { label: 'Qty', x: 300, width: 45, align: 'right' },
+        { label: 'Unit price', x: 352, width: 65, align: 'right' },
+        { label: 'Tax', x: 424, width: 55, align: 'right' },
+        { label: 'Amount', x: 486, width: 59, align: 'right' },
+      ];
+      tableHeader(pdf, cols);
+      for (const line of doc.lines) {
+        tableRow(pdf, cols, [
+          line.description,
+          trimQty(line.quantity),
+          money(line.unitPrice),
+          money(line.taxAmount),
+          money(line.lineTotal),
+        ]);
+      }
+      rule(pdf);
+
+      totalRow(pdf, 'Subtotal', doc.currency, doc.subtotal);
+      totalRow(pdf, 'SST', doc.currency, doc.taxTotal);
+      pdf.font('Helvetica-Bold');
+      totalRow(pdf, 'Total credited', doc.currency, doc.total);
+      pdf.font('Helvetica');
+
+      if (doc.unallocated !== '0.0000') {
+        pdf.moveDown(0.4);
+        const y = pdf.y;
+        pdf.rect(MARGIN, y, 495, 30).fill('#ecfdf5');
+        pdf.fillColor('#065f46').font('Helvetica-Bold').fontSize(9.5);
+        pdf.text(
+          `Still available to use: ${doc.currency === 'MYR' ? 'RM ' : `${doc.currency} `}` +
+            `${money(doc.unallocated)} — this can be set against a future invoice.`,
+          MARGIN + 12,
+          y + 11,
+          { width: 471 },
+        );
+        pdf.fillColor('#000000').font('Helvetica').fontSize(9);
+        pdf.y = y + 38;
+      }
+
+      pdf.moveDown(0.4);
+      pdf.fontSize(7.5).fillColor('#71717a');
+      pdf.text(
+        doc.againstInvoiceNo
+          ? `This credit note corrects invoice ${doc.againstInvoiceNo}. Keep both documents ` +
+            'together: the invoice states what was charged, this states what was credited ' +
+            'back, and the difference is what is payable.'
+          : 'This is a standalone credit to the customer’s account, not tied to one invoice.',
+        MARGIN,
+        pdf.y,
+        { width: 495, lineGap: 1.5 },
+      );
+      pdf.fillColor('#000000').fontSize(9);
+    },
+    { footNote: 'Credit note — retain with the invoice it corrects.' },
   );
 }

@@ -106,6 +106,7 @@ export async function buildArchive(
     to: window.to,
     profitOrLoss: sopl,
     financialPosition: sofp,
+    context: 'ARCHIVE',
   });
 
   const files: ZipEntry[] = [

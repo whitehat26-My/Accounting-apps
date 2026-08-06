@@ -82,6 +82,8 @@ export default function SalesPage() {
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Sales &amp; invoices</h1>
 
+      <CreditNotesCard />
+
       <Card title="Unpaid invoices">
         {invoices.data ? (
           open.length > 0 ? (
@@ -443,4 +445,105 @@ function NewInvoiceCard({
       </div>
     </Card>
   );
+}
+
+// ---------------------------------------------------------------------------
+// Credit notes
+// ---------------------------------------------------------------------------
+
+interface CreditNote {
+  id: string;
+  creditNoteNo: string;
+  creditDate: string;
+  customer: string;
+  againstInvoiceNo: string | null;
+  reason: string;
+  status: string;
+  total: string;
+  unallocated: string;
+}
+
+const CREDIT_REASON: Record<string, string> = {
+  RETURN: 'Goods returned',
+  OVERCHARGE: 'Overcharged',
+  DISCOUNT: 'Discount agreed',
+  CANCELLATION: 'Order cancelled',
+  BAD_DEBT: 'Bad debt relief',
+  OTHER: 'Other',
+};
+
+/**
+ * The credit notes, and the paper copy of each.
+ *
+ * Until now one could be issued from an invoice above and then never seen
+ * again — the ledger held it, the customer's balance reflected it, and there
+ * was nowhere to look at it or print the document explaining it.
+ */
+function CreditNotesCard() {
+  const notes = useQuery({
+    queryKey: ['credit-notes'],
+    queryFn: () => api<{ creditNotes: CreditNote[] }>('/v1/credit-notes'),
+  });
+
+  const list = notes.data?.creditNotes ?? [];
+  if (list.length === 0) return null;
+
+  return (
+    <Card title="Credit notes">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-slate-500">
+            <th className="pb-2">Note</th>
+            <th className="pb-2">Customer</th>
+            <th className="pb-2">Why</th>
+            <th className="pb-2">Against</th>
+            <th className="pb-2 text-right">Credited</th>
+            <th className="pb-2 text-right">Unused</th>
+            <th className="pb-2 text-right"></th>
+          </tr>
+        </thead>
+        <tbody>
+          {list.map((note) => (
+            <tr key={note.id} className="border-t border-slate-100">
+              <td className="py-2">
+                <span className="font-mono text-xs">{note.creditNoteNo}</span>
+                <span className="ml-2 text-xs text-slate-500">
+                  {displayDate(note.creditDate)}
+                </span>
+              </td>
+              <td className="py-2">{note.customer}</td>
+              <td className="py-2 text-slate-600">
+                {CREDIT_REASON[note.reason] ?? note.reason}
+              </td>
+              <td className="py-2 text-xs text-slate-500">
+                {note.againstInvoiceNo ?? <span className="text-slate-400">standalone</span>}
+              </td>
+              <td className="py-2 text-right font-medium">{rm(note.total)}</td>
+              <td className="py-2 text-right">
+                {/* A credit not yet spent is money the customer can still use,
+                    and it is invisible unless it is on the screen. */}
+                {note.unallocated === '0.0000' ? (
+                  <span className="text-slate-300">—</span>
+                ) : (
+                  <span className="font-medium text-emerald-700">{rm(note.unallocated)}</span>
+                )}
+              </td>
+              <td className="py-2 text-right">
+                <Button variant="ghost" onClick={() => void openCreditNotePdf(note.id)}>
+                  Print
+                </Button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </Card>
+  );
+}
+
+/** The session lives in a header, so the bytes are fetched then handed over. */
+async function openCreditNotePdf(id: string) {
+  const url = await apiBlobUrl(`/v1/credit-notes/${id}/pdf`);
+  window.open(url, '_blank', 'noopener');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
 }

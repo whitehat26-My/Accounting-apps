@@ -681,11 +681,32 @@ breaks BEFORE a row and redraws the column headings on the new sheet — without
 page of a day book is four unlabelled columns of money, and the reader's guess about which is
 tax ends up in a return. Verified against a real 34- and 60-invoice month.
 
-⚠️ **Still not printable, and named here rather than left to be discovered:** credit notes,
-and the P&L / balance sheet as a standalone download — `renderFinancialStatementsPdf` exists
-but is reachable only inside the hundred-year archive (§5.23). **Unblocker for both: a route
-each; the renderers and the data are already there.** Deferred by decision this pass, not by
-oversight.
+**Credit notes and the financial statements pack followed** — `GET /v1/credit-notes/:id/pdf`
+and `GET /v1/reports/financial-statements/pdf?from=&to=`.
+
+The credit note needed a **read path that had never existed**: `issueCreditNote` could write
+one and nothing could read it back, so the note lived in the ledger and on the customer's
+balance while the customer could not be shown the paper explaining why they were credited.
+`creditNoteDocumentData` and `listCreditNotes` are that path, plus a Credit notes card on the
+Sales screen — the list is `invoice.read`, not `creditnote.create`, because reading what was
+credited is the same act as reading what was invoiced and gating it behind the permission to
+CREATE one would hide it from everybody who only needs to look.
+
+Two decisions on the face of the document: the **reason prints in words** ("Goods returned",
+not `RETURN`) because a credit note without a stated reason is a number somebody has to phone
+about, and under SST the reason is what supports the reduction in output tax. **Amounts print
+positive**, exactly as stored — direction lives in the journal, and a minus sign on a page
+already headed CREDIT NOTE reads as a double negative to the person holding it and to the
+accountant keying it. Any unallocated residue is called out, because a credit not yet spent is
+money the customer can still use and is otherwise invisible.
+
+The statements pack reuses `renderFinancialStatementsPdf` unchanged except for one thing: its
+provenance line **now depends on where the pack lives**. Inside the archive it points at the
+CSVs beside it; downloaded on its own it points at the Reports exports, because there is no
+archive and directing a reader to files that are not there sends them looking. Both wordings
+are pinned by tests, in their own contexts. The fiscal year's label heads the pack when the
+window sits inside one year, and falls back to the raw dates when it does not — a wrong year
+on a filed set of accounts is worse than no year.
 
 ### 5.23 The hundred-year archive — BUILT (no migration)
 

@@ -157,21 +157,39 @@ export default function ReportsPage() {
         would defeat it. Blank % means zero revenue, not 0%.
       */}
       {/* The month-end pack, as paper. The CSVs beside it serve a
-          spreadsheet; this serves the folder an accountant is handed. */}
-      <Card title="Print the sales day book">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-sm text-slate-600">
-            Every invoice issued between {displayDate(from)} and {displayDate(to)}, one line
-            each, with what is still owed on it.
-          </p>
-          <Button
-            variant="ghost"
-            onClick={() =>
-              void openReportPdf(`/v1/reports/sales-day-book/pdf?from=${from}&to=${to}`)
-            }
-          >
-            Print
-          </Button>
+          spreadsheet; these serve the folder an accountant is handed. */}
+      <Card title="Print for the folder">
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3 first:border-0 first:pt-0">
+            <p className="text-sm text-slate-600">
+              <span className="font-medium">Sales day book</span> — every invoice issued
+              between {displayDate(from)} and {displayDate(to)}, one line each, with what is
+              still owed on it.
+            </p>
+            <Button
+              variant="ghost"
+              onClick={() =>
+                void openReportPdf(`/v1/reports/sales-day-book/pdf?from=${from}&to=${to}`)
+              }
+            >
+              Print
+            </Button>
+          </div>
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
+            <p className="text-sm text-slate-600">
+              <span className="font-medium">Financial statements</span> — profit or loss for
+              the period and the balance sheet at its end, on their own pages. What a bank or
+              a grant assessor asks for.
+            </p>
+            <Button
+              variant="ghost"
+              onClick={() =>
+                void openReportPdf(`/v1/reports/financial-statements/pdf?from=${from}&to=${to}`)
+              }
+            >
+              Print
+            </Button>
+          </div>
         </div>
       </Card>
 

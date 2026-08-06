@@ -44,7 +44,11 @@ import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
-import { renderSalesDayBookPdf, renderStatementPdf } from '../pdf/render.js';
+import {
+  renderFinancialStatementsPdf,
+  renderSalesDayBookPdf,
+  renderStatementPdf,
+} from '../pdf/render.js';
 import { buildArchive } from '../archive/build.js';
 import { NotFoundError } from '../errors.js';
 
@@ -440,6 +444,55 @@ export class ReportsController {
    * The CSV exports beside it serve a spreadsheet; this serves the folder an
    * accountant is handed, which is still how most Malaysian SMEs close a month.
    */
+  /**
+   * Profit or loss and the balance sheet, as one printable pack.
+   *
+   * The renderer has existed since the hundred-year archive but was reachable
+   * only from inside a year's zip — so a shop that wanted its accounts for a
+   * bank or a grant had to download an archive and open a file within it. This
+   * is the same renderer on a route.
+   */
+  @Requires('report.read')
+  @Get('reports/financial-statements/pdf')
+  async financialStatementsPdf(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const window = { from: parse(isoDate, from), to: parse(isoDate, to) };
+
+    const { sopl, sofp, seller, label } = await withTenant(this.sql, ctx, async (tx) => {
+      const years = await listFiscalYears(tx, ctx);
+      // The year the period sits in, when it sits in one — a heading of
+      // "FY2026" is what makes the pack filable. A window that straddles two
+      // years, or none, prints the dates alone rather than a wrong label.
+      const year = years.find((y) => window.from >= y.startDate && window.to <= y.endDate);
+      return {
+        sopl: await statementOfProfitOrLoss(tx, ctx, window),
+        sofp: await statementOfFinancialPosition(tx, ctx, { asOfDate: window.to }),
+        seller: await sellerBlock(tx, ctx),
+        label: year?.label ?? `${window.from} to ${window.to}`,
+      };
+    });
+
+    const pdf = await renderFinancialStatementsPdf({
+      organisationName: seller.name,
+      label,
+      from: window.from,
+      to: window.to,
+      profitOrLoss: sopl,
+      financialPosition: sofp,
+    });
+
+    void reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition',
+        `inline; filename="financial-statements-${window.from}-to-${window.to}.pdf"`)
+      .send(pdf);
+  }
+
   @Requires('report.read')
   @Get('reports/sales-day-book/pdf')
   async salesDayBookPdf(

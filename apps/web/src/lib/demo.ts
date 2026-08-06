@@ -1188,6 +1188,13 @@ export function demoApi(
     return { updated: true };
   }
 
+  /*
+   * Credit notes. The demo store issues none, so the honest answer is an empty
+   * list — and the card hides itself on an empty list rather than inventing a
+   * credit against an invoice the demo never credited.
+   */
+  if (p === '/v1/credit-notes' && method === 'GET') return { creditNotes: [] };
+
   // ---- stock ---------------------------------------------------------------
   if (p === '/v1/stock') {
     return {

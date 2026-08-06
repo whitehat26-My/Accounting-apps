@@ -881,6 +881,9 @@ describe('the hundred-year archive', () => {
 
     const statements = readFileSync(join(dir, 'financial-statements.pdf'));
     expect(statements.subarray(0, 4).toString()).toBe('%PDF');
+    // The pack INSIDE the archive points at the CSVs beside it — the same
+    // renderer says something different when downloaded on its own.
+    expect(pdfText(statements.toString('latin1'))).toContain('in this archive');
 
     rmSync(dir, { recursive: true, force: true });
   });
@@ -996,6 +999,59 @@ describe('the sales day book', () => {
     const response = await call(api, {
       method: 'GET',
       url: '/v1/reports/sales-day-book/pdf?from=2026-01-01&to=2026-12-31',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(response.status).toBe(403);
+  });
+});
+
+describe('the financial statements pack', () => {
+  it('prints profit or loss and the balance sheet on their own pages', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/financial-statements/pdf?from=2026-01-01&to=2026-12-31'),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+
+    const text = pdfText(response.body);
+    expect(text).toContain('Reports Sdn Bhd');
+    // Both statements, and the fiscal year's own label rather than raw dates.
+    expect(text).toContain('FY2026');
+    expect(text).toContain('Revenue');
+    expect(text).toContain('Total assets');
+    // Each statement starts a new page, so the pack is always at least two.
+    expect(text).toContain('Page 1 of 2');
+    expect(text).toContain('Page 2 of 2');
+    /*
+     * The provenance line must be the STANDALONE one. Inside the archive the
+     * CSVs sit beside the pack; downloaded on its own there is no archive, and
+     * pointing at files that are not there sends a reader looking for them.
+     */
+    expect(text).toContain('exported from Reports');
+    expect(text).not.toContain('in this archive');
+  });
+
+  it('falls back to the dates when a window straddles no single fiscal year', async () => {
+    // A wrong year label on a filed set of accounts is worse than none.
+    const text = pdfText(
+      (await callRaw(api, {
+        method: 'GET',
+        ...as('/v1/reports/financial-statements/pdf?from=2025-06-01&to=2026-06-30'),
+      })).body,
+    );
+    expect(text).not.toContain('FY2026');
+    expect(text).toContain('2025-06-01');
+  });
+
+  it('refuses SALES', async () => {
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const response = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/financial-statements/pdf?from=2026-01-01&to=2026-12-31',
       token: accessToken,
       tenantId: tenant.tenantId,
     });

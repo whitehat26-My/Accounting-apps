@@ -3,8 +3,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   accessTokenFor,
   call,
+  callRaw,
   createTestApi,
   makeUser,
+  pdfText,
   seedTenant,
   type TestApi,
   type Tenant,
@@ -553,6 +555,82 @@ describe('a full accounting cycle over HTTP', () => {
 
     // Money crosses the wire as a decimal STRING throughout.
     expect(typeof (ageing.body['total'] as string)).toBe('string');
+  });
+});
+
+describe('the printed credit note', () => {
+  /*
+   * Until now a credit note could be ISSUED and never read back: it existed in
+   * the ledger and on the customer's balance, and the customer could not be
+   * shown the paper explaining why they were credited. This is that read path,
+   * end to end, plus the residue case that makes the document worth printing.
+   */
+  it('prints the reason in words, and names the invoice it corrects', async () => {
+    const tenant = await seedTenant(api.admin, 'Credit Sdn Bhd');
+    const user = await makeUser(api, { tenantId: tenant.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, user.refreshToken, tenant.tenantId);
+    const as = (url: string) => ({ url, token: accessToken, tenantId: tenant.tenantId });
+
+    const invoice = await call(api, { method: 'POST', ...as('/v1/invoices'),
+      idempotencyKey: randomUUID(), body: invoiceBody(tenant) });
+    expect(invoice.status).toBe(201);
+
+    /*
+     * Omitting `lines` credits everything not already credited — the whole
+     * RM 1,080. Every figure is read off the original, which is the point of
+     * crediting FROM an invoice rather than raising a standalone note.
+     */
+    const credited = await call(api, {
+      method: 'POST',
+      ...as(`/v1/invoices/${invoice.body['id']}/credit-note`),
+      idempotencyKey: randomUUID(),
+      body: {
+        creditDate: '2026-08-12',
+        reason: 'RETURN',
+        reasonDetail: 'Customer returned one unit, unopened, within the change-of-mind window.',
+      },
+    });
+    expect(credited.status, JSON.stringify(credited.body)).toBe(201);
+
+    const list = await call(api, { method: 'GET', ...as('/v1/credit-notes') });
+    expect(list.status).toBe(200);
+    const notes = list.body['creditNotes'] as Record<string, unknown>[];
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!['againstInvoiceNo']).toBe(invoice.body['invoiceNo']);
+
+    const pdf = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/credit-notes/${notes[0]!['id']}/pdf`),
+    });
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers['content-type']).toBe('application/pdf');
+
+    const text = pdfText(pdf.body);
+    expect(text).toContain('CREDIT NOTE');
+    // The REASON, in words rather than as the database's code.
+    expect(text).toContain('Goods returned');
+    expect(text).not.toContain('RETURN');
+    expect(text).toContain('change-of-mind window');
+    // It names the invoice it corrects, which is what makes it filable.
+    expect(text).toContain(String(invoice.body['invoiceNo']));
+    expect(text).toContain('1,080.00');
+    // Amounts print POSITIVE — direction lives in the journal, and a minus
+    // sign on a page headed CREDIT NOTE reads as a double negative.
+    expect(text).not.toContain('-1,080.00');
+  });
+
+  it('answers 404 for a credit note that is not this tenant’s', async () => {
+    const tenant = await seedTenant(api.admin, 'Credit Boundary Sdn Bhd');
+    const user = await makeUser(api, { tenantId: tenant.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, user.refreshToken, tenant.tenantId);
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      url: `/v1/credit-notes/${randomUUID()}/pdf`,
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(response.status).toBe(404);
   });
 });
 
