@@ -1,4 +1,3 @@
-import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
 import { encodeQr } from '@emil/domain';
 import type { RenderedReport } from '@emil/domain';
@@ -96,7 +95,7 @@ export function renderInvoicePdf(
     pdf.font('Helvetica');
 
     if (verification) verificationBlock(pdf, verification);
-  });
+  }, { seller: doc.seller });
 }
 
 export function renderReceiptPdf(
@@ -130,7 +129,7 @@ export function renderReceiptPdf(
     }
 
     if (verification) verificationBlock(pdf, verification);
-  });
+  }, { seller: doc.seller });
 }
 
 
@@ -246,17 +245,18 @@ export function renderThermalReceiptPdf(doc: ReceiptDocument): Promise<Buffer> {
  * to be transcribed onto the official C.P.8A / keyed into e-Filing.
  */
 export function renderEaPdf(doc: EaDocument): Promise<Buffer> {
-  return build((pdf) => drawEa(pdf, doc));
+  return build((pdf) => drawEa(pdf, doc), { seller: doc.employer });
 }
 
 /** One employee per page — printed once, handed out with February's payslips. */
 export function renderEaBookPdf(docs: readonly EaDocument[]): Promise<Buffer> {
+  // Every sheet in the book is one employer's, so the first names the brand.
   return build((pdf) => {
     docs.forEach((doc, index) => {
       if (index > 0) pdf.addPage();
       drawEa(pdf, doc);
     });
-  });
+  }, { seller: docs[0]?.employer ?? { brandColour: null } });
 }
 
 function drawEa(pdf: PDFKit.PDFDocument, doc: EaDocument): void {
@@ -342,7 +342,7 @@ function drawEa(pdf: PDFKit.PDFDocument, doc: EaDocument): void {
  * ---------------------------------------------------------------------------
  */
 export function renderPayslipPdf(doc: PayslipDocument): Promise<Buffer> {
-  return build((pdf) => drawPayslip(pdf, doc));
+  return build((pdf) => drawPayslip(pdf, doc), { seller: doc.employer });
 }
 
 /**
@@ -362,7 +362,7 @@ export function renderPayslipBookPdf(docs: readonly PayslipDocument[]): Promise<
       if (index > 0) pdf.addPage();
       drawPayslip(pdf, doc);
     });
-  });
+  }, { seller: docs[0]?.employer ?? { brandColour: null } });
 }
 
 function drawPayslip(pdf: PDFKit.PDFDocument, doc: PayslipDocument): void {
@@ -408,7 +408,7 @@ function drawPayslip(pdf: PDFKit.PDFDocument, doc: PayslipDocument): void {
     pdf.moveDown(0.8);
     const netY = pdf.y;
     pdf.rect(MARGIN, netY, 495, 30).fill('#f4f4f5');
-    pdf.fillColor(BRAND).font('Helvetica-Bold').fontSize(11)
+    pdf.fillColor(brand).font('Helvetica-Bold').fontSize(11)
       .text('NET PAY', MARGIN + 12, netY + 10);
     pdf.fillColor('#000000').fontSize(14)
       .text(`RM ${money(doc.netPay)}`, 300, netY + 8, { width: 233, align: 'right' });
@@ -483,7 +483,7 @@ function paymentLine(payment: NonNullable<PayslipDocument['payment']>): string {
 }
 
 function sectionHeading(pdf: PDFKit.PDFDocument, title: string): void {
-  pdf.font('Helvetica-Bold').fontSize(8).fillColor(BRAND)
+  pdf.font('Helvetica-Bold').fontSize(8).fillColor(brand)
     .text(title, MARGIN, pdf.y, { characterSpacing: 0.6 });
   pdf.fillColor('#000000').font('Helvetica').fontSize(9);
   pdf.y += 3;
@@ -610,7 +610,7 @@ export function renderStatementPdf(
     // ---- What they owe, and what is late -----------------------------------
     const dueY = pdf.y;
     pdf.rect(MARGIN, dueY, 495, 28).fill('#f4f4f5');
-    pdf.fillColor(BRAND).font('Helvetica-Bold').fontSize(10)
+    pdf.fillColor(brand).font('Helvetica-Bold').fontSize(10)
       .text('AMOUNT NOW DUE', MARGIN + 12, dueY + 9);
     pdf.fillColor('#000000').fontSize(13)
       .text(`RM ${money(doc.closingBalance)}`, 300, dueY + 7, { width: 233, align: 'right' });
@@ -645,8 +645,7 @@ export function renderStatementPdf(
       { width: 495, lineGap: 1.5 },
     );
     pdf.fillColor('#000000');
-
-    });
+  }, { seller });
 }
 
 // ------------------------------------------------------------------ helpers
@@ -672,7 +671,7 @@ export function renderStatementPdf(
  */
 function build(
   draw: (pdf: PDFKit.PDFDocument) => void,
-  options: { readonly footNote?: string } = {},
+  options: { readonly footNote?: string; readonly seller?: { brandColour: string | null } } = {},
 ): Promise<Buffer> {
   return new Promise((resolve, reject) => {
     const pdf = new PDFDocument({ size: 'A4', margin: MARGIN, compress: false, bufferPages: true });
@@ -681,12 +680,17 @@ function build(
     pdf.on('end', () => resolve(Buffer.concat(chunks)));
     pdf.on('error', reject);
 
+    // The tenant's colour for the length of this document, and the product
+    // default again afterwards — see the note on `brand`.
+    brand = options.seller?.brandColour ?? DEFAULT_BRAND;
     try {
       draw(pdf);
       stampPages(pdf, options.footNote);
     } catch (error) {
       reject(error instanceof Error ? error : new Error(String(error)));
       return;
+    } finally {
+      brand = DEFAULT_BRAND;
     }
     pdf.end();
   });
@@ -730,24 +734,63 @@ function stampPages(pdf: PDFKit.PDFDocument, footNote?: string): void {
 }
 
 /**
- * The shop's brand blue, sampled from the Shah G Tech logo itself, and the
- * logo beside it. A customer's copy carries the shop's real identity —
- * presentation only; every figure below is stored data.
+ * The accent colour, when the tenant has expressed no preference.
+ *
+ * A product default, not anybody's brand: the tenant's own colour comes off
+ * `organisation.brand_colour` and is set on the document by `build()`.
  */
-const BRAND = '#1875BE';
-const LOGO = fileURLToPath(new URL('./wordmark.png', import.meta.url));
+const DEFAULT_BRAND = '#1875BE';
+
+/**
+ * The colour in force for the document currently being drawn.
+ *
+ * ---------------------------------------------------------------------------
+ * MODULE STATE, SET AND RESET BY `build()` — AND WHY THAT IS SAFE HERE.
+ *
+ * `BRAND` used to be a constant, referenced from seven places, most of them
+ * helpers (`sectionHeading`, `amountRow`) far from any seller. Threading a
+ * colour parameter through all of them would be churn out of proportion to the
+ * change; reading it from a variable the renderer sets is not.
+ *
+ * It is safe because `build()` sets it, calls `draw(pdf)` — which is
+ * SYNCHRONOUS in every renderer in this file — and resets it in a `finally`.
+ * Node runs that whole sequence without yielding, so two documents cannot
+ * interleave. The `finally` is what makes the property survive a renderer that
+ * throws halfway: without it, one bad document would tint the next one.
+ *
+ * If a renderer ever becomes async, this breaks silently and the fix is to
+ * pass the colour explicitly. Hence the note.
+ * ---------------------------------------------------------------------------
+ */
+let brand = DEFAULT_BRAND;
 
 function header(
   pdf: PDFKit.PDFDocument,
   seller: InvoiceDocument['seller'],
   title: string,
 ): void {
-  pdf.rect(0, 0, 595, 6).fill(BRAND);
+  pdf.rect(0, 0, 595, 6).fill(brand);
   pdf.fillColor('#000000');
 
-  // Top-right, transparent background: the wordmark is 1600×478, so a 32pt
-  // height keeps it crisp without crowding the seller block.
-  pdf.image(LOGO, 545 - 107, MARGIN - 6, { height: 32 });
+  /*
+   * The TENANT's mark, or none at all.
+   *
+   * There is deliberately no fallback image. A compiled-in default was the
+   * whole defect: a second company issuing an invoice issued it under the
+   * first company's logo, and an invoice is precisely the document that must
+   * carry the mark of the party actually owed the money. A tenant with no logo
+   * prints its name alone, which is a perfectly good letterhead.
+   *
+   * `fit` rather than `height`: a logo is whatever shape the tenant uploaded,
+   * and a tall square scaled to 32pt high would run into the seller block.
+   * Fitting inside a box bounds BOTH dimensions.
+   */
+  if (seller.logo) {
+    pdf.image(seller.logo, 545 - 130, MARGIN - 6, {
+      fit: [130, 38],
+      align: 'right',
+    });
+  }
 
   pdf.font('Helvetica-Bold').fontSize(16).text(seller.name, MARGIN, MARGIN);
   pdf.font('Helvetica').fontSize(8).fillColor('#555555');
@@ -756,7 +799,7 @@ function header(
   if (seller.sstRegistered && seller.sstNo) pdf.text(`SST No: ${seller.sstNo}`);
   pdf.fillColor('#000000');
 
-  pdf.font('Helvetica-Bold').fontSize(13).fillColor(BRAND).text(title, MARGIN, pdf.y + 10);
+  pdf.font('Helvetica-Bold').fontSize(13).fillColor(brand).text(title, MARGIN, pdf.y + 10);
   pdf.fillColor('#000000');
   pdf.font('Helvetica').fontSize(9);
   pdf.moveDown(0.5);
@@ -1006,7 +1049,12 @@ function displayDate(iso: string): string {
  * is harder to hand to somebody than one that does not.
  */
 export function renderFinancialStatementsPdf(input: {
-  organisationName: string;
+  /**
+   * The whole seller, not just the name: the pack carries the tenant's own
+   * accent colour like every other document. The name is read off it, so the
+   * two can never disagree — which they could when this took a bare string.
+   */
+  seller: InvoiceDocument['seller'];
   label: string;
   from: string;
   to: string;
@@ -1018,8 +1066,8 @@ export function renderFinancialStatementsPdf(input: {
 }): Promise<Buffer> {
   return build((pdf) => {
     const statement = (report: RenderedReport, subtitle: string) => {
-      pdf.font('Helvetica-Bold').fontSize(14).fillColor(BRAND);
-      pdf.text(input.organisationName, MARGIN, pdf.y);
+      pdf.font('Helvetica-Bold').fontSize(14).fillColor(brand);
+      pdf.text(input.seller.name, MARGIN, pdf.y);
       pdf.fillColor('#000000').fontSize(11);
       pdf.text(report.name, MARGIN, pdf.y + 2);
       pdf.font('Helvetica').fontSize(9).fillColor('#555555');
@@ -1036,7 +1084,7 @@ export function renderFinancialStatementsPdf(input: {
         const y = pdf.y;
         const indent = MARGIN + line.level * 14;
         if (line.lineType === 'HEADER') {
-          pdf.fillColor(BRAND).text(line.label.toUpperCase(), indent, y, { characterSpacing: 0.6 });
+          pdf.fillColor(brand).text(line.label.toUpperCase(), indent, y, { characterSpacing: 0.6 });
           pdf.fillColor('#000000');
         } else {
           pdf.text(line.label, indent, y, { width: 380 - line.level * 14 });
@@ -1072,7 +1120,7 @@ export function renderFinancialStatementsPdf(input: {
       { width: 495, align: 'center' },
     );
     pdf.fillColor('#000000');
-  });
+  }, { seller: input.seller });
 }
 
 // ---------------------------------------------------------------------------
@@ -1190,7 +1238,7 @@ export function renderDaySheetPdf(doc: DaySheetDocument): Promise<Buffer> {
 
       signatureBlock(pdf, { role: 'Counted by' }, { role: 'Checked by' });
     },
-    { footNote: 'Day sheet — file with the day’s receipts.' },
+    { seller: doc.seller, footNote: 'Day sheet — file with the day’s receipts.' },
   );
 }
 
@@ -1323,7 +1371,7 @@ export function renderQuotePdf(doc: QuoteDocument): Promise<Buffer> {
         { role: 'For and on behalf of', name: doc.seller.name },
       );
     },
-    { footNote: 'Quotation — not a tax invoice. No payment is due on this document.' },
+    { seller: doc.seller, footNote: 'Quotation — not a tax invoice. No payment is due on this document.' },
   );
 }
 
@@ -1439,7 +1487,7 @@ export function renderSalesDayBookPdf(doc: SalesDayBookDocument): Promise<Buffer
       );
       pdf.fillColor('#000000').fontSize(9);
     },
-    { footNote: 'Sales day book — figures as issued.' },
+    { seller: doc.seller, footNote: 'Sales day book — figures as issued.' },
   );
 }
 
@@ -1565,7 +1613,7 @@ export function renderCreditNotePdf(doc: CreditNoteDocument): Promise<Buffer> {
       );
       pdf.fillColor('#000000').fontSize(9);
     },
-    { footNote: 'Credit note — retain with the invoice it corrects.' },
+    { seller: doc.seller, footNote: 'Credit note — retain with the invoice it corrects.' },
   );
 }
 
@@ -1907,7 +1955,7 @@ export function renderRepairIntakeSlipPdf(
         verification,
       );
     },
-    { footNote: 'Device receipt — please bring this when you collect.' },
+    { seller: doc.seller, footNote: 'Device receipt — please bring this when you collect.' },
   );
 }
 
@@ -2004,7 +2052,7 @@ export function renderRepairReportPdf(
 
       if (doc.photos.length > 0) {
         if (pdf.y > 560) pdf.addPage();
-        pdf.font('Helvetica-Bold').fontSize(10).fillColor(BRAND);
+        pdf.font('Helvetica-Bold').fontSize(10).fillColor(brand);
         pdf.text('Photographic record', MARGIN, pdf.y);
         pdf.font('Helvetica').fontSize(7.5).fillColor('#71717a');
         pdf.text(
@@ -2040,7 +2088,7 @@ export function renderRepairReportPdf(
         verification,
       );
     },
-    { footNote: 'Repair job report — keep with your receipt for any warranty claim.' },
+    { seller: doc.seller, footNote: 'Repair job report — keep with your receipt for any warranty claim.' },
   );
 }
 
@@ -2155,6 +2203,39 @@ export function renderWarrantyCardPdf(
 
       if (verification) verificationBlock(pdf, verification);
     },
-    { footNote: 'Warranty card — keep with your invoice.' },
+    { seller: card.seller, footNote: 'Warranty card — keep with your invoice.' },
   );
+}
+
+/**
+ * Will this image actually print?
+ *
+ * ---------------------------------------------------------------------------
+ * THE ONLY HONEST TEST IS TO TRY IT.
+ *
+ * A logo is accepted once and then embedded in every document that tenant ever
+ * prints. Bytes that pdfkit cannot read therefore fail LATER — not at upload,
+ * where somebody is watching and can pick another file, but weeks afterwards
+ * when a customer is waiting for an invoice and every PDF route 500s. A test
+ * found exactly this: a PNG with one wrong CRC uploaded cleanly and then broke
+ * the tenant's invoices.
+ *
+ * Checking the magic bytes would not have caught it — the header was perfect
+ * and the compressed data was not. Re-implementing PNG and JPEG validation to
+ * find that out would be reimplementing the decoder, badly. So this embeds the
+ * image in a throwaway document and reports whether that worked, which is
+ * precisely the property being claimed. A logo is uploaded once per
+ * organisation, so the cost of one discarded PDF is nothing.
+ * ---------------------------------------------------------------------------
+ */
+export function isPrintableImage(image: Buffer): boolean {
+  try {
+    const probe = new PDFDocument({ size: 'A4', margin: 0 });
+    probe.image(image, 0, 0, { fit: [10, 10] });
+    // Not ended and never read: the document is discarded, and pdfkit does the
+    // decoding inside `image()` — which is the step that throws.
+    return true;
+  } catch {
+    return false;
+  }
 }

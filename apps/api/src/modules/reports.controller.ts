@@ -478,7 +478,7 @@ export class ReportsController {
     });
 
     const pdf = await renderFinancialStatementsPdf({
-      organisationName: seller.name,
+      seller,
       label,
       from: window.from,
       to: window.to,
@@ -533,7 +533,7 @@ export class ReportsController {
       const seller = await sellerBlock(tx, ctx);
       return {
         label: year.label,
-        zip: await buildArchive(tx, ctx, year, seller.name, new Date()),
+        zip: await buildArchive(tx, ctx, year, seller, new Date()),
       };
     });
 

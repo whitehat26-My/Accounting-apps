@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, apiBlobUrl } from '@/lib/api';
+import { preparePhoto } from '@/lib/image';
 import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
@@ -73,11 +74,132 @@ export default function SettingsPage() {
         )}
       </Card>
 
+      <LetterheadCard canEdit={manages} />
       <ChartCard canAdd={manages} />
       {can(me.data, 'journal.post') ? <OpeningBalancesCard /> : null}
       <TaxCard canAdd={writesTax} />
       <PeriodsCard canLock={can(me.data, 'period.lock')} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * The mark that prints on this organisation's documents.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS SCREEN EXISTS AT ALL.
+ *
+ * The logo used to be a file compiled into the API, so every organisation on a
+ * server printed invoices under the first one's mark. Migration 0050 moved it
+ * into the row and this is where a company puts its own there — which means
+ * the answer to "how do I hand this to another company" is now "they sign up
+ * and spend thirty seconds here", rather than "you fork the code".
+ *
+ * No logo is the normal state, not an error: the letterhead is then the
+ * organisation's name set large, which is a perfectly good letterhead.
+ * ---------------------------------------------------------------------------
+ */
+function LetterheadCard({ canEdit }: { canEdit: boolean }) {
+  const queryClient = useQueryClient();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [colour, setColour] = useState('#1875be');
+
+  const logo = useQuery({
+    queryKey: ['organisation-logo'],
+    // 204 means no mark. `apiBlobUrl` rejects on anything that is not an
+    // image, and a company without one is the ordinary case — so a rejection
+    // here resolves to "none" rather than to an error banner.
+    queryFn: () => apiBlobUrl('/v1/organisations/logo').catch(() => null),
+  });
+
+  const save = async (logoBase64: string | null, contentType: 'image/png' | 'image/jpeg') => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api('/v1/organisations/brand', {
+        method: 'PUT',
+        body: { logoBase64, logoContentType: contentType, brandColour: colour },
+      });
+      void queryClient.invalidateQueries({ queryKey: ['organisation-logo'] });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  };
+
+  async function onPicked(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    // The same downscale-and-re-encode the repair camera uses, so a 4MB phone
+    // photo of a signboard arrives as a letterhead-sized JPEG.
+    const prepared = await preparePhoto(file);
+    await save(prepared.base64, prepared.contentType as 'image/png' | 'image/jpeg');
+  }
+
+  return (
+    <Card title="Letterhead — what prints on your documents">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex h-20 w-40 items-center justify-center rounded-xl bg-white ring-1 ring-inset ring-slate-200">
+          {logo.data ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logo.data} alt="Your logo" className="max-h-16 max-w-36 object-contain" />
+          ) : (
+            <span className="px-2 text-center text-xs text-slate-400">
+              No logo — documents print your name
+            </span>
+          )}
+        </div>
+
+        {canEdit ? (
+          <div className="space-y-2">
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/png,image/jpeg"
+              className="hidden"
+              onChange={(e) => void onPicked(e.target.files)}
+            />
+            <div className="flex gap-2">
+              <Button onClick={() => fileInput.current?.click()} disabled={busy}>
+                {busy ? 'Saving…' : logo.data ? 'Replace logo' : 'Upload a logo'}
+              </Button>
+              {logo.data ? (
+                <Button variant="ghost" disabled={busy} onClick={() => void save(null, 'image/png')}>
+                  Remove
+                </Button>
+              ) : null}
+            </div>
+            <label className="flex items-center gap-2 text-xs text-slate-600">
+              Accent colour
+              <input
+                type="color"
+                value={colour}
+                onChange={(e) => setColour(e.target.value.toLowerCase())}
+                className="h-7 w-10 cursor-pointer rounded border border-slate-200"
+              />
+            </label>
+          </div>
+        ) : (
+          <p className="text-sm text-slate-500">
+            Only an owner or admin can change the letterhead.
+          </p>
+        )}
+      </div>
+
+      <ErrorNote error={error} />
+
+      <p className="mt-3 text-xs text-slate-500">
+        Appears on every invoice, receipt, quotation, statement and repair document this
+        organisation prints. PNG or JPEG, up to 256 KB — it is embedded in each document, so
+        a photograph would make one invoice heavier than a year of ledger.
+      </p>
+    </Card>
   );
 }
 

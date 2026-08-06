@@ -39,7 +39,15 @@ import shop from '@/brand/shop.jpg';
 
 interface LoginResponse {
   refreshToken: string;
-  organisations: { tenantId: string; name: string; role: string }[];
+  /**
+   * `tenantName`, not `name` — the field the API actually sends
+   * (`membershipsForUser`). This interface said `name` for as long as it has
+   * existed, so every user who signed in through THIS screen stored an
+   * `organisationName` of `undefined`; the rail rendered it as empty text and
+   * nobody saw it. Only the person who had just created the organisation, and
+   * who never passes through here, had a name in the rail.
+   */
+  organisations: { tenantId: string; tenantName: string; role: string }[];
 }
 
 /** What the shop gets, in the words the shop would use. */
@@ -99,7 +107,7 @@ export default function LoginPage() {
         router.push('/setup');
       } else if (login.organisations.length === 1) {
         const only = login.organisations[0]!;
-        await enter(only.tenantId, only.name, login.refreshToken);
+        await enter(only.tenantId, only.tenantName, login.refreshToken);
       } else {
         setRefreshToken(login.refreshToken);
         setOrganisations(login.organisations);
@@ -122,10 +130,10 @@ export default function LoginPage() {
           {organisations.map((org) => (
             <button
               key={org.tenantId}
-              onClick={() => void enter(org.tenantId, org.name, refreshToken)}
+              onClick={() => void enter(org.tenantId, org.tenantName, refreshToken)}
               className="flex w-full items-center justify-between gap-3 rounded-xl bg-white px-4 py-3.5 text-left shadow-lg shadow-black/10 ring-1 ring-slate-900/5 transition-colors hover:bg-emerald-50 hover:ring-emerald-200"
             >
-              <span className="font-medium text-slate-900">{org.name}</span>
+              <span className="font-medium text-slate-900">{org.tenantName}</span>
               <span className="text-xs text-slate-500">{org.role}</span>
             </button>
           ))}

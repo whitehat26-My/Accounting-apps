@@ -661,6 +661,66 @@ decide whether supplier bank details are stored at all — the same argument `00
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
 
+### 5.28 Per-tenant branding — the app stops being one company's — BUILT (`0050`)
+
+Migration `0050`, `sellerBlock`, `apps/api/src/pdf/render.ts`,
+`GET /v1/organisations/logo` (`tax.read`), `PUT /v1/organisations/brand` (`org.manage`).
+
+**The app was multi-tenant in the data and single-brand in the presentation.** Every row has
+carried `tenant_id` since `0001` with RLS enabled and forced — two companies' books have
+always been genuinely separate. But the LOGO on every printed document was a PNG compiled
+into the API image, the nav rail said "Shah G Tech" above the signed-in organisation's own
+name, the browser tab said "Shah G Tech — shop & books", and the assistant was told it works
+for "Shah G Tech, a computer shop in Malaysia". So a second company could keep its books here
+and could not issue an invoice: **an invoice is the document that says who is owed money, and
+it must carry the mark of the party actually owed.**
+
+The split that makes this simple: **instance branding is the operator's, tenant branding is
+the tenant's.** The login page and the tab title are the same for everybody who reaches the
+URL — set before anybody has signed in, so they cannot know whose books are behind them, and
+therefore configurable by env (`NEXT_PUBLIC_APP_NAME`). The rail, every PDF and the assistant
+prompt know who is asking, and read the `organisation` row.
+
+**There is deliberately no fallback logo.** A compiled-in default was the whole defect; an
+organisation with no mark prints its name alone, set large, which is a perfectly good
+letterhead and is what every organisation gets on the day it signs up. In the rail the
+fallback is the tenant's INITIALS on a tile — putting one company's hexagon on another
+company's screen is the same mistake in a different place.
+
+**`BRAND` became a variable set and reset by `build()`.** It was a constant referenced from
+seven places, most of them helpers (`sectionHeading`, `amountRow`) nowhere near a seller;
+threading a colour through all of them was churn out of proportion. Safe because `build()`
+sets it, calls a SYNCHRONOUS `draw`, and resets in a `finally` — Node cannot interleave two
+documents through that. The comment says so, and says what breaks it (an async renderer).
+
+**Three real defects surfaced while building it, two of them pre-existing.**
+
+1. **A corrupt image uploaded cleanly and then broke every PDF that tenant printed.** Found by
+   a test PNG with one wrong IDAT CRC: perfect header, perfect dimensions, and pdfkit throws
+   on decode. Magic-byte checking would not have caught it and re-implementing PNG validation
+   would be re-implementing the decoder badly, so `isPrintableImage` embeds the bytes in a
+   throwaway document and reports whether that worked — the exact property being claimed. A
+   logo is uploaded once per organisation; one discarded PDF costs nothing.
+2. **Every user who signed in through the login SCREEN had a blank organisation name.** The
+   API sends `tenantName` (`membershipsForUser`); `login/page.tsx` read `only.name`. It has
+   been `undefined` for as long as the screen has existed, rendered as empty text, and nobody
+   saw it — only the person who had just CREATED the organisation, who never passes through
+   that screen, had a name in the rail. The branding work turned it from invisible into a
+   crash, which is how it was found.
+3. **`apiBlobUrl` minted object URLs for empty responses.** A 204 is `response.ok`, so
+   `URL.createObjectURL` happily produced a URL to zero bytes, which every caller then handed
+   to an `<img>` or a new tab — a broken image where the initials should have been. Now a
+   zero-length body rejects: no caller wants a URL to nothing.
+
+**Asserted by `two companies, two letterheads`** in the api suite: each organisation's logo
+comes back distinguishable from the other's, each invoice PDF carries its OWN name and not the
+other's, clearing returns to a name-only letterhead, an oversized logo is refused, an
+unprintable one is refused at UPLOAD rather than at print time, and changing the letterhead is
+`org.manage` while looking at it is `tax.read`.
+
+**Consequence for the existing deployment:** Shah G Tech's own logo now has to be uploaded in
+Settings like anybody else's, because the compiled-in copy is gone. Thirty seconds, once.
+
 ### 5.27 The warranty card — BUILT (`0049`)
 
 `GET /v1/stock/warranties/:serialNo/card.pdf` (`stock.read`),

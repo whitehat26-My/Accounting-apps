@@ -11,6 +11,7 @@ import {
   trialBalanceReport,
   type TenantContext,
   type Tx,
+  type SellerBlock,
 } from '@emil/db';
 import { buildZip, type ZipEntry } from './zip.js';
 import { renderFinancialStatementsPdf } from '../pdf/render.js';
@@ -56,9 +57,10 @@ export async function buildArchive(
   tx: Tx,
   ctx: TenantContext,
   year: ArchiveYear,
-  organisationName: string,
+  seller: SellerBlock,
   when: Date,
 ): Promise<Buffer> {
+  const organisationName = seller.name;
   const window = { from: year.startDate, to: year.endDate };
 
   const [entries, ledger, trial, sopl, sofp, proof] = await Promise.all([
@@ -100,7 +102,7 @@ export async function buildArchive(
   ]);
 
   const statements = await renderFinancialStatementsPdf({
-    organisationName,
+    seller,
     label: year.label,
     from: window.from,
     to: window.to,

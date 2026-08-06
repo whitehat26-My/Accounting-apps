@@ -863,3 +863,170 @@ describe('proof packs over HTTP', () => {
     expect(refused.body['verdict']).toBe('PACK_ALTERED');
   });
 });
+
+/**
+ * Two companies on one server, and whose name is on the paper.
+ *
+ * ---------------------------------------------------------------------------
+ * THE DEFECT THIS EXISTS TO PREVENT COMING BACK.
+ *
+ * Every row in this database has carried `tenant_id` since migration 0001, with
+ * RLS enabled and forced — two companies' books have always been genuinely
+ * separate. But the LOGO on every printed document was a PNG compiled into the
+ * API image, so the second company to sign up would have issued its invoices
+ * under the first company's mark.
+ *
+ * That is not a cosmetic complaint. An invoice is the document that says who is
+ * owed money; carrying someone else's mark makes it a document about the wrong
+ * party. Migration 0050 moved the brand from the build into the row, and this
+ * asserts the property that change exists for.
+ * ---------------------------------------------------------------------------
+ */
+describe('two companies, two letterheads', () => {
+  // Distinguishable PNGs: 1x1 and 2x2, so "which logo came back" is decidable
+  // from the bytes rather than from a hopeful eyeball.
+  const PNG_1PX =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const PNG_2PX =
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGM4IScHRAwQCgAfJgQRoo8irwAAAABJRU5ErkJggg==';
+
+  let alphaToken: string;
+  let betaToken: string;
+
+  beforeAll(async () => {
+    const a = await makeUser(api, { tenantId: alpha.tenantId, role: 'OWNER' });
+    ({ accessToken: alphaToken } = await accessTokenFor(api, a.refreshToken, alpha.tenantId));
+    const b = await makeUser(api, { tenantId: beta.tenantId, role: 'OWNER' });
+    ({ accessToken: betaToken } = await accessTokenFor(api, b.refreshToken, beta.tenantId));
+  });
+
+  const asAlpha = (url: string) => ({ url, token: alphaToken, tenantId: alpha.tenantId });
+  const asBeta = (url: string) => ({ url, token: betaToken, tenantId: beta.tenantId });
+
+  it('starts every organisation with no mark at all', async () => {
+    // 204, not 404. Most organisations have no logo and the screen wants to
+    // know that rather than to catch something.
+    const none = await callRaw(api, { method: 'GET', ...asAlpha('/v1/organisations/logo') });
+    expect(none.status).toBe(204);
+  });
+
+  it('gives each company its own mark, and never the other one’s', async () => {
+    for (const [as, png] of [[asAlpha, PNG_1PX], [asBeta, PNG_2PX]] as const) {
+      const set = await call(api, {
+        method: 'PUT',
+        ...as('/v1/organisations/brand'),
+        body: { logoBase64: png, logoContentType: 'image/png', brandColour: null },
+      });
+      expect(set.status).toBe(200);
+    }
+
+    const mine = await callRaw(api, { method: 'GET', ...asAlpha('/v1/organisations/logo') });
+    expect(mine.status).toBe(200);
+    expect(Number(mine.headers['content-length'])).toBe(Buffer.from(PNG_1PX, 'base64').length);
+    // A picture of one company's brand behind an authenticated route must not
+    // sit in a shared cache.
+    expect(mine.headers['cache-control']).toContain('no-store');
+
+    const theirs = await callRaw(api, { method: 'GET', ...asBeta('/v1/organisations/logo') });
+    expect(Number(theirs.headers['content-length'])).toBe(Buffer.from(PNG_2PX, 'base64').length);
+    expect(theirs.headers['content-length']).not.toBe(mine.headers['content-length']);
+  });
+
+  it('prints each company’s OWN name on its own invoice', async () => {
+    const invoiceFor = async (
+      as: typeof asAlpha,
+      tenant: Tenant,
+    ) => {
+      const contact = await call(api, {
+        method: 'POST', ...as('/v1/contacts'), body: { name: 'A customer', isCustomer: true },
+      });
+      const invoice = await call(api, {
+        method: 'POST',
+        ...as('/v1/invoices'),
+        body: {
+          contactId: contact.body['id'],
+          issueDate: '2026-03-14',
+          dueDate: '2026-04-13',
+          lines: [{
+            description: 'Consulting', quantity: '1', unitPrice: '100.00',
+            accountId: tenant.accounts['4000'], taxCodeId: tenant.taxCodes['NONE'],
+          }],
+        },
+      });
+      expect(invoice.status).toBe(201);
+      return callRaw(api, {
+        method: 'GET', ...as(`/v1/invoices/${invoice.body['id']}/pdf`),
+      });
+    };
+
+    const alphaPdf = pdfText((await invoiceFor(asAlpha, alpha)).body);
+    const betaPdf = pdfText((await invoiceFor(asBeta, beta)).body);
+
+    expect(alphaPdf).toContain('Alpha Trading Sdn Bhd');
+    expect(alphaPdf).not.toContain('Beta Services Sdn Bhd');
+    expect(betaPdf).toContain('Beta Services Sdn Bhd');
+    expect(betaPdf).not.toContain('Alpha Trading Sdn Bhd');
+  });
+
+  it('lets a company take its mark back off, returning to a name-only letterhead', async () => {
+    const cleared = await call(api, {
+      method: 'PUT',
+      ...asBeta('/v1/organisations/brand'),
+      body: { logoBase64: null, logoContentType: 'image/png', brandColour: null },
+    });
+    expect(cleared.status).toBe(200);
+
+    const none = await callRaw(api, { method: 'GET', ...asBeta('/v1/organisations/logo') });
+    expect(none.status).toBe(204);
+  });
+
+  it('refuses a logo too big to print on every document', async () => {
+    // The ceiling is not arbitrary: the image is embedded in every PDF this
+    // tenant prints, so its size is paid again on each one.
+    const huge = Buffer.alloc(300 * 1024, 1).toString('base64');
+    const refused = await call(api, {
+      method: 'PUT',
+      ...asAlpha('/v1/organisations/brand'),
+      body: { logoBase64: huge, logoContentType: 'image/png', brandColour: null },
+    });
+    expect(refused.status).toBe(422);
+  });
+
+  it('refuses an image it could not print, at UPLOAD rather than at print time', async () => {
+    /*
+     * A real PNG header with one corrupt CRC — the shape that started this.
+     * It passes every magic-byte and dimension check and then throws inside
+     * pdfkit, so accepting it would break this tenant's invoices weeks later
+     * with nobody near a file picker.
+     */
+    const corrupt =
+      'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR42mP8z8BQz0AEYBxVSF+FAAhKAwGm4C6BAAAAAElFTkSuQmCC';
+    const refused = await call(api, {
+      method: 'PUT',
+      ...asAlpha('/v1/organisations/brand'),
+      body: { logoBase64: corrupt, logoContentType: 'image/png', brandColour: null },
+    });
+    expect(refused.status).toBe(422);
+    expect(refused.body['message']).toMatch(/could not be read as an image/);
+
+    // And the tenant can still print, because the bad bytes never landed.
+    const stillWorks = await callRaw(api, {
+      method: 'GET', ...asAlpha('/v1/organisations/logo'),
+    });
+    expect(stillWorks.status).toBe(200);
+  });
+
+  it('is org.manage to change and tax.read to look at', async () => {
+    const clerk = await makeUser(api, { tenantId: alpha.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, clerk.refreshToken, alpha.tenantId);
+    const asClerk = { token: accessToken, tenantId: alpha.tenantId };
+
+    const changed = await call(api, {
+      method: 'PUT',
+      url: '/v1/organisations/brand',
+      ...asClerk,
+      body: { logoBase64: PNG_1PX, logoContentType: 'image/png', brandColour: null },
+    });
+    expect(changed.status).toBe(403);
+  });
+});

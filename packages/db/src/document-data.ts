@@ -26,6 +26,18 @@ export interface SellerBlock {
   readonly tin: string | null;
   readonly sstNo: string | null;
   readonly sstRegistered: boolean;
+  /**
+   * This tenant's own letterhead — see migration 0050.
+   *
+   * Null is the ordinary case, not an error: an organisation prints its name
+   * alone until somebody uploads a mark, and that is a perfectly good
+   * letterhead. Every printed document in this system passes through
+   * `sellerBlock`, so carrying the brand here is what makes all eleven
+   * renderers per-tenant at once.
+   */
+  readonly logo: Buffer | null;
+  readonly logoContentType: string | null;
+  readonly brandColour: string | null;
 }
 
 export interface InvoiceDocument {
@@ -220,9 +232,11 @@ export async function sellerBlock(tx: Tx, ctx: TenantContext): Promise<SellerBlo
     {
       name: string; ssm_registration_no: string | null; tin: string | null;
       sst_no: string | null; sst_registered: boolean;
+      logo: Buffer | null; logo_content_type: string | null; brand_colour: string | null;
     }[]
   >`
-      SELECT name, ssm_registration_no, tin, sst_no, sst_registered
+      SELECT name, ssm_registration_no, tin, sst_no, sst_registered,
+             logo, logo_content_type, brand_colour
         FROM organisation WHERE id = ${ctx.tenantId}
   `;
   return {
@@ -231,7 +245,35 @@ export async function sellerBlock(tx: Tx, ctx: TenantContext): Promise<SellerBlo
     tin: org!.tin,
     sstNo: org!.sst_no,
     sstRegistered: org!.sst_registered,
+    logo: org!.logo,
+    logoContentType: org!.logo_content_type,
+    brandColour: org!.brand_colour,
   };
+}
+
+/**
+ * Set or clear this tenant's letterhead.
+ *
+ * Clearing is passing `logo: null` — a tenant that decides its mark prints
+ * badly needs a way back to the name-only letterhead, and "upload a white
+ * square" is not that way.
+ */
+export async function setOrganisationBrand(
+  tx: Tx,
+  ctx: TenantContext,
+  input: {
+    readonly logo: Buffer | null;
+    readonly logoContentType: 'image/png' | 'image/jpeg' | null;
+    readonly brandColour: string | null;
+  },
+): Promise<void> {
+  await tx`
+      UPDATE organisation
+         SET logo              = ${input.logo},
+             logo_content_type = ${input.logo === null ? null : input.logoContentType},
+             brand_colour      = ${input.brandColour}
+       WHERE id = ${ctx.tenantId}
+  `;
 }
 
 // ---------------------------------------------------------------------------

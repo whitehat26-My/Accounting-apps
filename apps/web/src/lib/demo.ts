@@ -1231,6 +1231,20 @@ export function demoApi(
     return { serialNo: decodeURIComponent(warrantyMatch[1]!).toUpperCase(), promise: null };
   }
 
+  // ---- the letterhead ------------------------------------------------------
+  // The static demo stores no image bytes (see the repair photos above), so it
+  // answers "no logo" honestly rather than 404ing the Settings card.
+  if (p === '/v1/organisations/logo' && method === 'GET') {
+    throw demoError(204, 'This organisation has no logo.');
+  }
+  if (p === '/v1/organisations/brand') {
+    throw demoError(
+      501,
+      'Logos are stored by the real server; the static demo keeps nothing but the text ' +
+        'you can see.',
+    );
+  }
+
   // ---- repairs -------------------------------------------------------------
   if (p === '/v1/repairs' && method === 'GET') return { jobs: store.jobs };
   if (p === '/v1/repairs' && method === 'POST') {

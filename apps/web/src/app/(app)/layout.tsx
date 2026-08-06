@@ -3,12 +3,15 @@
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState, type ReactNode } from 'react';
-import { clearSession, loadSession, type Session } from '@/lib/api';
+import { apiBlobUrl, clearSession, loadSession, type Session } from '@/lib/api';
 import { can, ROLE_LABELS, useMe, type Me } from '@/lib/me';
 import { Icon } from '@/components/icons';
 import { Assistant } from '@/components/assistant';
 // Static import so the demo's GitHub Pages base path is baked in at build.
 import mark from '@/brand/mark.png';
+
+/** The product's name — instance branding, same for everyone on this server. */
+const APP_NAME = process.env['NEXT_PUBLIC_APP_NAME'] ?? 'Shah G Tech';
 
 /**
  * The signed-in shell: dark rail on the left, work on the right.
@@ -139,15 +142,23 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         className="flex w-16 flex-col bg-slate-950 text-slate-300 ring-1 ring-white/5 md:w-60
                    supports-[backdrop-filter]:bg-slate-950/85 supports-[backdrop-filter]:backdrop-blur-xl"
       >
+        {/*
+          THE ORGANISATION LEADS, NOT THE PRODUCT.
+          This used to read "Shah G Tech" in white with the signed-in
+          organisation small underneath — which, for any company other than the
+          first, said "you are inside somebody else's system". Whose books these
+          are is the fact that belongs at the top of their own screen; the
+          product's name has its place beside the sign-out button.
+        */}
         <div className="flex items-center justify-center gap-3 px-2 pb-5 pt-6 md:justify-start md:px-5">
-          {/* The shop's actual hexagon mark, on a white tile so the blue
-              reads against the dark rail. */}
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-white p-1 shadow-lg shadow-black/40">
-            <img src={mark.src} alt="Shah G Tech" className="h-full w-full object-contain" />
-          </div>
+          <OrgMark name={session.organisationName} />
           <div className="hidden min-w-0 md:block">
-            <div className="text-sm font-semibold text-white">Shah G Tech</div>
-            <div className="truncate text-xs text-slate-400">{session.organisationName}</div>
+            <div className="truncate text-sm font-semibold text-white">
+              {session.organisationName || 'Your organisation'}
+            </div>
+            <div className="text-xs text-slate-400">
+              {me.data ? (ROLE_LABELS[me.data.role] ?? me.data.role) : ' '}
+            </div>
           </div>
         </div>
 
@@ -187,14 +198,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="hidden border-t border-white/10 px-5 py-4 md:block">
-          {me.data ? (
-            <div className="mb-2 text-xs text-slate-400">
-              Signed in as{' '}
-              <span className="font-medium text-slate-200">
-                {ROLE_LABELS[me.data.role] ?? me.data.role}
-              </span>
-            </div>
-          ) : null}
+          {/* The product's name, where it belongs on somebody else's screen:
+              small, at the bottom, beside the way out. */}
+          <div className="mb-2 flex items-center gap-2">
+            <img src={mark.src} alt="" className="h-4 w-4 shrink-0 opacity-60" />
+            <span className="truncate text-[11px] text-slate-500">{APP_NAME}</span>
+          </div>
           <button
             className="text-xs text-slate-500 transition-colors hover:text-white"
             onClick={() => {
@@ -282,6 +291,66 @@ function Guarded({
       >
         Back to Today
       </Link>
+    </div>
+  );
+}
+
+/**
+ * The tenant's own mark on their own screen.
+ *
+ * Falls back to INITIALS, not to the product's logo. Putting one company's
+ * hexagon on another company's rail is the same mistake the PDFs used to make,
+ * and two letters on a coloured tile reads as "yours" in a way somebody else's
+ * mark never can. A tenant that uploads a logo in Settings gets it here too.
+ *
+ * The bytes come through `apiBlobUrl` because the route is authenticated and
+ * an <img src> cannot carry a bearer token; the object URL is revoked on
+ * unmount so navigating around the app does not leak one per screen.
+ */
+function OrgMark({ name }: { name: string | undefined }) {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let revoked: string | null = null;
+    let cancelled = false;
+    void apiBlobUrl('/v1/organisations/logo')
+      .then((u) => {
+        if (cancelled) { URL.revokeObjectURL(u); return; }
+        revoked = u;
+        setUrl(u);
+      })
+      // 204 (no logo) and 403 (a role without tax.read) both land here, and
+      // both mean the same thing to this component: show the initials.
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+      if (revoked) URL.revokeObjectURL(revoked);
+    };
+  }, []);
+
+  /*
+   * `?? ''` because a session saved by an OLDER build of the login screen
+   * holds `organisationName: undefined` — that bug is fixed, but the sessions
+   * it wrote are in people's browsers until they sign in again, and a rail
+   * that throws is a rail nobody can sign out of to fix it.
+   */
+  const initials = (name ?? '')
+    .split(/\s+/)
+    .filter((w) => /^[A-Za-z0-9]/.test(w))
+    .slice(0, 2)
+    .map((w) => w[0]!.toUpperCase())
+    .join('');
+
+  return (
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white shadow-lg shadow-black/40">
+      {url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={url} alt={name} className="h-full w-full object-contain p-1" />
+      ) : (
+        <span className="text-[11px] font-bold tracking-tight text-slate-700">
+          {initials || '·'}
+        </span>
+      )}
     </div>
   );
 }

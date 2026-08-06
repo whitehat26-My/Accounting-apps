@@ -55,7 +55,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions {
-  readonly method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
+  readonly method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   readonly body?: unknown;
   /** Skip the session entirely — login, register, onboarding. */
   readonly anonymous?: boolean;
@@ -246,5 +246,17 @@ export async function apiBlobUrl(path: string, body?: unknown): Promise<string> 
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
   });
   if (!response.ok) throw new ApiError(response.status, { message: `Document failed (${response.status})` });
-  return URL.createObjectURL(await response.blob());
+
+  /*
+   * 204 is a SUCCESS with nothing in it, and `URL.createObjectURL` will
+   * happily mint a URL for zero bytes — which every caller then hands to an
+   * <img> or a new tab, and gets a broken image or a blank page. Caught here
+   * because no caller wants a URL to nothing: "there is no document" is a
+   * rejection, the same as any other reason there is no document.
+   */
+  const blob = await response.blob();
+  if (blob.size === 0) {
+    throw new ApiError(204, { message: 'There is nothing here yet.' });
+  }
+  return URL.createObjectURL(blob);
 }
