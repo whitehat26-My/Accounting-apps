@@ -1,6 +1,7 @@
 import { fileURLToPath } from 'node:url';
 import PDFDocument from 'pdfkit';
 import { encodeQr } from '@emil/domain';
+import type { RenderedReport } from '@emil/domain';
 import type {
   CustomerStatement,
   EaDocument,
@@ -809,4 +810,71 @@ function trimQty(quantity: string): string {
 function displayDate(iso: string): string {
   const [y, m, d] = iso.split('-');
   return `${d}/${m}/${y}`;
+}
+
+/**
+ * The year's statements, for the hundred-year archive.
+ *
+ * Laid out to be READ rather than to be parsed: the CSVs beside it in the
+ * archive carry the machine-readable version, so this one can spend its space
+ * on white and on the hierarchy of the statement. Each report starts a new
+ * page — a balance sheet that begins halfway down a page of profit and loss
+ * is harder to hand to somebody than one that does not.
+ */
+export function renderFinancialStatementsPdf(input: {
+  organisationName: string;
+  label: string;
+  from: string;
+  to: string;
+  profitOrLoss: RenderedReport;
+  financialPosition: RenderedReport;
+}): Promise<Buffer> {
+  return build((pdf) => {
+    const statement = (report: RenderedReport, subtitle: string) => {
+      pdf.font('Helvetica-Bold').fontSize(14).fillColor(BRAND);
+      pdf.text(input.organisationName, MARGIN, pdf.y);
+      pdf.fillColor('#000000').fontSize(11);
+      pdf.text(report.name, MARGIN, pdf.y + 2);
+      pdf.font('Helvetica').fontSize(9).fillColor('#555555');
+      pdf.text(subtitle, MARGIN, pdf.y + 1);
+      pdf.fillColor('#000000');
+      pdf.moveDown(1);
+      rule(pdf);
+
+      for (const line of report.lines) {
+        const isTotal = line.lineType === 'TOTAL' || line.lineType === 'SUBTOTAL';
+        pdf.font(isTotal || line.lineType === 'HEADER' ? 'Helvetica-Bold' : 'Helvetica');
+        pdf.fontSize(line.lineType === 'HEADER' ? 8 : 9);
+
+        const y = pdf.y;
+        const indent = MARGIN + line.level * 14;
+        if (line.lineType === 'HEADER') {
+          pdf.fillColor(BRAND).text(line.label.toUpperCase(), indent, y, { characterSpacing: 0.6 });
+          pdf.fillColor('#000000');
+        } else {
+          pdf.text(line.label, indent, y, { width: 380 - line.level * 14 });
+          pdf.text(money(line.amount.toDecimalString()), 430, y, {
+            width: 115,
+            align: 'right',
+          });
+          if (isTotal) rule(pdf);
+        }
+        pdf.y += 2;
+      }
+    };
+
+    statement(input.profitOrLoss, `Financial year ${input.label} — ${displayDate(input.from)} to ${displayDate(input.to)}`);
+    pdf.addPage();
+    statement(input.financialPosition, `As at ${displayDate(input.to)}`);
+
+    pdf.font('Helvetica').fontSize(7).fillColor('#666666');
+    pdf.text(
+      'Prepared from the general ledger. The figures above are reproduced in ' +
+        'trial-balance.csv and journal.csv in this archive, and can be recomputed from them.',
+      MARGIN,
+      760,
+      { width: 495, align: 'center' },
+    );
+    pdf.fillColor('#000000');
+  });
 }

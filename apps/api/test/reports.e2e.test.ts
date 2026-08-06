@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   accessTokenFor,
@@ -775,5 +779,132 @@ describe('the time machine', () => {
       });
       expect(refused.status, url).toBe(403);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The hundred-year archive
+// ---------------------------------------------------------------------------
+
+/**
+ * The archive is opened with `unzip`, a program that knows nothing about this
+ * codebase, and its proof pack is checked by running the verifier that
+ * travelled inside it. Asserting on the buffer with our own reader would prove
+ * only that the writer agrees with itself — the claim being made is that OTHER
+ * software, decades from now, can get the numbers out.
+ */
+describe('the hundred-year archive', () => {
+  let zipPath: string;
+  let dir: string;
+
+  it('downloads as a zip a standard tool can open', async () => {
+    const years = await call(api, { method: 'GET', ...as('/v1/fiscal-years') });
+    const year = (years.body['fiscalYears'] as { id: string; label: string }[])[0]!;
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/reports/archive/${year.id}`),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/zip');
+    expect(response.headers['content-disposition']).toContain('attachment');
+    expect(response.headers['x-content-type-options']).toBe('nosniff');
+
+    dir = mkdtempSync(join(tmpdir(), 'emil-archive-'));
+    zipPath = join(dir, 'books.zip');
+    writeFileSync(zipPath, response.raw);
+
+    // The reader's own CRC check over every entry.
+    expect(execFileSync('unzip', ['-t', zipPath], { encoding: 'utf8' })).toContain(
+      'No errors detected',
+    );
+
+    expect(
+      execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' }).trim().split('\n').sort(),
+    ).toEqual([
+      'README.txt',
+      'financial-statements.pdf',
+      'general-ledger.csv',
+      'journal.csv',
+      'proof-pack.json',
+      'trial-balance.csv',
+      'verify-proof-pack.mjs',
+    ]);
+  });
+
+  it('holds every posted entry, not the first page of them', async () => {
+    const journal = execFileSync('unzip', ['-p', zipPath, 'journal.csv'], { encoding: 'utf8' });
+
+    // One row per LINE, so count distinct entry numbers instead.
+    const entryNos = new Set(
+      journal
+        .split('\r\n')
+        .slice(1)
+        .filter((l) => l.trim() !== '')
+        .map((l) => l.split(',')[0]),
+    );
+
+    const posted = await call(api, {
+      method: 'GET',
+      ...as('/v1/reports/journal?from=2026-01-01&to=2026-12-31'),
+    });
+    const expected = (posted.body['entries'] as { entryNo: string }[]).length;
+
+    expect(entryNos.size).toBe(expected);
+    expect(entryNos.size).toBeGreaterThan(0);
+    // Both sides of every entry are in the file, and so is who posted it.
+    expect(journal).toContain('Posted by');
+    expect(journal).toContain('Capital introduced');
+  });
+
+  it('carries a README that explains the formats rather than assuming them', async () => {
+    const readme = execFileSync('unzip', ['-p', zipPath, 'README.txt'], { encoding: 'utf8' });
+
+    // The three bytes that otherwise read as corruption to somebody in 2076.
+    expect(readme).toContain('EF BB BF');
+    expect(readme).toContain('node verify-proof-pack.mjs');
+    // The honest limit, in the archive itself and not only in the register.
+    expect(readme).toContain('WHAT THIS ARCHIVE DOES NOT CONTAIN');
+  });
+
+  it('verifies its own proof pack, using the copy of the verifier inside it', async () => {
+    execFileSync('unzip', ['-q', zipPath, '-d', dir]);
+    // The whole claim of the slice in one command: nothing outside this
+    // directory is consulted.
+    const output = execFileSync(
+      'node',
+      [join(dir, 'verify-proof-pack.mjs'), join(dir, 'proof-pack.json')],
+      { encoding: 'utf8' },
+    );
+    expect(output.toLowerCase()).not.toContain('altered');
+
+    const statements = readFileSync(join(dir, 'financial-statements.pdf'));
+    expect(statements.subarray(0, 4).toString()).toBe('%PDF');
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('answers 404 for a fiscal year that is not this tenant’s', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/reports/archive/${randomUUID()}`),
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it('refuses SALES — a year of books is not a till-user download', async () => {
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const years = await call(api, { method: 'GET', ...as('/v1/fiscal-years') });
+    const year = (years.body['fiscalYears'] as { id: string }[])[0]!;
+
+    const response = await call(api, {
+      method: 'GET',
+      url: `/v1/reports/archive/${year.id}`,
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(response.status).toBe(403);
   });
 });

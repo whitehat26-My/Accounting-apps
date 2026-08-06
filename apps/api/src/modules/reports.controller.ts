@@ -36,6 +36,7 @@ import {
   booksAsAt,
   whatChanged,
   lockMoments,
+  listFiscalYears,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
@@ -43,6 +44,8 @@ import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
 import { renderStatementPdf } from '../pdf/render.js';
+import { buildArchive } from '../archive/build.js';
+import { NotFoundError } from '../errors.js';
 
 /**
  * Reporting.
@@ -420,6 +423,45 @@ export class ReportsController {
    * or closed. Without these the screen asks for a timestamp, and nobody knows
    * theirs.
    */
+  /**
+   * The hundred-year archive: one downloadable file per financial year.
+   *
+   * Records must be kept seven years; software does not last seven years
+   * reliably, and a business outlives several of them. Every format inside is
+   * chosen so somebody in 2076 with no access to this system can still read
+   * the books — including the proof-pack verifier, which travels INSIDE the
+   * archive because a proof that depends on downloading its own checker is
+   * not a proof.
+   */
+  @Requires('report.read')
+  @Get('reports/archive/:fiscalYearId')
+  async archive(
+    @Param('fiscalYearId') fiscalYearId: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const { zip, label } = await withTenant(this.sql, ctx, async (tx) => {
+      const years = await listFiscalYears(tx, ctx);
+      const year = years.find((y) => y.id === fiscalYearId);
+      // Another tenant's year is indistinguishable from one that never
+      // existed — rule 9.
+      if (!year) throw new NotFoundError('Fiscal year');
+
+      const seller = await sellerBlock(tx, ctx);
+      return {
+        label: year.label,
+        zip: await buildArchive(tx, ctx, year, seller.name, new Date()),
+      };
+    });
+
+    void reply
+      .header('content-type', 'application/zip')
+      .header('content-disposition', `attachment; filename="books-${label.replace(/[^\w.-]/g, '_')}.zip"`)
+      .header('x-content-type-options', 'nosniff')
+      .send(zip);
+  }
+
   @Requires('report.read')
   @Get('reports/lock-moments')
   async lockMomentsReport(@Req() request: FastifyRequest) {

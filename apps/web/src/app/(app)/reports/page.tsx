@@ -2,9 +2,9 @@
 
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, apiBlobUrl } from '@/lib/api';
+import { api, apiBlobUrl, apiDownload } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
-import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
+import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
 
 /**
@@ -381,7 +381,104 @@ export default function ReportsPage() {
       </Card>
 
       <TimeMachineCard from={from} to={to} onExport={exportCsv} />
+      <ArchiveCard />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// The hundred-year archive
+// ---------------------------------------------------------------------------
+
+interface FiscalYear {
+  id: string;
+  label: string;
+  startDate: string;
+  endDate: string;
+  status: string;
+}
+
+/**
+ * One file per financial year, meant to outlive this software.
+ *
+ * The copy that matters is the one somewhere else — a hard disk in a drawer,
+ * an email to the accountant — so the card says so rather than implying that
+ * pressing the button has finished the job.
+ */
+function ArchiveCard() {
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<unknown>(null);
+  const [done, setDone] = useState<string | null>(null);
+
+  const years = useQuery({
+    queryKey: ['fiscal-years'],
+    queryFn: () => api<{ fiscalYears: FiscalYear[] }>('/v1/fiscal-years'),
+  });
+
+  const download = async (year: FiscalYear) => {
+    setError(null);
+    setDone(null);
+    setBusy(year.id);
+    try {
+      await apiDownload(`/v1/reports/archive/${year.id}`, `books-${year.label}.zip`);
+      setDone(year.label);
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const list = years.data?.fiscalYears ?? [];
+  if (list.length === 0) return null;
+
+  return (
+    <Card title="Keep a copy that outlives this software">
+      <div className="space-y-3">
+        <p className="text-sm text-slate-600">
+          One file per financial year, holding every journal entry, the general ledger, the
+          trial balance and the statements — as plain CSV and a PDF, readable without this
+          app or any other. The tool that checks the books were not altered travels inside
+          the file.
+        </p>
+        <div className="space-y-1">
+          {list.map((year) => (
+            <div
+              key={year.id}
+              className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 py-2 text-sm"
+            >
+              <span>
+                <span className="font-medium">{year.label}</span>{' '}
+                <span className="text-xs text-slate-500">
+                  {displayDate(year.startDate)} – {displayDate(year.endDate)}
+                </span>
+              </span>
+              <div className="flex items-center gap-2">
+                <Badge status={year.status} />
+                <Button
+                  variant="ghost"
+                  disabled={busy === year.id}
+                  onClick={() => void download(year)}
+                >
+                  {busy === year.id ? 'Building…' : 'Download'}
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+        {done ? (
+          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
+            {done} downloaded. <strong>Now put it somewhere else</strong> — a copy that only
+            ever lives on this machine is lost with this machine.
+          </p>
+        ) : null}
+        <ErrorNote error={error} />
+        <p className="text-xs text-slate-500">
+          Holds the general ledger and the statements built from it. Invoice PDFs, repair
+          photographs and customer records are not included and must be exported separately.
+        </p>
+      </div>
+    </Card>
   );
 }
 

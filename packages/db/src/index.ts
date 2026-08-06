@@ -49,6 +49,7 @@ export * from './fraud-watch.js';
 export * from './time-machine.js';
 export * from './warranty.js';
 export * from './fingerprint.js';
+export * from './archive-data.js';
 export * from './year-end-payroll.js';
 export { businessToday } from './internal.js';
 export { migrate } from './migrate.js';

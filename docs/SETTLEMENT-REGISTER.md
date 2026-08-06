@@ -639,6 +639,47 @@ decide whether supplier bank details are stored at all — the same argument `00
 for employees by keeping only the last four digits — after which this is a dozen lines
 against `audit_log`.**
 
+### 5.23 The hundred-year archive — BUILT (no migration)
+
+`GET /v1/reports/archive/:fiscalYearId` (`report.read`) returns one ZIP per financial year:
+`README.txt`, `journal.csv`, `general-ledger.csv`, `trial-balance.csv`,
+`financial-statements.pdf`, `proof-pack.json`, and **a copy of
+`scripts/verify-proof-pack.mjs`**.
+
+**The verifier travels inside the archive.** A proof that depends on downloading its own
+checker from a domain nobody renewed is not a proof. It is a hundred lines of
+dependency-free Node, so carrying it costs nothing and removes the last external
+requirement: `node verify-proof-pack.mjs proof-pack.json`, with nothing outside the folder
+consulted. The e2e test runs exactly that command against the extracted archive.
+
+**Store-only ZIP, hand-written** (`apps/api/src/archive/zip.ts`, ~130 lines). No
+compression, deliberately: the CSV text then sits in the container as plain bytes, so
+`strings` finds it, a partially recovered file still yields whole rows, and nothing must
+understand DEFLATE to get the numbers out. A year of a shop's ledger is a few hundred
+kilobytes — compression would save less than it costs in recoverability. The writer is
+checked against **`unzip -t`**, which recomputes every CRC-32 and knows nothing about this
+codebase; a round trip through a reader written in the same test file would only prove the
+writer agrees with itself. Entries are byte-identical when built from the same instant, so
+two copies of a year can be compared with `cmp`.
+
+**`archiveJournal` reads the year unpaged, and that is the point.** `journalReport` caps at
+2,000 entries and reports `truncated: true`, which is right for a screen. An archive cannot
+do that: a file silently holding the first 2,000 entries, handed to somebody in 2076 as
+"the year", is worse than no file because it looks complete.
+
+The README explains the formats rather than assuming them — including that the three bytes
+at the start of each CSV are a UTF-8 BOM and not corruption, that amounts are MYR to four
+decimal places with no separators, and that "Dated" columns are DD/MM/YYYY while "Posted
+at" is UTC ISO 8601.
+
+⚠️ **The honest limit, stated in the README itself and not only here: this is the GENERAL
+LEDGER and the statements built from it, not the underlying documents.** Invoice PDFs,
+receipts, repair photographs and customer records are not included and must be exported
+separately — the same caveat as §5.19, for the same reason. **Unblocker: a documents
+export that walks `invoice`/`payment` and renders each PDF into the same container, which
+is straightforward but makes a small shop's year a multi-hundred-megabyte file and should
+be a deliberate second option rather than the default.**
+
 ### 5.22 Receipts that prove themselves — BUILT (`0047`)
 
 Every printed invoice and A4 receipt carries a QR, the verification URL in readable text,
