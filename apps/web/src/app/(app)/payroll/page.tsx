@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiBlobUrl, apiDownload } from '@/lib/api';
 import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
+import { Money } from '@/components/money';
 import { rm, todayIso } from '@/lib/display';
 
 /**
@@ -350,7 +351,7 @@ function CalculatorSection() {
           <div className="grid gap-4 lg:grid-cols-3">
             <Card title={netPay !== null ? 'The staff member takes home' : 'After contributions'}>
               <p className="text-2xl font-semibold text-slate-900">
-                {rm(netPay ?? result.wageAfterContributions)}
+                <Money value={netPay ?? result.wageAfterContributions} />
               </p>
               <p className="mt-1 text-xs text-slate-500">
                 {netPay !== null && pcb !== null ? (
@@ -377,7 +378,7 @@ function CalculatorSection() {
 
             <Card title="The shop pays on top">
               <p className="text-2xl font-semibold text-slate-900">
-                {rm(result.totalEmployer)}
+                <Money value={result.totalEmployer} />
               </p>
               <p className="mt-1 text-xs text-slate-500">
                 Employer EPF, SOCSO and EIS. This never appears on the payslip and is
@@ -393,7 +394,7 @@ function CalculatorSection() {
                 and that is the line this app does not cross.
               */}
               <p className="text-2xl font-semibold text-slate-900">
-                {rm(result.totalEmploymentCost)}
+                <Money value={result.totalEmploymentCost} />
               </p>
               <p className="mt-1 text-xs text-slate-500">
                 What actually leaves the bank each month for this person.

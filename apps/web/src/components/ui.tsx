@@ -7,7 +7,7 @@
  * moment to adopt one — with this file as the shopping list.
  */
 
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode } from 'react';
 
 export function Button({
   variant = 'primary',
@@ -21,22 +21,29 @@ export function Button({
       'bg-white text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:text-slate-400',
     danger: 'bg-red-600 text-white shadow-sm hover:bg-red-700 disabled:bg-slate-300',
   }[variant];
+  /*
+   * `active:scale` gives a press somewhere to land — 0.98 is felt in the
+   * finger without being seen from across the room. Guarded by
+   * `motion-safe:` so a press stays perfectly still for people who asked
+   * everything to. The focus ring is not optional the same way: it is how a
+   * keyboard user knows where they are, and it was missing entirely.
+   */
   return (
     <button
-      className={`min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors disabled:cursor-not-allowed ${styles} ${className}`}
+      className={`min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-[background-color,transform,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 motion-safe:active:scale-[0.98] disabled:cursor-not-allowed ${styles} ${className}`}
       {...props}
     />
   );
 }
 
-/** Loading placeholder: three breathing bars where the content will land. */
+/** Loading placeholder: bars with a light sweep where the content will land. */
 export function Skeleton({ rows = 3 }: { rows?: number }) {
   return (
-    <div className="animate-pulse space-y-2.5" aria-label="Loading">
+    <div className="space-y-2.5" aria-label="Loading">
       {Array.from({ length: rows }, (_, i) => (
         <div
           key={i}
-          className="h-4 rounded bg-slate-200/80"
+          className="emil-shimmer h-4 rounded bg-slate-200/80"
           style={{ width: `${[85, 60, 72, 48, 66][i % 5]}%` }}
         />
       ))}
@@ -66,14 +73,20 @@ export function Card({
   title,
   action,
   children,
+  className = '',
+  style,
 }: {
   title?: string;
   /** Optional right-aligned header content — a button, a badge, a date. */
   action?: ReactNode;
   children: ReactNode;
+  /** Pages opt into entrance motion here — `emil-rise` plus a staggered
+      `animationDelay` in `style`, the idiom charts.tsx established. */
+  className?: string;
+  style?: CSSProperties;
 }) {
   return (
-    <div className="rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5">
+    <div className={`rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 ${className}`} style={style}>
       {/*
         `flex-wrap` on the header for the phone: several cards put date pickers
         or a filter in `action`, and on a 390px screen a title plus two date

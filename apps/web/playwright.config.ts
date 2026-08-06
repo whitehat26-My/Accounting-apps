@@ -13,6 +13,10 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:3000',
     launchOptions: { executablePath: process.env['PW_CHROMIUM'] ?? '/opt/pw-browsers/chromium' },
+    // The journey clicks fast. Entrance animations are decoration, and a test
+    // that waits for decoration is a test that flakes — every emil-* class
+    // already honours this preference, so the suite exercises that path too.
+    contextOptions: { reducedMotion: 'reduce' },
   },
   webServer: [
     {

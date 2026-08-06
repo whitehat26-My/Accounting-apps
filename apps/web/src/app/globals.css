@@ -108,11 +108,42 @@ tbody tr:hover {
   animation: emil-widen 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
+/* ---------------------------------------------------------------------------
+ * Skeleton shimmer.
+ *
+ * A light sweep across the placeholder bars instead of the stock opacity
+ * pulse: the sweep reads as "something is on its way" where the pulse reads
+ * as "something is broken and breathing". The gradient is painted on the bar
+ * itself and the background-position does the travelling, so there is one
+ * compositing layer per bar and nothing to reflow.
+ * ------------------------------------------------------------------------ */
+
+@keyframes emil-shimmer {
+  from {
+    background-position: -200% 0;
+  }
+  to {
+    background-position: 200% 0;
+  }
+}
+
+.emil-shimmer {
+  background-image: linear-gradient(
+    100deg,
+    rgb(226 232 240 / 0.8) 40%,
+    rgb(241 245 249 / 0.95) 50%,
+    rgb(226 232 240 / 0.8) 60%
+  );
+  background-size: 200% 100%;
+  animation: emil-shimmer 1.6s ease-in-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .emil-drift,
   .emil-rise,
   .emil-grow,
-  .emil-widen {
+  .emil-widen,
+  .emil-shimmer {
     animation: none;
   }
   /* Without the animation these classes would leave their marks at zero —

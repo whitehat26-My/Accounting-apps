@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
 import { Card, Skeleton } from '@/components/ui';
+import { Money } from '@/components/money';
 import { can, useMe } from '@/lib/me';
 
 /**
@@ -100,10 +101,12 @@ export default function TodayPage() {
 
       {seesTakings ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <Stat label="Takings" value={t ? rm(t.receiptsTotal) : '—'} />
-          <Stat label="Sales" value={t ? `${t.invoiceCount}` : '—'} />
-          <Stat label="Cost of goods" value={t ? rm(t.costOfGoodsSold) : '—'} />
-          <Stat label="Gross profit" value={t ? rm(t.grossProfit) : '—'} highlight />
+          {/* Raw decimal strings, not rm() — Money formats the resting frame
+              itself and counts through changes (a sale rings, Takings rolls). */}
+          <Stat label="Takings" value={t ? t.receiptsTotal : '—'} delay={0} />
+          <Stat label="Sales" value={t ? `${t.invoiceCount}` : '—'} plain delay={60} />
+          <Stat label="Cost of goods" value={t ? t.costOfGoodsSold : '—'} delay={120} />
+          <Stat label="Gross profit" value={t ? t.grossProfit : '—'} highlight delay={180} />
         </div>
       ) : null}
 
@@ -123,7 +126,7 @@ export default function TodayPage() {
           <div className="space-y-3">
             <div className="flex items-baseline justify-between">
               <span className="text-sm text-slate-500">In the bank now</span>
-              <span className="text-lg font-bold">{rm(f.openingCash)}</span>
+              <span className="text-lg font-bold"><Money value={f.openingCash} /></span>
             </div>
             <table className="w-full text-sm">
               <thead>
@@ -247,16 +250,33 @@ function WeekStat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+function Stat({
+  label,
+  value,
+  highlight,
+  plain,
+  delay = 0,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+  /** A count rather than an amount — rendered as-is, no RM, no count-up. */
+  plain?: boolean;
+  /** Entrance stagger in ms — the charts.tsx idiom, capped by the caller. */
+  delay?: number;
+}) {
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
+    <div
+      className="emil-rise rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5"
+      style={{ animationDelay: `${delay}ms` }}
+    >
       <div className="text-xs font-medium text-slate-500">{label}</div>
       <div
         className={`mt-1.5 text-2xl font-semibold tracking-tight ${
           highlight ? 'text-emerald-600' : 'text-slate-900'
         }`}
       >
-        {value}
+        {plain ? value : <Money value={value} />}
       </div>
     </div>
   );

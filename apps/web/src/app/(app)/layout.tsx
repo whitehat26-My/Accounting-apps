@@ -183,7 +183,12 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         Kept very low contrast so it never competes with the cards on top.
       */}
       <main className="min-w-0 flex-1 bg-slate-100/70 bg-gradient-to-br from-sky-50 via-slate-100/70 to-emerald-50/40 p-4 md:p-6 lg:p-8">
-        <div className="mx-auto max-w-5xl">{children}</div>
+        {/*
+          `key={pathname}` remounts the wrapper on navigation so each screen
+          arrives with the same short rise the sign-in card uses. The nav rail
+          sits outside and never moves — the page changes, the frame doesn't.
+        */}
+        <div key={pathname} className="emil-rise mx-auto max-w-5xl">{children}</div>
       </main>
 
       <Assistant />
