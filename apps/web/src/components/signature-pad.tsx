@@ -67,6 +67,21 @@ export function SignaturePad({
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     ctx.scale(ratio, ratio);
+    /*
+     * -----------------------------------------------------------------------
+     * DARK INK ON WHITE PAPER, IN BOTH THEMES. NOT A MISSED TOKEN.
+     *
+     * Everything else in this app takes its colour from the theme. This canvas
+     * must not: it is exported as a PNG, stored as evidence, and embedded in
+     * the intake slip and the repair report. A signature captured at night
+     * with themed colours would be white strokes on a dark ground — invisible
+     * the moment it is printed onto a white page, which is the only place it
+     * ever really matters.
+     *
+     * The pad looks like a slip of paper on a dark screen because it IS one.
+     * The colour-guard test lists these three lines by name with this reason.
+     * -----------------------------------------------------------------------
+     */
     ctx.fillStyle = '#ffffff';
     ctx.fillRect(0, 0, WIDTH, HEIGHT);
     ctx.strokeStyle = '#0f172a';
@@ -121,15 +136,15 @@ export function SignaturePad({
   return (
     <div className="space-y-2">
       <div>
-        <div className="text-sm font-medium text-slate-900">{title}</div>
-        <p className="text-xs text-slate-500">{hint}</p>
+        <div className="text-sm font-medium text-ink">{title}</div>
+        <p className="text-xs text-ink-muted">{hint}</p>
       </div>
 
       <canvas
         ref={canvasRef}
         // `touch-none` stops the browser scrolling the page when a finger
         // drags across the pad — without it the customer signs by scrolling.
-        className="w-full touch-none rounded-xl bg-white ring-1 ring-inset ring-slate-300"
+        className="w-full touch-none rounded-xl bg-surface-raised ring-1 ring-inset ring-line-strong"
         style={{ aspectRatio: `${WIDTH} / ${HEIGHT}` }}
         onPointerDown={(e) => {
           e.currentTarget.setPointerCapture(e.pointerId);
@@ -272,16 +287,16 @@ function Slot({
   if (signature) {
     return (
       <div>
-        <div className="text-sm font-medium text-slate-900">{title}</div>
-        <div className="mt-1 rounded-xl bg-white p-2 ring-1 ring-inset ring-emerald-200">
+        <div className="text-sm font-medium text-ink">{title}</div>
+        <div className="mt-1 rounded-xl bg-surface-raised p-2 ring-1 ring-inset ring-positive/30">
           {url ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img src={url} alt={title} className="h-16 w-auto object-contain" />
           ) : (
-            <div className="h-16 animate-pulse rounded bg-slate-100" />
+            <div className="h-16 animate-pulse rounded bg-surface-sunken" />
           )}
         </div>
-        <p className="mt-1 text-xs text-emerald-700">Signed.</p>
+        <p className="mt-1 text-xs text-positive">Signed.</p>
       </div>
     );
   }
@@ -289,8 +304,8 @@ function Slot({
   if (frozen) {
     return (
       <div>
-        <div className="text-sm font-medium text-slate-900">{title}</div>
-        <p className="mt-1 text-xs text-slate-500">
+        <div className="text-sm font-medium text-ink">{title}</div>
+        <p className="mt-1 text-xs text-ink-muted">
           Not captured, and this job is closed — the record stands as it is.
         </p>
       </div>

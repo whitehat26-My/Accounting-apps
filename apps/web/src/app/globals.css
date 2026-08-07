@@ -1,13 +1,185 @@
 @import 'tailwindcss';
 
+/* ---------------------------------------------------------------------------
+ * THE PALETTE IS SEMANTIC, AND THAT IS THE WHOLE DESIGN.
+ *
+ * A shop open until 10pm was staring at a white screen all evening: there was
+ * no dark mode here at all, not one rule.
+ *
+ * The obvious way to add one is a `dark:` variant beside each colour. There
+ * are 919 colour utilities across 29 files, so that way is 919 chances to miss
+ * one, and the one missed is a card that stays white at midnight. Instead the
+ * app stops naming COLOURS and starts naming ROLES — surface, text, border,
+ * positive, negative — and the two themes are two sets of values for the same
+ * roles. Screens say `bg-surface`; what that means is decided in one place.
+ *
+ * `light-dark()` is deliberately NOT used: it needs `color-scheme` to resolve,
+ * which makes the value depend on a property that also affects native widget
+ * rendering, and it cannot be overridden by an explicit user choice. A plain
+ * custom property, re-declared under `.dark`, can.
+ * ------------------------------------------------------------------------ */
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /* Page behind everything, and the raised sheets that sit on it. */
+  --color-surface: oklch(97.2% 0.006 250);
+  --color-surface-raised: oklch(100% 0 0);
+  --color-surface-sunken: oklch(94.5% 0.008 250);
+
+  /*
+   * These three lightnesses are MEASURED, not chosen by eye.
+   *
+   * `ink-faint` carries chart axis labels and hints at 10–11px, where WCAG AA
+   * wants 4.5:1. It began at 65%, which measured 3.23:1 on a white card — it
+   * looked "nicely subdued" and was, in fact, unreadable to anyone who needs
+   * contrast. 56.5% measures 4.56:1.
+   *
+   * `ink-muted` then had to move from 52% to 45%: leaving it put two steps of
+   * the ramp 4.5 points apart, which is not a hierarchy, it is a smudge.
+   */
+  --color-ink: oklch(21% 0.02 260);
+  --color-ink-muted: oklch(45% 0.02 260);
+  --color-ink-faint: oklch(56.5% 0.015 260);
+
+  --color-line: oklch(89% 0.008 260);
+  --color-line-strong: oklch(80% 0.012 260);
+
+  /* The shop's blue, and the accents money uses. */
+  --color-brand: oklch(55% 0.14 245);
+  --color-positive: oklch(52% 0.13 155);
+  --color-positive-soft: oklch(95% 0.03 155);
+  --color-negative: oklch(52% 0.19 25);
+  --color-negative-soft: oklch(95% 0.03 25);
+  /* 58% measured 3.89:1 against its own soft chip — amber is the hue that
+     flatters itself most and measures worst. 54% brings it to 4.59:1. */
+  --color-caution: oklch(54% 0.13 75);
+  --color-caution-soft: oklch(96% 0.04 85);
+
+  /* -------------------------------------------------------------------------
+   * CHROME THAT IS DARK IN BOTH THEMES.
+   *
+   * The rail, the sign-in screen over its photograph, the assistant panel, the
+   * photo lightbox and the selected segmented-control pill are dark BY DESIGN,
+   * not because the theme happens to be light. They are declared once, here,
+   * and are deliberately NOT re-declared under `.dark` — that is what makes
+   * them fixed rather than themed.
+   *
+   * They exist because the alternative kept producing the same bug from both
+   * directions: pale slate text on the sign-in card is correct today and would
+   * have been flipped to near-black by a blanket conversion, while a
+   * light-theme green on that same card is already too dark to read. A screen
+   * that never changes needs colours that never change, and they have to be
+   * SAYABLE or every future edit re-litigates it.
+   *
+   * `rail-accent` is the night value of `--positive` on purpose: dark chrome
+   * wants the night green whatever the page around it is doing.
+   * ---------------------------------------------------------------------- */
+  --color-rail: oklch(20% 0.02 260);
+  --color-rail-raised: oklch(26% 0.02 260);
+  --color-rail-ink: oklch(85% 0.01 260);
+  --color-rail-ink-strong: oklch(97% 0.005 260);
+  --color-rail-ink-dim: oklch(68% 0.015 260);
+  --color-rail-line: oklch(34% 0.016 260);
+  --color-rail-accent: oklch(78% 0.15 155);
+
+  /*
+   * The logo plate stays WHITE in both themes, and that is not an oversight.
+   * A tenant uploads a logo drawn for paper — dark ink, transparent ground.
+   * Sitting it on a surface that turns dark at night makes it disappear, so
+   * the plate is a sheet of paper and its initials are printed on paper too.
+   */
+  --color-plate: oklch(100% 0 0);
+  --color-plate-ink: oklch(21% 0.02 260);
+
+  color-scheme: light;
+}
+
+/* ---------------------------------------------------------------------------
+ * Night.
+ *
+ * Not the light values inverted. Two things change character rather than
+ * lightness:
+ *
+ *  1. `--positive` and `--negative` get LIGHTER, not darker. Emerald-700 reads
+ *     as confident green on white and as near-black on slate; a profit figure
+ *     that cannot be read at night is worse than one that is not coloured.
+ *  2. The raised surface goes UP from the page, not down. Depth on dark comes
+ *     from a lighter sheet, because a darker one just looks like a hole.
+ * ------------------------------------------------------------------------ */
+.dark {
+  --color-surface: oklch(17.5% 0.015 260);
+  --color-surface-raised: oklch(22.5% 0.018 260);
+  --color-surface-sunken: oklch(14% 0.014 260);
+
+  --color-ink: oklch(96% 0.005 260);
+  --color-ink-muted: oklch(72% 0.015 260);
+  /* Same measurement, the other way up: 58% gave 3.99:1 on the night card. */
+  --color-ink-faint: oklch(61% 0.015 260);
+
+  --color-line: oklch(30% 0.015 260);
+  --color-line-strong: oklch(40% 0.018 260);
+
+  --color-brand: oklch(72% 0.13 245);
+  --color-positive: oklch(78% 0.15 155);
+  --color-positive-soft: oklch(28% 0.05 155);
+  --color-negative: oklch(72% 0.17 25);
+  --color-negative-soft: oklch(28% 0.06 25);
+  --color-caution: oklch(80% 0.13 85);
+  --color-caution-soft: oklch(30% 0.05 85);
+
+  /* Against a dark page the rail can no longer separate by brightness, so it
+     goes slightly darker than the page and carries a lit edge — see the rail
+     border in the app shell. The rest of the dark-chrome scale is NOT
+     re-declared: it is fixed by design (see the note in `:root`). */
+  --color-rail: oklch(13% 0.014 260);
+  --color-rail-raised: oklch(19% 0.016 260);
+  --color-rail-ink: oklch(80% 0.012 260);
+
+  color-scheme: dark;
+}
+
+/*
+ * `@theme inline` maps the roles onto Tailwind's colour namespace, so
+ * `bg-surface`, `text-ink-muted` and `ring-line` exist as ordinary utilities.
+ * `inline` matters: without it Tailwind copies the value at build time and the
+ * `.dark` override never reaches the utility.
+ */
+@theme inline {
+  --color-surface: var(--color-surface);
+  --color-surface-raised: var(--color-surface-raised);
+  --color-surface-sunken: var(--color-surface-sunken);
+  --color-ink: var(--color-ink);
+  --color-ink-muted: var(--color-ink-muted);
+  --color-ink-faint: var(--color-ink-faint);
+  --color-line: var(--color-line);
+  --color-line-strong: var(--color-line-strong);
+  --color-brand: var(--color-brand);
+  --color-positive: var(--color-positive);
+  --color-positive-soft: var(--color-positive-soft);
+  --color-negative: var(--color-negative);
+  --color-negative-soft: var(--color-negative-soft);
+  --color-caution: var(--color-caution);
+  --color-caution-soft: var(--color-caution-soft);
+  --color-rail: var(--color-rail);
+  --color-rail-raised: var(--color-rail-raised);
+  --color-rail-ink: var(--color-rail-ink);
+  --color-rail-ink-strong: var(--color-rail-ink-strong);
+  --color-rail-ink-dim: var(--color-rail-ink-dim);
+  --color-rail-line: var(--color-rail-line);
+  --color-rail-accent: var(--color-rail-accent);
+  --color-plate: var(--color-plate);
+  --color-plate-ink: var(--color-plate-ink);
+}
+
 body {
-  @apply bg-slate-100/70 text-slate-900 antialiased;
+  @apply bg-surface text-ink antialiased;
   /* Ringgit columns must line up: every digit the same width, everywhere. */
   font-variant-numeric: tabular-nums;
 }
 
 ::selection {
-  @apply bg-emerald-200;
+  background: var(--color-positive-soft);
 }
 
 /* A row under the finger says so. Scoped to data tables inside cards. */
@@ -15,7 +187,21 @@ tbody tr {
   transition: background-color 120ms;
 }
 tbody tr:hover {
-  background-color: rgb(248 250 252 / 0.9);
+  background-color: var(--color-surface-sunken);
+}
+
+/* ---------------------------------------------------------------------------
+ * Keyboard focus, everywhere.
+ *
+ * The till is driven by a scanner and a keyboard with a customer waiting, so
+ * "where am I" has to be answerable without a mouse. `:focus-visible` only
+ * paints for keyboard and assistive navigation, so pointer users never see a
+ * ring they did not ask for.
+ * ------------------------------------------------------------------------ */
+:where(a, button, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--color-brand);
+  outline-offset: 2px;
+  border-radius: 0.375rem;
 }
 
 /* ---------------------------------------------------------------------------
@@ -127,12 +313,19 @@ tbody tr:hover {
   }
 }
 
+/*
+ * The sweep is built from the theme's own surfaces, so at night it is a dark
+ * bar with a slightly lighter band travelling over it. Hardcoded slate would
+ * have left a row of glowing white bars on a dark page — the loading state is
+ * exactly where nobody looks twice, which is why it gets the tokens too.
+ */
 .emil-shimmer {
+  background-color: var(--color-surface-sunken);
   background-image: linear-gradient(
     100deg,
-    rgb(226 232 240 / 0.8) 40%,
-    rgb(241 245 249 / 0.95) 50%,
-    rgb(226 232 240 / 0.8) 60%
+    transparent 40%,
+    var(--color-line) 50%,
+    transparent 60%
   );
   background-size: 200% 100%;
   animation: emil-shimmer 1.6s ease-in-out infinite;

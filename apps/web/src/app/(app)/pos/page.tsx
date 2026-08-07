@@ -177,7 +177,7 @@ export default function PosPage() {
   return (
     <div className="grid grid-cols-2 gap-4">
       <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Point of sale</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Point of sale</h1>
         <Input
           placeholder="Scan barcode or type code, then Enter"
           value={scan}
@@ -193,10 +193,10 @@ export default function PosPage() {
           }}
           aria-label="Scan barcode"
           autoFocus
-          className={scanMiss !== null ? 'ring-2 ring-red-500' : ''}
+          className={scanMiss !== null ? 'ring-2 ring-negative' : ''}
         />
         {scanMiss !== null ? (
-          <p className="text-sm text-red-600" role="alert">
+          <p className="text-sm text-negative" role="alert">
             Nothing on the shelf answers to “{scanMiss}”. Check the item has its barcode
             saved under Items.
           </p>
@@ -211,11 +211,11 @@ export default function PosPage() {
             <button
               key={item.id}
               onClick={() => add(item)}
-              className="rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm hover:border-emerald-500"
+              className="rounded-lg border border-line bg-surface-raised p-3 text-left shadow-sm hover:border-positive"
             >
-              <div className="text-xs text-slate-500">{item.code}</div>
+              <div className="text-xs text-ink-muted">{item.code}</div>
               <div className="text-sm font-medium">{item.name}</div>
-              <div className="mt-1 text-sm font-semibold text-emerald-700">
+              <div className="mt-1 text-sm font-semibold text-positive">
                 {item.sale.unitPrice ? rm(item.sale.unitPrice) : 'price at till'}
               </div>
             </button>
@@ -226,12 +226,12 @@ export default function PosPage() {
       <div className="space-y-3">
         <Card title="Sale">
           {cart.length === 0 && !result ? (
-            <p className="text-sm text-slate-500">Tap an item to start.</p>
+            <p className="text-sm text-ink-muted">Tap an item to start.</p>
           ) : null}
 
           <div className="space-y-2">
             {cart.map((line, index) => (
-              <div key={line.item.id} className="rounded-md border border-slate-100 p-2">
+              <div key={line.item.id} className="rounded-md border border-line p-2">
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-medium">{line.item.name}</span>
                   <span>
@@ -239,7 +239,7 @@ export default function PosPage() {
                     {line.item.sale.unitPrice ? rm(line.item.sale.unitPrice) : '—'}
                   </span>
                   <button
-                    className="text-xs text-red-600 hover:underline"
+                    className="text-xs text-negative hover:underline"
                     onClick={() => setCart(cart.filter((_, i) => i !== index))}
                   >
                     remove
@@ -274,9 +274,9 @@ export default function PosPage() {
           </div>
 
           {cart.length > 0 ? (
-            <div className="mt-4 space-y-3 border-t border-slate-200 pt-3">
+            <div className="mt-4 space-y-3 border-t border-line pt-3">
               <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Estimated total (before tax)</span>
+                <span className="text-ink-muted">Estimated total (before tax)</span>
                 <span className="font-semibold">{rm(estimate)}</span>
               </div>
 
@@ -319,7 +319,7 @@ export default function PosPage() {
                 <span className="font-bold">{rm(result.total)}</span>
               </div>
               {result.changeDue ? (
-                <div className="flex justify-between text-lg font-bold text-emerald-700">
+                <div className="flex justify-between text-lg font-bold text-positive">
                   <span>Change due</span>
                   <span data-testid="change-due">{rm(result.changeDue)}</span>
                 </div>

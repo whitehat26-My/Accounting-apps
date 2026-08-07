@@ -76,10 +76,10 @@ function Verify() {
 
   return (
     <main className="mx-auto max-w-xl p-6">
-      <h1 className="mb-1 text-2xl font-semibold tracking-tight text-slate-900">
+      <h1 className="mb-1 text-2xl font-semibold tracking-tight text-ink">
         Check a document
       </h1>
-      <p className="mb-5 text-sm text-slate-600">
+      <p className="mb-5 text-sm text-ink-muted">
         Enter the reference printed at the bottom of an invoice or receipt, or scan its
         code. You do not need an account.
       </p>
@@ -111,8 +111,8 @@ function Verify() {
           <div
             className={`emil-rise mt-4 rounded-lg px-4 py-3 text-sm ring-1 ring-inset ${
               result.verdict === 'GENUINE'
-                ? 'bg-emerald-50 text-emerald-900 ring-emerald-200'
-                : 'bg-amber-50 text-amber-900 ring-amber-200'
+                ? 'bg-positive-soft text-positive ring-positive/30'
+                : 'bg-caution-soft text-caution ring-caution/30'
             }`}
           >
             {result.verdict === 'GENUINE' ? (
@@ -145,7 +145,7 @@ function Verify() {
         overclaiming, and this whole feature is worth less than nothing if it
         is trusted further than it can carry.
       */}
-      <p className="mt-4 text-xs leading-relaxed text-slate-500">
+      <p className="mt-4 text-xs leading-relaxed text-ink-muted">
         This checks the document against the issuing shop&rsquo;s own records, which are kept
         in an append-only ledger with a hash chain — so a document cannot be altered after
         the fact without the check failing. It is not a government certification and not a

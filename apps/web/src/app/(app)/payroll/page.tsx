@@ -200,7 +200,7 @@ function CalculatorSection() {
             </Field>
             <Field label="Status">
               <select
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-line px-3 py-2 text-sm"
                 value={citizenship}
                 onChange={(event) =>
                   setCitizenship(event.target.value as typeof citizenship)
@@ -221,16 +221,16 @@ function CalculatorSection() {
             </Field>
           </div>
 
-          <label className="flex items-start gap-2.5 rounded-lg bg-slate-50 p-3 text-sm">
+          <label className="flex items-start gap-2.5 rounded-lg bg-surface-sunken p-3 text-sm">
             <input
               type="checkbox"
-              className="mt-0.5 h-4 w-4 rounded border-slate-300"
+              className="mt-0.5 h-4 w-4 rounded border-line-strong"
               checked={withTax}
               onChange={(event) => setWithTax(event.target.checked)}
             />
             <span>
-              <span className="font-medium text-slate-900">Include income tax (PCB)</span>
-              <span className="mt-0.5 block text-xs text-slate-500">
+              <span className="font-medium text-ink">Include income tax (PCB)</span>
+              <span className="mt-0.5 block text-xs text-ink-muted">
                 Needed for a real take-home figure. Tax is worked out on the whole year,
                 so it also needs what has been paid so far.
               </span>
@@ -238,10 +238,10 @@ function CalculatorSection() {
           </label>
 
           {withTax ? (
-            <div className="grid gap-4 rounded-lg border border-slate-200 p-4 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-4 rounded-lg border border-line p-4 sm:grid-cols-2 lg:grid-cols-3">
               <Field label="Tax category">
                 <select
-                  className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                  className="w-full rounded-lg border border-line px-3 py-2 text-sm"
                   value={category}
                   onChange={(event) => setCategory(Number(event.target.value) as 1 | 2 | 3)}
                 >
@@ -251,7 +251,7 @@ function CalculatorSection() {
                     </option>
                   ))}
                 </select>
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-ink-muted">
                   {TAX_CATEGORIES.find((c) => c.value === category)?.hint}
                 </p>
               </Field>
@@ -267,7 +267,7 @@ function CalculatorSection() {
                   relief for a student by inflating the COUNT rather than the
                   per-child amount, so this field has to say so.
                 */}
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-ink-muted">
                   Count a child in college or university as 4. A disabled child counts as 4,
                   and a disabled child studying as 8.
                 </p>
@@ -279,7 +279,7 @@ function CalculatorSection() {
                   inputMode="decimal"
                   onChange={(event) => setPaidSoFar(event.target.value)}
                 />
-                <p className="mt-1 text-xs text-slate-500">
+                <p className="mt-1 text-xs text-ink-muted">
                   Not counting this month. Leave at 0 for someone who started this month.
                 </p>
               </Field>
@@ -337,7 +337,7 @@ function CalculatorSection() {
               </Button>
             ) : null}
             {withTax && staffName.trim() === '' ? (
-              <span className="text-xs text-slate-500">Enter a staff name to print.</span>
+              <span className="text-xs text-ink-muted">Enter a staff name to print.</span>
             ) : null}
           </div>
         </form>
@@ -350,10 +350,10 @@ function CalculatorSection() {
         <>
           <div className="grid gap-4 lg:grid-cols-3">
             <Card title={netPay !== null ? 'The staff member takes home' : 'After contributions'}>
-              <p className="text-2xl font-semibold text-slate-900">
+              <p className="text-2xl font-semibold text-ink">
                 <Money value={netPay ?? result.wageAfterContributions} />
               </p>
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-ink-muted">
                 {netPay !== null && pcb !== null ? (
                   <>
                     {rm(result.wage)} less {rm(result.totalEmployee)} in contributions and{' '}
@@ -368,7 +368,7 @@ function CalculatorSection() {
                       home" that quietly omits income tax is worse than no figure,
                       because it looks finished.
                     */}
-                    <strong className="font-medium text-slate-700">
+                    <strong className="font-medium text-ink-muted">
                       Income tax (PCB) is not included — tick the box above.
                     </strong>
                   </>
@@ -377,10 +377,10 @@ function CalculatorSection() {
             </Card>
 
             <Card title="The shop pays on top">
-              <p className="text-2xl font-semibold text-slate-900">
+              <p className="text-2xl font-semibold text-ink">
                 <Money value={result.totalEmployer} />
               </p>
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-ink-muted">
                 Employer EPF, SOCSO and EIS. This never appears on the payslip and is
                 the figure most easily forgotten when quoting a salary. Income tax is
                 not here — it comes out of the staff member&rsquo;s pay, not the shop&rsquo;s.
@@ -393,10 +393,10 @@ function CalculatorSection() {
                 Two money strings summed in the browser would need parseFloat,
                 and that is the line this app does not cross.
               */}
-              <p className="text-2xl font-semibold text-slate-900">
+              <p className="text-2xl font-semibold text-ink">
                 <Money value={result.totalEmploymentCost} />
               </p>
-              <p className="mt-1 text-xs text-slate-500">
+              <p className="mt-1 text-xs text-ink-muted">
                 What actually leaves the bank each month for this person.
               </p>
             </Card>
@@ -405,27 +405,27 @@ function CalculatorSection() {
           <Card title="Line by line">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-slate-500">
+                <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-2">Deduction</th>
                   <th className="pb-2 text-right">Staff pays</th>
                   <th className="pb-2 text-right">Shop pays</th>
                 </tr>
               </thead>
               <tbody>
-                <tr className="border-t border-slate-100">
+                <tr className="border-t border-line">
                   <td className="py-2">
                     <span className="font-medium">EPF</span>{' '}
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-ink-muted">
                       Third Schedule, Part {result.epfPart}
                     </span>
                   </td>
                   <td className="py-2 text-right">{rm(result.epf.employee)}</td>
                   <td className="py-2 text-right">{rm(result.epf.employer)}</td>
                 </tr>
-                <tr className="border-t border-slate-100">
+                <tr className="border-t border-line">
                   <td className="py-2">
                     <span className="font-medium">SOCSO</span>{' '}
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-ink-muted">
                       Category {result.socsoCategory}
                     </span>
                   </td>
@@ -437,20 +437,20 @@ function CalculatorSection() {
                   together, and PERKESO's own statement splits them. A payslip
                   showing one figure cannot be reconciled against it.
                 */}
-                <tr className="border-t border-slate-50 text-xs text-slate-500">
+                <tr className="border-t border-line text-xs text-ink-muted">
                   <td className="py-1 pl-4">— Invalidity</td>
                   <td className="py-1 text-right">{rm(result.socso.employeeInvalidity)}</td>
                   <td className="py-1 text-right">—</td>
                 </tr>
-                <tr className="border-t border-slate-50 text-xs text-slate-500">
+                <tr className="border-t border-line text-xs text-ink-muted">
                   <td className="py-1 pl-4">— SKBBK (24-hour accident cover)</td>
                   <td className="py-1 text-right">{rm(result.socso.employeeSkbbk)}</td>
                   <td className="py-1 text-right">—</td>
                 </tr>
-                <tr className="border-t border-slate-100">
+                <tr className="border-t border-line">
                   <td className="py-2">
                     <span className="font-medium">EIS</span>{' '}
-                    <span className="text-xs text-slate-500">
+                    <span className="text-xs text-ink-muted">
                       {result.eisApplies ? 'Act 800' : 'not covered'}
                     </span>
                   </td>
@@ -458,10 +458,10 @@ function CalculatorSection() {
                   <td className="py-2 text-right">{rm(result.eis.employer)}</td>
                 </tr>
                 {pcb !== null ? (
-                  <tr className="border-t border-slate-100">
+                  <tr className="border-t border-line">
                     <td className="py-2">
                       <span className="font-medium">Income tax (PCB)</span>{' '}
-                      <span className="text-xs text-slate-500">
+                      <span className="text-xs text-ink-muted">
                         {pcb.nonResident
                           ? 'non-resident, flat 30%'
                           : `on ${rm(pcb.chargeableIncome)} chargeable for the year`}
@@ -471,7 +471,7 @@ function CalculatorSection() {
                     <td className="py-2 text-right">—</td>
                   </tr>
                 ) : null}
-                <tr className="border-t-2 border-slate-200 font-semibold">
+                <tr className="border-t-2 border-line font-semibold">
                   <td className="py-2">Total</td>
                   <td className="py-2 text-right">
                     {rm(result.totalDeducted ?? result.totalEmployee)}
@@ -481,10 +481,10 @@ function CalculatorSection() {
               </tbody>
             </table>
 
-            <p className="mt-3 text-xs text-slate-500">{EPF_PART_MEANING[result.epfPart]}</p>
+            <p className="mt-3 text-xs text-ink-muted">{EPF_PART_MEANING[result.epfPart]}</p>
 
             {pcb !== null && pcb.deduction === '0.0000' && !pcb.nonResident ? (
-              <p className="mt-2 text-xs text-slate-500">
+              <p className="mt-2 text-xs text-ink-muted">
                 No income tax this month. Either the year&rsquo;s chargeable income is
                 below where tax starts, or the RM400 individual rebate covers it — and
                 below RM10 a month the employer does not deduct at all. The tax is still
@@ -496,16 +496,16 @@ function CalculatorSection() {
       ) : null}
 
       <Card title="Where these figures come from">
-        <ul className="space-y-1.5 text-xs text-slate-500">
+        <ul className="space-y-1.5 text-xs text-ink-muted">
           <li>
-            <strong className="font-medium text-slate-700">Looked up, never guessed.</strong>{' '}
+            <strong className="font-medium text-ink-muted">Looked up, never guessed.</strong>{' '}
             EPF, SOCSO and EIS are tables in law. The employer&rsquo;s EPF share is 13% up
             to RM 5,000 and 12% above it — so the widely quoted &ldquo;12%&rdquo; is wrong
             for most shop wages, by RM 25 a month on RM 2,500. Under-deducting a statutory
             contribution is the employer&rsquo;s liability, not the staff member&rsquo;s.
           </li>
           <li>
-            <strong className="font-medium text-slate-700">
+            <strong className="font-medium text-ink-muted">
               Income tax is worked out on the whole year, not the month.
             </strong>{' '}
             PCB assumes this month&rsquo;s pay repeats, taxes the year, subtracts what has
@@ -603,7 +603,7 @@ interface RunSummary {
 export default function PayrollPage() {
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Payroll</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Payroll</h1>
       <RunCard />
       <YearEndCard />
       <StaffCard />
@@ -738,7 +738,7 @@ function StaffCard() {
         staff.data.employees.length > 0 ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-slate-500">
+              <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-2">Name</th>
                 <th className="pb-2">Role</th>
                 <th className="pb-2 text-right">Monthly wage</th>
@@ -748,9 +748,9 @@ function StaffCard() {
             </thead>
             <tbody>
               {staff.data.employees.map((employee) => (
-                <tr key={employee.id} className="border-t border-slate-100">
+                <tr key={employee.id} className="border-t border-line">
                   <td className="py-2 font-medium">{employee.fullName}</td>
-                  <td className="py-2 text-slate-500">{employee.jobTitle ?? ''}</td>
+                  <td className="py-2 text-ink-muted">{employee.jobTitle ?? ''}</td>
                   <td className="py-2 text-right">{rm(employee.monthlyWage)}</td>
                   <td className="py-2">
                     <Badge status={employee.active ? 'ACTIVE' : 'LEFT'} />
@@ -765,7 +765,7 @@ function StaffCard() {
             </tbody>
           </table>
         ) : (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-ink-muted">
             Nobody on the books yet. Add your staff once — the monthly run computes
             everyone from here.
           </p>
@@ -788,8 +788,8 @@ function StaffCard() {
           </Button>
         </div>
       ) : (
-        <div className="mt-4 space-y-4 rounded-lg border border-slate-200 p-4">
-          <p className="text-sm font-medium text-slate-900">
+        <div className="mt-4 space-y-4 rounded-lg border border-line p-4">
+          <p className="text-sm font-medium text-ink">
             {editing === null ? 'New staff member' : 'Edit staff member'}
           </p>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -804,7 +804,7 @@ function StaffCard() {
             </Field>
             <Field label="ID type">
               <select
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-line px-3 py-2 text-sm"
                 value={form.idType}
                 onChange={(e) => set({ idType: e.target.value as 'NRIC' | 'PASSPORT' })}
               >
@@ -836,7 +836,7 @@ function StaffCard() {
             </Field>
             <Field label="Status">
               <select
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-line px-3 py-2 text-sm"
                 value={form.citizenship}
                 onChange={(e) => set({ citizenship: e.target.value as Employee['citizenship'] })}
               >
@@ -847,7 +847,7 @@ function StaffCard() {
             </Field>
             <Field label="Tax category">
               <select
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-line px-3 py-2 text-sm"
                 value={form.taxCategory}
                 onChange={(e) => set({ taxCategory: Number(e.target.value) as 1 | 2 | 3 })}
               >
@@ -888,7 +888,7 @@ function StaffCard() {
             ) : null}
             <Field label="Paid by">
               <select
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+                className="w-full rounded-lg border border-line px-3 py-2 text-sm"
                 value={form.paymentMethod}
                 onChange={(e) =>
                   set({ paymentMethod: e.target.value as typeof form.paymentMethod })
@@ -932,15 +932,15 @@ function StaffCard() {
           <label className="flex items-start gap-2.5 text-sm">
             <input
               type="checkbox"
-              className="mt-0.5 h-4 w-4 rounded border-slate-300"
+              className="mt-0.5 h-4 w-4 rounded border-line-strong"
               checked={form.midYear}
               onChange={(e) => set({ midYear: e.target.checked })}
             />
             <span>
-              <span className="font-medium text-slate-900">
+              <span className="font-medium text-ink">
                 Joined mid-year from another employer
               </span>
-              <span className="mt-0.5 block text-xs text-slate-500">
+              <span className="mt-0.5 block text-xs text-ink-muted">
                 Their Form TP3 figures — what the old employer already paid and deducted
                 this year. Without them the tax formula treats the person as having no
                 income before joining, which under-deducts all year.
@@ -1094,7 +1094,7 @@ function RunCard() {
         <Button disabled={prepare.isPending} onClick={() => prepare.mutate()}>
           {prepare.isPending ? 'Computing…' : 'Compute the month'}
         </Button>
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-ink-muted">
           Computes everyone on the register with their year-to-date carried forward
           automatically. Posts nothing until you confirm.
         </p>
@@ -1109,8 +1109,8 @@ function RunCard() {
               onClick={() => setSelectedRunId(summary.id)}
               className={`rounded-full px-3 py-1 text-xs font-medium ring-1 ring-inset ${
                 summary.id === selectedRunId
-                  ? 'bg-slate-900 text-white ring-slate-900'
-                  : 'bg-white text-slate-700 ring-slate-200 hover:bg-slate-50'
+                  ? 'bg-ink text-surface ring-ink'
+                  : 'bg-surface-raised text-ink-muted ring-line hover:bg-surface-sunken'
               }`}
             >
               {summary.payMonth.slice(0, 7)} · {summary.status}
@@ -1123,8 +1123,8 @@ function RunCard() {
         <div className="mt-4 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <p className="text-sm">
-              <span className="font-semibold text-slate-900">{run.runNo}</span>{' '}
-              <span className="text-slate-500">· {run.payMonth.slice(0, 7)}</span>{' '}
+              <span className="font-semibold text-ink">{run.runNo}</span>{' '}
+              <span className="text-ink-muted">· {run.payMonth.slice(0, 7)}</span>{' '}
               <Badge status={run.status} />
             </p>
             {run.status === 'DRAFT' ? (
@@ -1158,8 +1158,8 @@ function RunCard() {
           </div>
 
           {confirming && run.status === 'DRAFT' ? (
-            <div className="rounded-lg bg-emerald-50 p-3">
-              <p className="text-xs text-slate-600">
+            <div className="rounded-lg bg-positive-soft p-3">
+              <p className="text-xs text-ink-muted">
                 This posts to the books: wages as an expense, and what is owed to KWSP,
                 PERKESO, LHDN and your staff as payables. It cannot be edited afterwards —
                 a mistake is corrected by reversing the whole month.
@@ -1174,7 +1174,7 @@ function RunCard() {
           <ErrorNote error={confirm.error} />
 
           {reversing && run.status === 'CONFIRMED' ? (
-            <div className="flex flex-wrap items-end gap-3 rounded-lg bg-slate-50 p-3">
+            <div className="flex flex-wrap items-end gap-3 rounded-lg bg-surface-sunken p-3">
               <div className="min-w-[240px] flex-1">
                 <Field label="Why? (kept on the record)">
                   <Input
@@ -1198,7 +1198,7 @@ function RunCard() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-slate-500">
+                <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-2">Staff</th>
                   <th className="pb-2 text-right">Gross</th>
                   <th className="pb-2 text-right">EPF</th>
@@ -1211,7 +1211,7 @@ function RunCard() {
               </thead>
               <tbody>
                 {run.lines.map((line) => (
-                  <tr key={line.id} className="border-t border-slate-100">
+                  <tr key={line.id} className="border-t border-line">
                     <td className="py-2 font-medium">{line.fullName}</td>
                     <td className="py-2 text-right">{rm(line.gross)}</td>
                     <td className="py-2 text-right">{rm(line.epfEmployee)}</td>
@@ -1243,14 +1243,14 @@ function RunCard() {
             </table>
           </div>
 
-          <div className="grid gap-3 rounded-lg bg-slate-50 p-4 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-3 rounded-lg bg-surface-sunken p-4 sm:grid-cols-2 lg:grid-cols-5">
             <RemitFigure label="Pay your staff" amount={run.totals.netPay} />
             <RemitFigure label="Pay KWSP (EPF)" amount={run.totals.epf} />
             <RemitFigure label="Pay PERKESO (SOCSO)" amount={run.totals.socso} />
             <RemitFigure label="Pay PERKESO (EIS)" amount={run.totals.eis} />
             <RemitFigure label="Pay LHDN (PCB)" amount={run.totals.pcb} />
           </div>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-ink-muted">
             Statutory payments are generally due by the 15th of the following month —
             confirm the current due dates with each authority. Match the bank payments to
             the payable accounts (2300–2340) in Banking and each balance clears itself.
@@ -1291,8 +1291,8 @@ function RunCard() {
 function RemitFigure({ label, amount }: { label: string; amount: string }) {
   return (
     <div>
-      <p className="text-xs text-slate-500">{label}</p>
-      <p className="text-sm font-semibold text-slate-900">{rm(amount)}</p>
+      <p className="text-xs text-ink-muted">{label}</p>
+      <p className="text-sm font-semibold text-ink">{rm(amount)}</p>
     </div>
   );
 }
@@ -1379,7 +1379,7 @@ function YearEndCard() {
           </Button>
         </div>
 
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-ink-muted">
           The EA download is a preparation sheet for the official C.P.8A — every figure,
           summed from the confirmed runs, ready to transcribe. EA to staff by end of
           February; Form E to LHDN by 31 March (both tracked under Compliance).

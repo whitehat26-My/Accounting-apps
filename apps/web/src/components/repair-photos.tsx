@@ -113,7 +113,7 @@ export function RepairPhotos({ jobId, jobStatus }: { jobId: string; jobStatus: s
   return (
     <Card
       title="Photos — the evidence"
-      action={<span className="text-xs text-slate-500">{list.length} of 12</span>}
+      action={<span className="text-xs text-ink-muted">{list.length} of 12</span>}
     >
       {!frozen ? (
         <div className="space-y-3">
@@ -125,8 +125,8 @@ export function RepairPhotos({ jobId, jobStatus }: { jobId: string; jobStatus: s
                 onClick={() => setStage(s.key)}
                 className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
                   stage === s.key
-                    ? 'bg-slate-900 text-white'
-                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                    ? 'bg-ink text-surface'
+                    : 'bg-surface-sunken text-ink-muted hover:bg-line'
                 }`}
               >
                 {s.label}
@@ -135,7 +135,7 @@ export function RepairPhotos({ jobId, jobStatus }: { jobId: string; jobStatus: s
           </div>
 
           <input
-            className="w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:border-emerald-500"
+            className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none focus:border-positive"
             placeholder="What does it show? e.g. dent on lid, top left"
             value={caption}
             onChange={(e) => setCaption(e.target.value)}
@@ -165,7 +165,7 @@ export function RepairPhotos({ jobId, jobStatus }: { jobId: string; jobStatus: s
           </Button>
         </div>
       ) : (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-ink-muted">
           This job is closed. Its photographs are the record of what was done and
           cannot be added to or removed.
         </p>
@@ -174,7 +174,7 @@ export function RepairPhotos({ jobId, jobStatus }: { jobId: string; jobStatus: s
       <ErrorNote error={error} />
 
       {list.length === 0 ? (
-        <p className="mt-3 text-sm text-slate-500">
+        <p className="mt-3 text-sm text-ink-muted">
           No photographs yet. The one worth taking is of the machine as it arrives —
           it is what settles an argument about a mark later.
         </p>
@@ -236,19 +236,28 @@ function Thumbnail({
   const label = STAGES.find((s) => s.key === photo.stage)?.label ?? photo.stage;
 
   return (
-    <figure className="group relative overflow-hidden rounded-xl ring-1 ring-slate-900/10">
+    <figure className="group relative overflow-hidden rounded-xl ring-1 ring-line">
       <button type="button" onClick={onOpen} className="block w-full">
         {url ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={url}
             alt={photo.caption ?? label}
-            className="aspect-square w-full bg-slate-100 object-cover"
+            className="aspect-square w-full bg-surface-sunken object-cover"
           />
         ) : (
-          <div className="aspect-square w-full animate-pulse bg-slate-100" />
+          <div className="aspect-square w-full animate-pulse bg-surface-sunken" />
         )}
       </button>
+      {/*
+        THE ONLY FIXED white/black IN THE APP, AND IT IS ON A PHOTOGRAPH.
+
+        This caption is not painted on a surface the theme owns — it is painted
+        on whatever the technician's camera saw. A token would follow the page
+        and leave the label unreadable over half the photos in the shop; a
+        black scrim under white text is legible over every one of them. The
+        colour-guard test lists these lines by name with this reason.
+      */}
       <figcaption className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 to-transparent px-2 pb-1.5 pt-6 text-left">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-white/80">{label}</div>
         {photo.caption ? (
@@ -288,7 +297,11 @@ function Lightbox({
     <div
       role="presentation"
       onClick={onClose}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+      // `bg-rail`, not `bg-ink`: the scrim behind a photograph has to be DARK
+      // in both themes. `--ink` is a TEXT colour, and at night it is near-white
+      // — a themed scrim would put a white haze over the evidence photo exactly
+      // when someone is squinting at it to settle a dispute.
+      className="fixed inset-0 z-50 flex items-center justify-center bg-rail/85 p-4 backdrop-blur-sm"
     >
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element

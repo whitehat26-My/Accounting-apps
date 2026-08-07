@@ -61,12 +61,12 @@ export default function StockPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Stock</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Stock</h1>
       <div className="grid grid-cols-2 gap-4">
         <Card title="On hand">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-slate-500">
+              <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-2">Item</th>
                 <th className="pb-2 text-right">Qty</th>
                 <th className="pb-2 text-right">Avg cost</th>
@@ -78,12 +78,12 @@ export default function StockPage() {
                 <tr
                   key={level.itemId}
                   onClick={() => setSelected(level)}
-                  className={`cursor-pointer border-t border-slate-100 hover:bg-slate-50 ${
-                    selected?.itemId === level.itemId ? 'bg-emerald-50' : ''
+                  className={`cursor-pointer border-t border-line hover:bg-surface-sunken ${
+                    selected?.itemId === level.itemId ? 'bg-positive-soft' : ''
                   }`}
                 >
                   <td className="py-2">
-                    <span className="text-xs text-slate-500">{level.code}</span>{' '}
+                    <span className="text-xs text-ink-muted">{level.code}</span>{' '}
                     {level.name}
                   </td>
                   <td className="py-2 text-right font-medium">{qty(level.quantityOnHand)}</td>
@@ -94,7 +94,7 @@ export default function StockPage() {
             </tbody>
           </table>
           {levels.data && levels.data.stock.length === 0 ? (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-ink-muted">
               No tracked stock yet. Mark an item as tracked, then enter a purchase bill.
             </p>
           ) : null}
@@ -105,10 +105,10 @@ export default function StockPage() {
             <table className="w-full text-sm">
               <tbody>
                 {(movements.data?.movements ?? []).map((m) => (
-                  <tr key={m.id} className="border-t border-slate-100">
-                    <td className="py-2 text-xs text-slate-500">{displayDate(m.movedOn)}</td>
+                  <tr key={m.id} className="border-t border-line">
+                    <td className="py-2 text-xs text-ink-muted">{displayDate(m.movedOn)}</td>
                     <td className="py-2">{m.movementType}</td>
-                    <td className="py-2 text-xs text-slate-500">
+                    <td className="py-2 text-xs text-ink-muted">
                       {m.sourceDocumentType}
                       {m.reason ? ` — ${m.reason}` : ''}
                     </td>
@@ -119,7 +119,7 @@ export default function StockPage() {
               </tbody>
             </table>
           ) : (
-            <p className="text-sm text-slate-500">Select an item to see its trail.</p>
+            <p className="text-sm text-ink-muted">Select an item to see its trail.</p>
           )}
           {selected ? <CountForm level={selected} /> : null}
         </Card>
@@ -171,8 +171,8 @@ function CountForm({ level }: { level: Level }) {
   });
 
   return (
-    <div className="mt-4 space-y-2 border-t border-slate-100 pt-3">
-      <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+    <div className="mt-4 space-y-2 border-t border-line pt-3">
+      <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">
         Count this item
       </p>
       <div className="flex flex-wrap items-end gap-2">
@@ -202,21 +202,21 @@ function CountForm({ level }: { level: Level }) {
         </Button>
       </div>
       {variance !== null ? (
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-muted">
           Book says {qty(level.quantityOnHand)} — this count {variance}.
         </p>
       ) : null}
-      {done !== null ? <p className="text-sm text-emerald-700">{done}</p> : null}
+      {done !== null ? <p className="text-sm text-positive">{done}</p> : null}
       <ErrorNote error={count.error} />
     </div>
   );
 }
 
 const BUCKET_STYLE: Record<AgeingRow['bucket'], string> = {
-  FRESH: 'bg-emerald-100 text-emerald-900',
-  SLOWING: 'bg-amber-100 text-amber-900',
-  STALE: 'bg-orange-100 text-orange-900',
-  DEAD: 'bg-red-100 text-red-900',
+  FRESH: 'bg-positive-soft text-positive',
+  SLOWING: 'bg-caution-soft text-caution',
+  STALE: 'bg-caution-soft text-caution',
+  DEAD: 'bg-negative-soft text-negative',
 };
 
 /**
@@ -235,7 +235,7 @@ function AgeingCard() {
     <Card title="What is sitting — oldest silence first">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-xs text-slate-500">
+          <tr className="text-left text-xs text-ink-muted">
             <th className="pb-2">Item</th>
             <th className="pb-2 text-right">Qty</th>
             <th className="pb-2 text-right">Value</th>
@@ -246,13 +246,13 @@ function AgeingCard() {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.itemId} className="border-t border-slate-100">
+            <tr key={row.itemId} className="border-t border-line">
               <td className="py-2">
-                <span className="text-xs text-slate-500">{row.code}</span> {row.name}
+                <span className="text-xs text-ink-muted">{row.code}</span> {row.name}
               </td>
               <td className="py-2 text-right">{qty(row.quantityOnHand)}</td>
               <td className="py-2 text-right">{rm(row.stockValue)}</td>
-              <td className="py-2 text-right text-xs text-slate-500">
+              <td className="py-2 text-right text-xs text-ink-muted">
                 {row.lastSoldOn === null ? 'never' : displayDate(row.lastSoldOn)}
               </td>
               <td className="py-2 text-right font-medium">{row.daysIdle}</td>
@@ -267,7 +267,7 @@ function AgeingCard() {
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-slate-500">
+      <p className="mt-2 text-xs text-ink-muted">
         DEAD is six months without a sale — usually a part that outlived the machines it
         fits. Count it down or discount it out; the shelf space is worth more.
       </p>
@@ -301,9 +301,9 @@ interface Register {
 }
 
 const PROMISE_STYLE: Record<Promise_['status'], string> = {
-  ACTIVE: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
-  EXPIRING_SOON: 'bg-amber-50 text-amber-800 ring-amber-200',
-  EXPIRED: 'bg-slate-100 text-slate-600 ring-slate-200',
+  ACTIVE: 'bg-positive-soft text-positive ring-positive/30',
+  EXPIRING_SOON: 'bg-caution-soft text-caution ring-caution/30',
+  EXPIRED: 'bg-surface-sunken text-ink-muted ring-line',
 };
 
 /**
@@ -339,13 +339,13 @@ function PromisesCard() {
         ) : null
       }
     >
-      <p className="mb-3 text-sm text-slate-600">
+      <p className="mb-3 text-sm text-ink-muted">
         <strong>{data.active}</strong> unit{data.active === 1 ? '' : 's'} still under
         warranty
         {data.expiringSoon > 0 ? (
           <>
             {' '}
-            — <span className="font-medium text-amber-700">{data.expiringSoon}</span> running
+            — <span className="font-medium text-caution">{data.expiringSoon}</span> running
             out within {data.expiringSoonDays} days
           </>
         ) : null}
@@ -353,7 +353,7 @@ function PromisesCard() {
       </p>
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-xs text-slate-500">
+          <tr className="text-left text-xs text-ink-muted">
             <th className="pb-2">Serial</th>
             <th className="pb-2">Item</th>
             <th className="pb-2">Sold to</th>
@@ -366,21 +366,21 @@ function PromisesCard() {
         </thead>
         <tbody>
           {rows.map((p) => (
-            <tr key={p.serialNo} className="border-t border-slate-100">
+            <tr key={p.serialNo} className="border-t border-line">
               <td className="py-2 font-mono text-xs">{p.serialNo}</td>
               <td className="py-2">
-                <span className="text-xs text-slate-500">{p.itemCode}</span> {p.itemName}
+                <span className="text-xs text-ink-muted">{p.itemCode}</span> {p.itemName}
               </td>
-              <td className="py-2 text-slate-600">
-                {p.customerName ?? <span className="text-slate-400">walk-in</span>}
+              <td className="py-2 text-ink-muted">
+                {p.customerName ?? <span className="text-ink-faint">walk-in</span>}
                 {p.invoiceNo ? (
-                  <span className="ml-1 text-xs text-slate-400">{p.invoiceNo}</span>
+                  <span className="ml-1 text-xs text-ink-faint">{p.invoiceNo}</span>
                 ) : null}
               </td>
-              <td className="py-2 text-right text-xs text-slate-500">{displayDate(p.soldOn)}</td>
+              <td className="py-2 text-right text-xs text-ink-muted">{displayDate(p.soldOn)}</td>
               <td className="py-2 text-right font-medium">{displayDate(p.expiresOn)}</td>
               <td className="py-2 text-right">
-                {p.claims === 0 ? <span className="text-slate-300">—</span> : p.claims}
+                {p.claims === 0 ? <span className="text-ink-faint">—</span> : p.claims}
               </td>
               <td className="py-2 text-right">
                 <span
@@ -398,7 +398,7 @@ function PromisesCard() {
               <td className="py-2 text-right">
                 <button
                   type="button"
-                  className="text-xs text-emerald-700 underline-offset-2 hover:underline"
+                  className="text-xs text-positive underline-offset-2 hover:underline"
                   onClick={() =>
                     void apiDownload(
                       `/v1/stock/warranties/${encodeURIComponent(p.serialNo)}/card.pdf`,
@@ -413,7 +413,7 @@ function PromisesCard() {
           ))}
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-slate-500">
+      <p className="mt-2 text-xs text-ink-muted">
         Derived from serialised sales — set the warranty length on the item. An extended
         warranty sold separately, or a promise on something without a serial, is not here.
       </p>

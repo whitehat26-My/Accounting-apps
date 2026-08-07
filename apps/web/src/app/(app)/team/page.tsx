@@ -77,13 +77,13 @@ export default function TeamPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Team</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Team</h1>
 
       <Card title="Who has access">
         {members.data ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-slate-500">
+              <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-2">Name</th>
                 <th className="pb-2">Email</th>
                 <th className="pb-2">Role</th>
@@ -92,15 +92,15 @@ export default function TeamPage() {
             </thead>
             <tbody>
               {members.data.members.map((m) => (
-                <tr key={m.membershipId} className="border-t border-slate-100">
+                <tr key={m.membershipId} className="border-t border-line">
                   <td className="py-2 font-medium">{m.fullName}</td>
-                  <td className="py-2 text-slate-500">{m.email}</td>
+                  <td className="py-2 text-ink-muted">{m.email}</td>
                   <td className="py-2">
-                    <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium">
+                    <span className="rounded-full bg-surface-sunken px-2 py-0.5 text-xs font-medium">
                       {ROLE_LABELS[m.role] ?? m.role}
                     </span>
                   </td>
-                  <td className="py-2 text-xs text-slate-500">{m.status}</td>
+                  <td className="py-2 text-xs text-ink-muted">{m.status}</td>
                 </tr>
               ))}
             </tbody>
@@ -113,7 +113,7 @@ export default function TeamPage() {
       {manages ? (
         <Card title="Add someone">
           <div className="space-y-3">
-            <p className="text-xs text-slate-500">
+            <p className="text-xs text-ink-muted">
               They register their own account first (the normal sign-up page), then you add
               their email here and choose what they can see.
             </p>
@@ -138,7 +138,7 @@ export default function TeamPage() {
                     />
                     <span>
                       <span className="text-sm font-medium">{ROLE_LABELS[r.code]}</span>
-                      <span className="block text-xs text-slate-500">{r.hint}</span>
+                      <span className="block text-xs text-ink-muted">{r.hint}</span>
                     </span>
                   </label>
                 ))}
@@ -149,7 +149,7 @@ export default function TeamPage() {
             </Button>
             {add.isError ? <ErrorNote error={add.error} /> : null}
             {add.isSuccess ? (
-              <p className="text-sm text-emerald-700">Added. They can sign in now.</p>
+              <p className="text-sm text-positive">Added. They can sign in now.</p>
             ) : null}
 
             {/*
@@ -158,8 +158,8 @@ export default function TeamPage() {
               somebody who could simply be added — two steps where one would do.
             */}
             {add.isError && /No registered account holds/.test(String(add.error)) ? (
-              <div className="rounded-xl bg-amber-50 p-3 ring-1 ring-inset ring-amber-200">
-                <p className="text-sm text-amber-900">
+              <div className="rounded-xl bg-caution-soft p-3 ring-1 ring-inset ring-caution/30">
+                <p className="text-sm text-caution">
                   They have no account yet. Send them an invitation and they can create one —
                   then add them here.
                 </p>
@@ -176,8 +176,8 @@ export default function TeamPage() {
             ) : null}
 
             {invite ? (
-              <div className="rounded-xl bg-emerald-50 p-3 ring-1 ring-inset ring-emerald-200">
-                <p className="text-xs text-emerald-900">
+              <div className="rounded-xl bg-positive-soft p-3 ring-1 ring-inset ring-positive/30">
+                <p className="text-xs text-positive">
                   Send this code to {email}. It works once, only for that address, and
                   expires {displayDate(invite.expiresAt.slice(0, 10))}.
                 </p>
@@ -186,10 +186,10 @@ export default function TeamPage() {
                   and it is shown ONCE — only its digest is stored, so there is
                   no screen that can show it again.
                 */}
-                <code className="mt-2 block select-all break-all rounded-lg bg-white px-2 py-1.5 font-mono text-xs text-slate-900 ring-1 ring-inset ring-emerald-200">
+                <code className="mt-2 block select-all break-all rounded-lg bg-surface-raised px-2 py-1.5 font-mono text-xs text-ink ring-1 ring-inset ring-positive/30">
                   {invite.code}
                 </code>
-                <p className="mt-1.5 text-xs text-emerald-800">
+                <p className="mt-1.5 text-xs text-positive">
                   It will not be shown again. If it is lost, create another.
                 </p>
               </div>

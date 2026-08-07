@@ -41,11 +41,11 @@ interface Calendar {
 }
 
 const STATUS_STYLE: Record<Entry['status'], { badge: string; label: string }> = {
-  DONE: { badge: 'bg-emerald-100 text-emerald-900', label: 'Done' },
-  OVERDUE: { badge: 'bg-red-100 text-red-900', label: 'Overdue' },
-  READY: { badge: 'bg-sky-100 text-sky-900', label: 'Ready to file' },
-  ATTENTION: { badge: 'bg-amber-100 text-amber-900', label: 'Needs attention' },
-  UPCOMING: { badge: 'bg-slate-100 text-slate-600', label: 'Upcoming' },
+  DONE: { badge: 'bg-positive-soft text-positive', label: 'Done' },
+  OVERDUE: { badge: 'bg-negative-soft text-negative', label: 'Overdue' },
+  READY: { badge: 'bg-brand/10 text-brand', label: 'Ready to file' },
+  ATTENTION: { badge: 'bg-caution-soft text-caution', label: 'Needs attention' },
+  UPCOMING: { badge: 'bg-surface-sunken text-ink-muted', label: 'Upcoming' },
 };
 
 export default function CompliancePage() {
@@ -87,7 +87,7 @@ export default function CompliancePage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Compliance</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Compliance</h1>
         <div className="flex items-center gap-2">
           <Button variant="ghost" onClick={() => setYear((y) => y - 1)}>
             ← {year - 1}
@@ -102,8 +102,8 @@ export default function CompliancePage() {
       {next ? (
         <Card>
           <p className="text-sm">
-            <span className="font-semibold text-slate-900">Next: {next.label}</span>{' '}
-            <span className="text-slate-600">
+            <span className="font-semibold text-ink">Next: {next.label}</span>{' '}
+            <span className="text-ink-muted">
               for {next.periodLabel} — due {displayDate(next.dueDate)}.
             </span>
           </p>
@@ -111,13 +111,13 @@ export default function CompliancePage() {
       ) : null}
 
       {data && !data.applies.payroll ? (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-ink-muted">
           Payroll deadlines (EPF, SOCSO/EIS, PCB, EA, Form E) will appear once staff are on
           the register under Payroll.
         </p>
       ) : null}
       {data && !data.applies.sst ? (
-        <p className="text-sm text-slate-500">
+        <p className="text-sm text-ink-muted">
           SST deadlines are hidden because no SST number is set — add it under Settings if
           the shop is registered.
         </p>
@@ -134,28 +134,28 @@ export default function CompliancePage() {
                 return (
                   <tr
                     key={`${entry.ruleCode}-${entry.periodKey}`}
-                    className="border-t border-slate-100"
+                    className="border-t border-line"
                   >
-                    <td className="w-24 py-2 text-xs font-medium text-slate-500">
+                    <td className="w-24 py-2 text-xs font-medium text-ink-muted">
                       {displayDate(entry.dueDate)}
                     </td>
                     <td className="py-2">
-                      <div className="font-medium text-slate-900">
+                      <div className="font-medium text-ink">
                         {entry.label}
                         {entry.verification === 'SECONDARY' ? (
                           <span
-                            className="ml-1 cursor-help text-amber-500"
+                            className="ml-1 cursor-help text-caution"
                             title="Deadline confirmed from the agency's own page, but the primary document is not yet on file — see docs/research/sources."
                           >
                             ⚠
                           </span>
                         ) : null}
                       </div>
-                      <div className="text-xs text-slate-500" title={entry.legislationRef}>
+                      <div className="text-xs text-ink-muted" title={entry.legislationRef}>
                         {entry.periodLabel} — {entry.description}
                       </div>
                       {entry.ticked ? (
-                        <div className="text-xs text-emerald-700">
+                        <div className="text-xs text-positive">
                           Marked done {displayDate(entry.ticked.at.slice(0, 10))}
                           {entry.ticked.note ? ` — ${entry.ticked.note}` : ''}
                         </div>
@@ -194,7 +194,7 @@ export default function CompliancePage() {
       ))}
 
       <ErrorNote error={tick.error} />
-      <p className="text-xs text-slate-500">
+      <p className="text-xs text-ink-muted">
         Every mark here is recorded with who and when, in the audit trail. Hover a deadline
         for its legal basis.
       </p>

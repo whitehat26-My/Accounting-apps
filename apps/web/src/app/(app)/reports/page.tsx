@@ -131,7 +131,7 @@ export default function ReportsPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Reports</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Reports</h1>
         <div className="flex gap-3">
           <Field label="From">
             <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
@@ -160,8 +160,8 @@ export default function ReportsPage() {
           spreadsheet; these serve the folder an accountant is handed. */}
       <Card title="Print for the folder">
         <div className="space-y-3">
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3 first:border-0 first:pt-0">
-            <p className="text-sm text-slate-600">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3 first:border-0 first:pt-0">
+            <p className="text-sm text-ink-muted">
               <span className="font-medium">Sales day book</span> — every invoice issued
               between {displayDate(from)} and {displayDate(to)}, one line each, with what is
               still owed on it.
@@ -175,8 +175,8 @@ export default function ReportsPage() {
               Print
             </Button>
           </div>
-          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-slate-100 pt-3">
-            <p className="text-sm text-slate-600">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line pt-3">
+            <p className="text-sm text-ink-muted">
               <span className="font-medium">Financial statements</span> — profit or loss for
               the period and the balance sheet at its end, on their own pages. What a bank or
               a grant assessor asks for.
@@ -198,7 +198,7 @@ export default function ReportsPage() {
           <>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-slate-500">
+                <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-2">Item</th>
                   <th className="pb-2 text-right">Qty sold</th>
                   <th className="pb-2 text-right">Revenue</th>
@@ -209,16 +209,16 @@ export default function ReportsPage() {
               </thead>
               <tbody>
                 {margins.data.rows.map((row) => (
-                  <tr key={row.itemId ?? 'free-text'} className="border-t border-slate-100">
+                  <tr key={row.itemId ?? 'free-text'} className="border-t border-line">
                     <td className="py-2">
-                      <span className="text-xs text-slate-500">{row.code}</span> {row.name}
+                      <span className="text-xs text-ink-muted">{row.code}</span> {row.name}
                     </td>
                     <td className="py-2 text-right">{row.quantitySold}</td>
                     <td className="py-2 text-right">{rm(row.revenue)}</td>
                     <td className="py-2 text-right">{rm(row.cost)}</td>
                     <td
                       className={`py-2 text-right font-medium ${
-                        row.margin.startsWith('-') ? 'text-red-600' : ''
+                        row.margin.startsWith('-') ? 'text-negative' : ''
                       }`}
                     >
                       {rm(row.margin)}
@@ -247,7 +247,7 @@ export default function ReportsPage() {
             ) : null}
           </>
         ) : (
-          <p className="text-sm text-slate-500">No sales in this period.</p>
+          <p className="text-sm text-ink-muted">No sales in this period.</p>
         )}
       </Card>
 
@@ -266,29 +266,29 @@ export default function ReportsPage() {
                 .filter((s) => !(s.activity === 'UNCLASSIFIED' && s.lines.length === 0))
                 .map((section) => (
                   <div key={section.activity}>
-                    <div className="pt-1 text-xs font-semibold uppercase text-slate-400">
+                    <div className="pt-1 text-xs font-semibold uppercase text-ink-faint">
                       {section.activity.charAt(0) + section.activity.slice(1).toLowerCase()}
                     </div>
                     {section.lines.map((line) => (
-                      <div key={line.accountId} className="flex justify-between border-t border-slate-50 py-1">
+                      <div key={line.accountId} className="flex justify-between border-t border-line py-1">
                         <span>
-                          <span className="font-mono text-xs text-slate-400">{line.code}</span> {line.name}
+                          <span className="font-mono text-xs text-ink-faint">{line.code}</span> {line.name}
                         </span>
-                        <span className={line.amount.startsWith('-') ? 'text-red-700' : ''}>{rm(line.amount)}</span>
+                        <span className={line.amount.startsWith('-') ? 'text-negative' : ''}>{rm(line.amount)}</span>
                       </div>
                     ))}
-                    <div className="flex justify-between border-t border-slate-100 py-1 font-semibold">
+                    <div className="flex justify-between border-t border-line py-1 font-semibold">
                       <span>Net</span>
-                      <span className={section.subtotal.startsWith('-') ? 'text-red-700' : ''}>{rm(section.subtotal)}</span>
+                      <span className={section.subtotal.startsWith('-') ? 'text-negative' : ''}>{rm(section.subtotal)}</span>
                     </div>
                   </div>
                 ))}
-              <div className="space-y-1 border-t-2 border-slate-300 pt-2">
+              <div className="space-y-1 border-t-2 border-line-strong pt-2">
                 <div className="flex justify-between font-semibold">
                   <span>Net change in cash</span>
                   <span>{rm(cashFlow.data.netCashFlow)}</span>
                 </div>
-                <div className="flex justify-between text-slate-500">
+                <div className="flex justify-between text-ink-muted">
                   <span>Cash at start</span>
                   <span>{rm(cashFlow.data.openingCash)}</span>
                 </div>
@@ -298,13 +298,13 @@ export default function ReportsPage() {
                 </div>
               </div>
               {!cashFlow.data.reconciles ? (
-                <p className="rounded-md bg-red-50 px-3 py-2 text-xs text-red-800">
+                <p className="rounded-md bg-negative-soft px-3 py-2 text-xs text-negative">
                   Does NOT reconcile to the movement in cash (off by {rm(cashFlow.data.difference)}). Do not
                   rely on this statement.
                 </p>
               ) : null}
               {cashFlow.data.unclassifiedAccounts.length > 0 ? (
-                <div className="space-y-2 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <div className="space-y-2 rounded-md bg-caution-soft px-3 py-2 text-xs text-caution">
                   <p>These accounts need a cash flow classification:</p>
                   {cashFlow.data.unclassifiedAccounts.map((account) => (
                     <div key={account.id} className="flex items-center justify-between gap-2">
@@ -313,7 +313,7 @@ export default function ReportsPage() {
                       </span>
                       {can(me.data, 'org.manage') ? (
                         <select
-                          className="rounded-md border-0 bg-white px-2 py-1 text-xs shadow-sm ring-1 ring-inset ring-amber-300"
+                          className="rounded-md border-0 bg-surface-raised px-2 py-1 text-xs shadow-sm ring-1 ring-inset ring-caution/40"
                           defaultValue=""
                           onChange={(e) => {
                             if (e.target.value)
@@ -339,7 +339,7 @@ export default function ReportsPage() {
         <Card title="Changes in equity">
           {equity.data ? (
             <div className="overflow-x-auto text-sm">
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-1 text-right text-xs text-slate-500">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-1 text-right text-xs text-ink-muted">
                 <span className="text-left">Component</span>
                 <span>Opening</span>
                 <span>Movement</span>
@@ -348,24 +348,24 @@ export default function ReportsPage() {
               {equity.data.components.map((component) => (
                 <div
                   key={component.key}
-                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-slate-50 py-1 text-right"
+                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-1 text-right"
                 >
                   <span className="text-left">{component.label}</span>
                   <span className="whitespace-nowrap">{rm(component.opening)}</span>
-                  <span className={`whitespace-nowrap ${component.movement.startsWith('-') ? 'text-red-700' : ''}`}>
+                  <span className={`whitespace-nowrap ${component.movement.startsWith('-') ? 'text-negative' : ''}`}>
                     {rm(component.movement)}
                   </span>
                   <span className="whitespace-nowrap">{rm(component.closing)}</span>
                 </div>
               ))}
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t-2 border-slate-300 py-1.5 text-right font-semibold">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t-2 border-line-strong py-1.5 text-right font-semibold">
                 <span className="text-left">Total equity</span>
                 <span className="whitespace-nowrap">{rm(equity.data.openingEquity)}</span>
                 <span />
                 <span className="whitespace-nowrap">{rm(equity.data.closingEquity)}</span>
               </div>
               {!equity.data.consistent ? (
-                <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-800">
+                <p className="mt-2 rounded-md bg-negative-soft px-3 py-2 text-xs text-negative">
                   The components do not add up to the balance sheet&apos;s equity — tell your accountant.
                 </p>
               ) : null}
@@ -390,7 +390,7 @@ export default function ReportsPage() {
           <div>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-slate-500">
+                <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-1">Code</th>
                   <th className="pb-1">Account</th>
                   <th className="pb-1 text-right">Debit</th>
@@ -399,14 +399,14 @@ export default function ReportsPage() {
               </thead>
               <tbody>
                 {tb.data.rows.map((r) => (
-                  <tr key={r.code} className="border-t border-slate-100">
-                    <td className="py-1 font-mono text-xs text-slate-500">{r.code}</td>
+                  <tr key={r.code} className="border-t border-line">
+                    <td className="py-1 font-mono text-xs text-ink-muted">{r.code}</td>
                     <td className="py-1">{r.name}</td>
                     <td className="py-1 text-right">{r.debit === '0.0000' ? '' : rm(r.debit)}</td>
                     <td className="py-1 text-right">{r.credit === '0.0000' ? '' : rm(r.credit)}</td>
                   </tr>
                 ))}
-                <tr className="border-t-2 border-slate-300 font-semibold">
+                <tr className="border-t-2 border-line-strong font-semibold">
                   <td className="py-1.5" colSpan={2}>Totals</td>
                   <td className="py-1.5 text-right">{rm(tb.data.totalDebit)}</td>
                   <td className="py-1.5 text-right">{rm(tb.data.totalCredit)}</td>
@@ -414,7 +414,7 @@ export default function ReportsPage() {
               </tbody>
             </table>
             {!tb.data.balanced ? (
-              <p className="mt-2 rounded-md bg-red-50 px-3 py-2 text-xs text-red-800">
+              <p className="mt-2 rounded-md bg-negative-soft px-3 py-2 text-xs text-negative">
                 Debits and credits disagree — this should be impossible; tell your accountant.
               </p>
             ) : null}
@@ -479,7 +479,7 @@ function ArchiveCard() {
   return (
     <Card title="Keep a copy that outlives this software">
       <div className="space-y-3">
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-muted">
           One file per financial year, holding every journal entry, the general ledger, the
           trial balance and the statements — as plain CSV and a PDF, readable without this
           app or any other. The tool that checks the books were not altered travels inside
@@ -489,11 +489,11 @@ function ArchiveCard() {
           {list.map((year) => (
             <div
               key={year.id}
-              className="flex flex-wrap items-center justify-between gap-2 border-t border-slate-100 py-2 text-sm"
+              className="flex flex-wrap items-center justify-between gap-2 border-t border-line py-2 text-sm"
             >
               <span>
                 <span className="font-medium">{year.label}</span>{' '}
-                <span className="text-xs text-slate-500">
+                <span className="text-xs text-ink-muted">
                   {displayDate(year.startDate)} – {displayDate(year.endDate)}
                 </span>
               </span>
@@ -511,13 +511,13 @@ function ArchiveCard() {
           ))}
         </div>
         {done ? (
-          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
+          <p className="rounded-lg bg-positive-soft px-3 py-2 text-sm text-positive ring-1 ring-inset ring-positive/30">
             {done} downloaded. <strong>Now put it somewhere else</strong> — a copy that only
             ever lives on this machine is lost with this machine.
           </p>
         ) : null}
         <ErrorNote error={error} />
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-ink-muted">
           Holds the general ledger and the statements built from it. Invoice PDFs, repair
           photographs and customer records are not included and must be exported separately.
         </p>
@@ -555,12 +555,12 @@ interface Changed {
 
 const KIND: Record<Changed['entries'][number]['kind'], { band: string; label: string }> = {
   BACKDATED: {
-    band: 'bg-amber-100 text-amber-900',
+    band: 'bg-caution-soft text-caution',
     // The one worth a person's attention, so it is the one that gets a colour.
     label: 'Backdated into this period',
   },
-  REVERSAL: { band: 'bg-slate-100 text-slate-700', label: 'Reversal' },
-  LATER: { band: 'bg-slate-100 text-slate-600', label: 'Later trading' },
+  REVERSAL: { band: 'bg-surface-sunken text-ink-muted', label: 'Reversal' },
+  LATER: { band: 'bg-surface-sunken text-ink-muted', label: 'Later trading' },
 };
 
 /**
@@ -603,7 +603,7 @@ function TimeMachineCard({
   return (
     <Card title="What changed since you closed the books">
       <div className="space-y-3">
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-muted">
           Pick the moment you last read these figures. Anything posted since then is listed
           below with the person who posted it — including entries <em>dated</em> inside this
           period but keyed afterwards, which is how a month you already reported quietly
@@ -613,7 +613,7 @@ function TimeMachineCard({
         <div className="flex flex-wrap items-end gap-2">
           <Field label="Since">
             <select
-              className="rounded-lg border-0 bg-white px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-slate-300"
+              className="rounded-lg border-0 bg-surface-raised px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-line-strong"
               value={since}
               onChange={(e) => setSince(e.target.value)}
             >
@@ -654,14 +654,14 @@ function TimeMachineCard({
         {since === '' ? null : diff.isPending ? (
           <Loading />
         ) : diff.data?.unchanged ? (
-          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
+          <p className="rounded-lg bg-positive-soft px-3 py-2 text-sm text-positive ring-1 ring-inset ring-positive/30">
             Nothing has changed since then. The figures you reported are still the figures in
             the books.
           </p>
         ) : diff.data ? (
           <div className="space-y-4">
             <div className="overflow-x-auto text-sm">
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-1 text-right text-xs text-slate-500">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-1 text-right text-xs text-ink-muted">
                 <span className="text-left">Account</span>
                 <span>As you read it</span>
                 <span>Now</span>
@@ -670,16 +670,16 @@ function TimeMachineCard({
               {diff.data.changes.map((c) => (
                 <div
                   key={c.accountId}
-                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-slate-50 py-1 text-right"
+                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-1 text-right"
                 >
                   <span className="text-left">
-                    <span className="font-mono text-xs text-slate-400">{c.code}</span> {c.name}
+                    <span className="font-mono text-xs text-ink-faint">{c.code}</span> {c.name}
                   </span>
-                  <span className="whitespace-nowrap text-slate-500">{rm(c.before)}</span>
+                  <span className="whitespace-nowrap text-ink-muted">{rm(c.before)}</span>
                   <span className="whitespace-nowrap">{rm(c.after)}</span>
                   <span
                     className={`whitespace-nowrap font-medium ${
-                      c.delta.startsWith('-') ? 'text-red-700' : 'text-emerald-700'
+                      c.delta.startsWith('-') ? 'text-negative' : 'text-positive'
                     }`}
                   >
                     {rm(c.delta)}
@@ -689,17 +689,17 @@ function TimeMachineCard({
             </div>
 
             <div className="space-y-1">
-              <p className="text-xs font-semibold uppercase text-slate-400">
+              <p className="text-xs font-semibold uppercase text-ink-faint">
                 The entries responsible
               </p>
               {diff.data.entries.map((e) => (
                 <div
                   key={e.entryNo}
-                  className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-slate-50 py-1.5 text-sm"
+                  className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-line py-1.5 text-sm"
                 >
-                  <span className="font-mono text-xs text-slate-500">{e.entryNo}</span>
+                  <span className="font-mono text-xs text-ink-muted">{e.entryNo}</span>
                   <span className="flex-1">{e.description ?? '—'}</span>
-                  <span className="text-xs text-slate-500">
+                  <span className="text-xs text-ink-muted">
                     dated {displayDate(e.entryDate)} · posted{' '}
                     {displayDate(e.postedAt.slice(0, 10))} by {e.postedByName ?? 'unknown'}
                   </span>
@@ -716,7 +716,7 @@ function TimeMachineCard({
 
         <ErrorNote error={diff.error} />
 
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-ink-muted">
           This reconstructs the <strong>general ledger</strong>. Invoice statuses, stock
           levels and contact details change in place and are not travelled back — the audit
           trail answers those one record at a time.
@@ -732,18 +732,18 @@ function Statement({ lines }: { lines: StatementLine[] }) {
       {lines.map((line, i) => (
         <div
           key={`${line.label}-${i}`}
-          className={`flex justify-between border-t border-slate-50 py-1 ${
+          className={`flex justify-between border-t border-line py-1 ${
             line.lineType === 'TOTAL' || line.lineType === 'SUBTOTAL'
               ? 'font-semibold'
               : line.lineType === 'HEADER'
-                ? 'pt-3 text-xs font-semibold uppercase text-slate-400'
+                ? 'pt-3 text-xs font-semibold uppercase text-ink-faint'
                 : ''
           }`}
           style={{ paddingLeft: `${line.level * 16}px` }}
         >
           <span>{line.label}</span>
           {line.lineType !== 'HEADER' ? (
-            <span className={line.amount.startsWith('-') ? 'text-red-700' : ''}>
+            <span className={line.amount.startsWith('-') ? 'text-negative' : ''}>
               {rm(line.amount)}
             </span>
           ) : null}

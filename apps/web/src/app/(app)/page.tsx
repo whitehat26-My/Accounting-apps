@@ -106,7 +106,7 @@ export default function TodayPage() {
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Today — {displayDate(date)}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Today — {displayDate(date)}</h1>
         {/* Closing up is the counter's job, so this rides pos.sale — the same
             permission that rang the sales it totals. */}
         {seesTakings ? (
@@ -132,7 +132,7 @@ export default function TodayPage() {
 
       {!seesTakings && !seesMoney && me.data ? (
         <Card>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-ink-muted">
             Welcome. Your work lives in the sections on the left.
           </p>
         </Card>
@@ -145,12 +145,12 @@ export default function TodayPage() {
         {f ? (
           <div className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-sm text-slate-500">In the bank now</span>
+              <span className="text-sm text-ink-muted">In the bank now</span>
               <span className="text-lg font-bold"><Money value={f.openingCash} /></span>
             </div>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-slate-500">
+                <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-1">Horizon</th>
                   <th className="pb-1 text-right">Coming in</th>
                   <th className="pb-1 text-right">Going out</th>
@@ -159,13 +159,13 @@ export default function TodayPage() {
               </thead>
               <tbody>
                 {f.horizons.map((h) => (
-                  <tr key={h.days} className="border-t border-slate-100">
+                  <tr key={h.days} className="border-t border-line">
                     <td className="py-1.5">{h.days} days</td>
-                    <td className="py-1.5 text-right text-emerald-700">{rm(h.inflows)}</td>
-                    <td className="py-1.5 text-right text-red-600">{rm(h.outflows)}</td>
+                    <td className="py-1.5 text-right text-positive">{rm(h.inflows)}</td>
+                    <td className="py-1.5 text-right text-negative">{rm(h.outflows)}</td>
                     <td
                       className={`py-1.5 text-right font-semibold ${
-                        h.closing.startsWith('-') ? 'text-red-700' : ''
+                        h.closing.startsWith('-') ? 'text-negative' : ''
                       }`}
                     >
                       {rm(h.closing)}
@@ -175,7 +175,7 @@ export default function TodayPage() {
               </tbody>
             </table>
             {f.overdueReceivables.count > 0 ? (
-              <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p className="rounded-md bg-caution-soft px-3 py-2 text-xs text-caution">
                 {rm(f.overdueReceivables.total)} across {f.overdueReceivables.count} overdue
                 invoice{f.overdueReceivables.count > 1 ? 's' : ''} is NOT counted above —
                 late payers have unknown timing. Chase them in Collections.
@@ -193,12 +193,12 @@ export default function TodayPage() {
         {d ? (
           <div className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-sm text-slate-500">
+              <span className="text-sm text-ink-muted">
                 {displayDate(d.weekStart)} – {displayDate(d.weekEnd)}
               </span>
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                  d.warnCount > 0 ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'
+                  d.warnCount > 0 ? 'bg-caution-soft text-caution' : 'bg-positive-soft text-positive'
                 }`}
               >
                 {d.warnCount > 0
@@ -219,8 +219,8 @@ export default function TodayPage() {
                     key={flag.code}
                     className={`rounded-md px-3 py-2 text-xs ${
                       flag.severity === 'WARN'
-                        ? 'bg-amber-50 text-amber-900'
-                        : 'bg-emerald-50 text-emerald-900'
+                        ? 'bg-caution-soft text-caution'
+                        : 'bg-positive-soft text-positive'
                     }`}
                   >
                     {flag.message}
@@ -230,7 +230,7 @@ export default function TodayPage() {
             ) : null}
           </div>
         ) : (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-ink-muted">
             The first digest appears after a full Monday-to-Sunday week of trading.
           </p>
         )}
@@ -243,17 +243,17 @@ export default function TodayPage() {
           <table className="w-full text-sm">
             <tbody>
               {t.byMethod.map((m) => (
-                <tr key={`${m.method}-${m.depositAccount}`} className="border-t border-slate-100">
+                <tr key={`${m.method}-${m.depositAccount}`} className="border-t border-line">
                   <td className="py-2 font-medium">{m.method}</td>
-                  <td className="py-2 text-slate-500">{m.depositAccount}</td>
-                  <td className="py-2 text-right text-slate-500">{m.count}×</td>
+                  <td className="py-2 text-ink-muted">{m.depositAccount}</td>
+                  <td className="py-2 text-right text-ink-muted">{m.count}×</td>
                   <td className="py-2 text-right font-medium">{rm(m.total)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
-          <p className="text-sm text-slate-500">Nothing taken yet today.</p>
+          <p className="text-sm text-ink-muted">Nothing taken yet today.</p>
         )}
       </Card>
       ) : null}
@@ -263,8 +263,8 @@ export default function TodayPage() {
 
 function WeekStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md bg-slate-50 px-3 py-2">
-      <div className="text-xs text-slate-500">{label}</div>
+    <div className="rounded-md bg-surface-sunken px-3 py-2">
+      <div className="text-xs text-ink-muted">{label}</div>
       <div className="font-semibold">{value}</div>
     </div>
   );
@@ -287,13 +287,13 @@ function Stat({
 }) {
   return (
     <div
-      className="emil-rise rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5"
+      className="emil-rise rounded-2xl bg-surface-raised p-4 shadow-sm ring-1 ring-line"
       style={{ animationDelay: `${delay}ms` }}
     >
-      <div className="text-xs font-medium text-slate-500">{label}</div>
+      <div className="text-xs font-medium text-ink-muted">{label}</div>
       <div
         className={`mt-1.5 text-2xl font-semibold tracking-tight ${
-          highlight ? 'text-emerald-600' : 'text-slate-900'
+          highlight ? 'text-positive' : 'text-ink'
         }`}
       >
         {plain ? value : <Money value={value} />}
@@ -309,21 +309,21 @@ const VERDICT: Record<
   { tone: string; band: string; headline: string; advice: string }
 > = {
   COMFORTABLE: {
-    tone: 'text-emerald-700',
-    band: 'bg-emerald-50 ring-emerald-200',
+    tone: 'text-positive',
+    band: 'bg-positive-soft ring-positive/30',
     headline: 'yours to spend',
     advice: 'Everything you are holding for other people is covered, with room left over.',
   },
   TIGHT: {
-    tone: 'text-amber-700',
-    band: 'bg-amber-50 ring-amber-200',
+    tone: 'text-caution',
+    band: 'bg-caution-soft ring-caution/30',
     headline: 'yours to spend',
     advice:
       'Most of the money in the bank is not yours. It will cover what is owed — but a big purchase now would be spending other people’s money.',
   },
   SHORT: {
-    tone: 'text-red-700',
-    band: 'bg-red-50 ring-red-300',
+    tone: 'text-negative',
+    band: 'bg-negative-soft ring-negative/40',
     headline: 'short of what you are holding',
     advice:
       'The money you are holding for staff and the government is MORE than what is in the bank. Some of it has already been spent. The next deadline will overdraw you unless money comes in first.',
@@ -350,25 +350,25 @@ function FreeCashCard({ position }: { position: FreeCash }) {
       <div className={`rounded-lg p-4 ring-1 ring-inset ${style.band}`}>
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <div>
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+            <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">
               Actually yours
             </p>
             <p className={`text-3xl font-bold ${style.tone}`}>
               {rm(position.freeCash)}
             </p>
-            <p className="text-xs text-slate-600">{style.headline}</p>
+            <p className="text-xs text-ink-muted">{style.headline}</p>
           </div>
           <div className="text-right text-sm">
-            <p className="text-slate-600">
+            <p className="text-ink-muted">
               In the bank <span className="font-semibold">{rm(position.bankBalance)}</span>
             </p>
-            <p className="text-slate-600">
+            <p className="text-ink-muted">
               Held for others{' '}
               <span className="font-semibold">{rm(position.totalHeld)}</span>
             </p>
           </div>
         </div>
-        <p className={`mt-2 text-sm ${short ? 'font-medium text-red-700' : 'text-slate-600'}`}>
+        <p className={`mt-2 text-sm ${short ? 'font-medium text-negative' : 'text-ink-muted'}`}>
           {style.advice}
         </p>
       </div>
@@ -376,7 +376,7 @@ function FreeCashCard({ position }: { position: FreeCash }) {
       {position.held.length > 0 ? (
         <table className="mt-3 w-full text-sm">
           <thead>
-            <tr className="text-left text-xs text-slate-500">
+            <tr className="text-left text-xs text-ink-muted">
               <th className="pb-1">Not yours</th>
               <th className="pb-1 text-right">Amount</th>
               <th className="pb-1 text-right">Leaves by</th>
@@ -384,16 +384,16 @@ function FreeCashCard({ position }: { position: FreeCash }) {
           </thead>
           <tbody>
             {position.held.map((line) => (
-              <tr key={line.key} className="border-t border-slate-100 align-top">
+              <tr key={line.key} className="border-t border-line align-top">
                 <td className="py-1.5">
-                  <div className="font-medium text-slate-900">{line.label}</div>
-                  <div className="text-xs text-slate-500">{line.owedTo}</div>
+                  <div className="font-medium text-ink">{line.label}</div>
+                  <div className="text-xs text-ink-muted">{line.owedTo}</div>
                   {line.note ? (
-                    <div className="text-xs text-amber-700">{line.note}</div>
+                    <div className="text-xs text-caution">{line.note}</div>
                   ) : null}
                 </td>
                 <td className="py-1.5 text-right font-medium">{rm(line.amount)}</td>
-                <td className="py-1.5 text-right text-xs text-slate-500">
+                <td className="py-1.5 text-right text-xs text-ink-muted">
                   {line.dueDate === null ? 'no fixed date' : displayDate(line.dueDate)}
                 </td>
               </tr>
@@ -401,7 +401,7 @@ function FreeCashCard({ position }: { position: FreeCash }) {
           </tbody>
         </table>
       ) : (
-        <p className="mt-3 text-sm text-slate-500">
+        <p className="mt-3 text-sm text-ink-muted">
           You are not holding anything for anyone right now — the whole balance is yours.
         </p>
       )}

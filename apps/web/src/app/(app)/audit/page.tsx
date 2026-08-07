@@ -55,14 +55,14 @@ export default function AuditPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Audit trail</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Audit trail</h1>
 
       {verify.data ? (
         <p
           className={`rounded-xl px-4 py-2.5 text-sm ring-1 ring-inset ${
             verify.data.intact
-              ? 'bg-emerald-50 text-emerald-900 ring-emerald-200'
-              : 'bg-red-50 text-red-800 ring-red-200'
+              ? 'bg-positive-soft text-positive ring-positive/30'
+              : 'bg-negative-soft text-negative ring-negative/30'
           }`}
         >
           {verify.data.intact
@@ -86,7 +86,7 @@ export default function AuditPage() {
               onChange={(e) => setEntityType(e.target.value)}
             />
             <select
-              className="rounded-lg border-0 bg-white px-2.5 py-2 text-sm shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-emerald-600"
+              className="rounded-lg border-0 bg-surface-raised px-2.5 py-2 text-sm shadow-sm ring-1 ring-inset ring-line-strong focus:ring-2 focus:ring-positive"
               value={action}
               onChange={(e) => setAction(e.target.value as (typeof ACTIONS)[number])}
             >
@@ -103,7 +103,7 @@ export default function AuditPage() {
           trail.data.entries.length > 0 ? (
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-slate-500">
+                <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-1">When</th>
                   <th className="pb-1">Who</th>
                   <th className="pb-1">Action</th>
@@ -113,22 +113,22 @@ export default function AuditPage() {
               </thead>
               <tbody>
                 {trail.data.entries.map((entry) => (
-                  <tr key={entry.id} className="border-t border-slate-100 align-top">
-                    <td className="whitespace-nowrap py-2 text-slate-500">
+                  <tr key={entry.id} className="border-t border-line align-top">
+                    <td className="whitespace-nowrap py-2 text-ink-muted">
                       {displayDate(entry.occurredAt.slice(0, 10))}{' '}
                       <span className="text-xs">{entry.occurredAt.slice(11, 16)}</span>
                     </td>
                     <td className="py-2">
-                      {entry.actorEmail ?? <span className="text-slate-400">system</span>}
+                      {entry.actorEmail ?? <span className="text-ink-faint">system</span>}
                       {entry.actorIp ? (
-                        <div className="text-xs text-slate-400">{entry.actorIp}</div>
+                        <div className="text-xs text-ink-faint">{entry.actorIp}</div>
                       ) : null}
                     </td>
                     <td className="py-2">
                       <Badge status={entry.action} />
                     </td>
-                    <td className="py-2 font-mono text-xs text-slate-600">{entry.entityType}</td>
-                    <td className="py-2 text-xs text-slate-500">
+                    <td className="py-2 font-mono text-xs text-ink-muted">{entry.entityType}</td>
+                    <td className="py-2 text-xs text-ink-muted">
                       {entry.changed.length > 0 ? entry.changed.join(', ') : '—'}
                     </td>
                   </tr>
@@ -136,7 +136,7 @@ export default function AuditPage() {
               </tbody>
             </table>
           ) : (
-            <p className="text-sm text-slate-500">Nothing matches these filters.</p>
+            <p className="text-sm text-ink-muted">Nothing matches these filters.</p>
           )
         ) : (
           <Skeleton />
@@ -233,7 +233,7 @@ function ProofPackCard() {
   return (
     <Card title="Proof pack — books somebody else can check">
       <div className="space-y-3">
-        <p className="text-sm text-slate-600">
+        <p className="text-sm text-ink-muted">
           A proof pack contains your trial balance and every anchor taken on the audit
           chain. Give one to your accountant, your bank or a grant assessor. Months later,
           feeding that same file back here proves nothing in between was rewritten — and
@@ -242,7 +242,7 @@ function ProofPackCard() {
 
         <div className="flex flex-wrap items-center gap-2">
           <Button onClick={() => void download()}>Download proof pack</Button>
-          <label className="cursor-pointer rounded-lg px-3.5 py-2 text-sm font-medium text-slate-700 hover:bg-slate-100">
+          <label className="cursor-pointer rounded-lg px-3.5 py-2 text-sm font-medium text-ink-muted hover:bg-surface-sunken">
             Check a pack…
             <input
               type="file"
@@ -261,7 +261,7 @@ function ProofPackCard() {
           >
             Pin the chain now
           </Button>
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-ink-muted">
             {latest
               ? `${list.length} anchor(s); last ${displayDate(latest.anchoredAt.slice(0, 10))} at ${latest.entryCount} records`
               : 'No anchors yet — the nightly job takes one, or press “Pin the chain now”.'}
@@ -269,7 +269,7 @@ function ProofPackCard() {
         </div>
 
         {issued ? (
-          <p className="text-sm text-emerald-700">
+          <p className="text-sm text-positive">
             Pack issued, hash {issued}… — <strong>now send it somewhere</strong>. A pack
             that only ever lives on this machine proves nothing extra.
           </p>
@@ -279,17 +279,17 @@ function ProofPackCard() {
           <p
             className={`rounded-lg px-3 py-2 text-sm ring-1 ring-inset ${
               checked.verdict === 'CONFIRMED'
-                ? 'bg-emerald-50 text-emerald-900 ring-emerald-200'
-                : 'bg-red-50 text-red-800 ring-red-300'
+                ? 'bg-positive-soft text-positive ring-positive/30'
+                : 'bg-negative-soft text-negative ring-negative/40'
             }`}
           >
             <strong>{checked.verdict}</strong> — {checked.detail}
           </p>
         ) : null}
 
-        <p className="text-xs text-slate-500">
+        <p className="text-xs text-ink-muted">
           Anyone can verify a pack with{' '}
-          <code className="rounded bg-slate-100 px-1">
+          <code className="rounded bg-surface-sunken px-1">
             node scripts/verify-proof-pack.mjs march.json september.json
           </code>{' '}
           — no dependencies, no access to this system, and the hashing algorithm is
@@ -318,9 +318,9 @@ interface Watch {
 }
 
 const SEVERITY: Record<WatchFinding['severity'], { band: string; label: string }> = {
-  NOTE: { band: 'bg-slate-50 ring-slate-200', label: 'Worth knowing' },
-  LOOK: { band: 'bg-amber-50 ring-amber-200', label: 'Worth a look' },
-  CHECK: { band: 'bg-red-50 ring-red-200', label: 'Worth checking' },
+  NOTE: { band: 'bg-surface-sunken ring-line', label: 'Worth knowing' },
+  LOOK: { band: 'bg-caution-soft ring-caution/30', label: 'Worth a look' },
+  CHECK: { band: 'bg-negative-soft ring-negative/30', label: 'Worth checking' },
 };
 
 /**
@@ -349,7 +349,7 @@ function FraudWatchCard() {
     <Card title="Second pair of eyes — the last 12 months">
       <div className="space-y-3">
         {data.findings.length === 0 ? (
-          <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-900 ring-1 ring-inset ring-emerald-200">
+          <p className="rounded-lg bg-positive-soft px-3 py-2 text-sm text-positive ring-1 ring-inset ring-positive/30">
             Nothing stood out. These are the same tests an auditor samples for, run over
             everything rather than a sample.
           </p>
@@ -361,12 +361,12 @@ function FraudWatchCard() {
                 key={finding.code}
                 className={`rounded-lg px-3 py-2 ring-1 ring-inset ${style.band}`}
               >
-                <p className="text-xs font-medium uppercase tracking-wide text-slate-500">
+                <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">
                   {style.label}
                 </p>
-                <p className="text-sm font-medium text-slate-900">{finding.headline}</p>
+                <p className="text-sm font-medium text-ink">{finding.headline}</p>
                 {/* The innocent reading, never smaller than the suspicion. */}
-                <p className="mt-1 text-sm text-slate-600">{finding.innocentExplanation}</p>
+                <p className="mt-1 text-sm text-ink-muted">{finding.innocentExplanation}</p>
               </div>
             );
           })
@@ -375,7 +375,7 @@ function FraudWatchCard() {
         {data.duplicates.length > 0 ? (
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-slate-500">
+              <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-1">Supplier</th>
                 <th className="pb-1">Documents</th>
                 <th className="pb-1 text-right">Amount</th>
@@ -384,9 +384,9 @@ function FraudWatchCard() {
             </thead>
             <tbody>
               {data.duplicates.map((d) => (
-                <tr key={`${d.party}-${d.documents.join()}`} className="border-t border-slate-100">
+                <tr key={`${d.party}-${d.documents.join()}`} className="border-t border-line">
                   <td className="py-1.5">{d.party}</td>
-                  <td className="py-1.5 text-xs text-slate-500">{d.documents.join(' and ')}</td>
+                  <td className="py-1.5 text-xs text-ink-muted">{d.documents.join(' and ')}</td>
                   <td className="py-1.5 text-right font-medium">{rm(d.amount)}</td>
                   <td className="py-1.5 text-right">{d.daysApart}</td>
                 </tr>
@@ -395,7 +395,7 @@ function FraudWatchCard() {
           </table>
         ) : null}
 
-        <details className="text-xs text-slate-500">
+        <details className="text-xs text-ink-muted">
           <summary className="cursor-pointer">What was checked ({data.checksRun.length})</summary>
           <ul className="mt-1 list-disc pl-5">
             {data.checksRun.map((check) => (

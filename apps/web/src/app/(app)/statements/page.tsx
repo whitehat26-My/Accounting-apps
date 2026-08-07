@@ -90,7 +90,7 @@ export default function StatementsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Statements</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Statements</h1>
 
       <Card title="Period">
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -108,7 +108,7 @@ export default function StatementsPage() {
             />
           </Field>
         </div>
-        <p className="mt-2 text-xs text-slate-500">
+        <p className="mt-2 text-xs text-ink-muted">
           Both dates are included. Consecutive months join up exactly — one month&rsquo;s
           closing balance is the next one&rsquo;s opening balance, so nothing falls
           between two statements.
@@ -120,7 +120,7 @@ export default function StatementsPage() {
           customers.length > 0 ? (
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-slate-500">
+                <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-2">Customer</th>
                   <th className="pb-2 text-right">Balance</th>
                   <th className="pb-2" />
@@ -128,7 +128,7 @@ export default function StatementsPage() {
               </thead>
               <tbody>
                 {customers.map((c) => (
-                  <tr key={c.id} className="border-t border-slate-100">
+                  <tr key={c.id} className="border-t border-line">
                     <td className="py-2 font-medium">{c.name}</td>
                     <td className="py-2 text-right">{rm(c.balance)}</td>
                     <td className="py-2 text-right">
@@ -141,7 +141,7 @@ export default function StatementsPage() {
               </tbody>
             </table>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-ink-muted">
               Nobody owes anything as at this date. Nothing to send.
             </p>
           )
@@ -155,7 +155,7 @@ export default function StatementsPage() {
         statement.data ? (
           <Card title={statement.data.contact.name}>
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-              <p className="text-xs text-slate-500">
+              <p className="text-xs text-ink-muted">
                 {displayDate(statement.data.from)} — {displayDate(statement.data.to)}
                 {statement.data.contact.email ? ` · ${statement.data.contact.email}` : ''}
               </p>
@@ -165,7 +165,7 @@ export default function StatementsPage() {
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr className="text-left text-xs text-slate-500">
+                  <tr className="text-left text-xs text-ink-muted">
                     <th className="pb-2">Date</th>
                     <th className="pb-2">Document</th>
                     <th className="pb-2">Detail</th>
@@ -180,25 +180,25 @@ export default function StatementsPage() {
                     statement that starts mid-story invites "what was this
                     opening number?", and the answer belongs on the page.
                   */}
-                  <tr className="border-t border-slate-100 font-medium">
+                  <tr className="border-t border-line font-medium">
                     <td className="py-2" colSpan={5}>
                       Balance brought forward
                     </td>
                     <td className="py-2 text-right">{rm(statement.data.openingBalance)}</td>
                   </tr>
                   {statement.data.entries.map((entry, index) => (
-                    <tr key={`${entry.reference}-${index}`} className="border-t border-slate-100">
-                      <td className="py-2 whitespace-nowrap text-slate-500">
+                    <tr key={`${entry.reference}-${index}`} className="border-t border-line">
+                      <td className="py-2 whitespace-nowrap text-ink-muted">
                         {displayDate(entry.date)}
                       </td>
                       <td className="py-2 whitespace-nowrap font-medium">{entry.reference}</td>
-                      <td className="py-2 text-slate-500">{entry.detail ?? ''}</td>
+                      <td className="py-2 text-ink-muted">{entry.detail ?? ''}</td>
                       <td className="py-2 text-right">{entry.charge ? rm(entry.charge) : ''}</td>
                       <td className="py-2 text-right">{entry.credit ? rm(entry.credit) : ''}</td>
                       <td className="py-2 text-right">{rm(entry.balance)}</td>
                     </tr>
                   ))}
-                  <tr className="border-t-2 border-slate-200 font-semibold">
+                  <tr className="border-t-2 border-line font-semibold">
                     <td className="py-2" colSpan={5}>
                       Amount now due
                     </td>
@@ -214,13 +214,13 @@ export default function StatementsPage() {
                 RM 4,000" and "RM 1,200 of it was due three weeks ago" start
                 different conversations, and the second is the one that gets paid.
               */
-              <p className="mt-3 text-sm font-medium text-amber-700">
+              <p className="mt-3 text-sm font-medium text-caution">
                 {rm(statement.data.overdue)} of this is already past its due date.
               </p>
             ) : null}
 
             {statement.data.entries.length === 0 ? (
-              <p className="mt-3 text-xs text-slate-500">
+              <p className="mt-3 text-xs text-ink-muted">
                 Nothing happened on this account in this period. The balance carried
                 forward is the whole story.
               </p>

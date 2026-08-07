@@ -116,7 +116,7 @@ export default function QuotesPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Quotes</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Quotes</h1>
 
       <Card title="Open quotes">
         {quotes.data ? (
@@ -132,7 +132,7 @@ export default function QuotesPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-ink-muted">
               No open quotes. Write one below when a customer asks what a job will cost.
             </p>
           )
@@ -152,7 +152,7 @@ export default function QuotesPage() {
         <Card title="Finished">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-slate-500">
+              <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-2">Quote</th>
                 <th className="pb-2">Customer</th>
                 <th className="pb-2">Date</th>
@@ -162,15 +162,15 @@ export default function QuotesPage() {
             </thead>
             <tbody>
               {closed.map((quote) => (
-                <tr key={quote.id} className="border-t border-slate-100">
+                <tr key={quote.id} className="border-t border-line">
                   <td className="py-2 font-medium">{quote.quoteNo}</td>
-                  <td className="py-2 text-slate-500">{nameOf(quote.contactId)}</td>
-                  <td className="py-2 text-slate-500">{displayDate(quote.quoteDate)}</td>
+                  <td className="py-2 text-ink-muted">{nameOf(quote.contactId)}</td>
+                  <td className="py-2 text-ink-muted">{displayDate(quote.quoteDate)}</td>
                   <td className="py-2 text-right">{rm(quote.subtotal)}</td>
                   <td className="py-2">
                     <Badge status={quote.status} />
                     {quote.declineReason ? (
-                      <span className="ml-2 text-xs text-slate-500">{quote.declineReason}</span>
+                      <span className="ml-2 text-xs text-ink-muted">{quote.declineReason}</span>
                     ) : null}
                   </td>
                 </tr>
@@ -219,11 +219,11 @@ function QuoteRow({
   });
 
   return (
-    <div className="rounded-xl border border-slate-200 p-4">
+    <div className="rounded-xl border border-line p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="font-semibold text-slate-900">{quote.quoteNo}</span>
+            <span className="font-semibold text-ink">{quote.quoteNo}</span>
             <Badge status={quote.status} />
             {/*
               `lapsed` is computed by the server, not stored, and it is not the
@@ -233,19 +233,19 @@ function QuoteRow({
               hiding it or pretending the status changed.
             */}
             {quote.lapsed ? (
-              <span className="text-xs font-medium text-amber-700">ran out</span>
+              <span className="text-xs font-medium text-caution">ran out</span>
             ) : null}
           </div>
-          <p className="mt-0.5 text-sm text-slate-500">
+          <p className="mt-0.5 text-sm text-ink-muted">
             {customerName} · {displayDate(quote.quoteDate)}
             {quote.validUntil ? ` · good until ${displayDate(quote.validUntil)}` : ''}
             {quote.reference ? ` · ${quote.reference}` : ''}
           </p>
-          <p className="mt-1 text-xs text-slate-500">{STATUS_MEANING[quote.status]}</p>
+          <p className="mt-1 text-xs text-ink-muted">{STATUS_MEANING[quote.status]}</p>
         </div>
         <div className="text-right">
-          <p className="text-lg font-semibold text-slate-900">{rm(quote.subtotal)}</p>
-          <p className="text-xs text-slate-500">before tax</p>
+          <p className="text-lg font-semibold text-ink">{rm(quote.subtotal)}</p>
+          <p className="text-xs text-ink-muted">before tax</p>
         </div>
       </div>
 
@@ -301,7 +301,7 @@ function QuoteRow({
       </div>
 
       {declining ? (
-        <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg bg-slate-50 p-3">
+        <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg bg-surface-sunken p-3">
           <div className="min-w-[220px] flex-1">
             {/*
               Required by the server, and worth requiring: "too expensive" and
@@ -326,7 +326,7 @@ function QuoteRow({
       ) : null}
 
       {converting ? (
-        <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg bg-emerald-50 p-3">
+        <div className="mt-3 flex flex-wrap items-end gap-3 rounded-lg bg-positive-soft p-3">
           <div className="min-w-[180px]">
             <Field label="Invoice date">
               <Input
@@ -339,7 +339,7 @@ function QuoteRow({
           <Button disabled={convert.isPending} onClick={() => convert.mutate()}>
             {convert.isPending ? 'Issuing…' : 'Issue the invoice'}
           </Button>
-          <p className="w-full text-xs text-slate-600">
+          <p className="w-full text-xs text-ink-muted">
             This posts to the books: the customer will owe the money, and the invoice
             appears under Sales. It cannot be undone — a mistake is corrected with a
             credit note.
@@ -417,7 +417,7 @@ function NewQuoteCard({
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Field label="Customer">
           <select
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-line px-3 py-2 text-sm"
             value={contactId}
             onChange={(event) => setContactId(event.target.value)}
           >
@@ -449,7 +449,7 @@ function NewQuoteCard({
 
         <Field label="Post the income to">
           <select
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-line px-3 py-2 text-sm"
             value={accountId}
             onChange={(event) => setAccountId(event.target.value)}
           >
@@ -463,7 +463,7 @@ function NewQuoteCard({
         </Field>
         <Field label="Tax code">
           <select
-            className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm"
+            className="w-full rounded-lg border border-line px-3 py-2 text-sm"
             value={taxCodeId}
             onChange={(event) => setTaxCodeId(event.target.value)}
           >
@@ -519,7 +519,7 @@ function NewQuoteCard({
           {create.isPending ? 'Saving…' : 'Save as draft'}
         </Button>
         {!ready ? (
-          <span className="text-xs text-slate-500">
+          <span className="text-xs text-ink-muted">
             Pick a customer, an income account, a tax code, and at least one priced line.
           </span>
         ) : null}

@@ -127,7 +127,7 @@ function RepairDetail() {
   return (
     <div className="mx-auto max-w-2xl space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">
           {j.jobNo} — {j.deviceDescription}
         </h1>
         <Badge status={j.status} />
@@ -148,11 +148,11 @@ function RepairDetail() {
             cannot answer. What was ticked at the counter is shown here and
             printed on the customer's slip. */}
         <div className="mt-3">
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+          <div className="text-xs font-medium uppercase tracking-wide text-ink-muted">
             Came in with the device
           </div>
           {j.accessories.length === 0 ? (
-            <p className="mt-1 text-sm text-slate-500">
+            <p className="mt-1 text-sm text-ink-muted">
               Nothing — the device was handed over on its own.
             </p>
           ) : (
@@ -160,7 +160,7 @@ function RepairDetail() {
               {j.accessories.map((item) => (
                 <li
                   key={item}
-                  className="rounded-full bg-slate-100 px-2.5 py-0.5 text-xs text-slate-700"
+                  className="rounded-full bg-surface-sunken px-2.5 py-0.5 text-xs text-ink-muted"
                 >
                   {item}
                 </li>
@@ -183,7 +183,7 @@ function RepairDetail() {
           <table className="w-full text-sm">
             <tbody>
               {j.lines.map((line) => (
-                <tr key={line.lineNo} className="border-t border-slate-100">
+                <tr key={line.lineNo} className="border-t border-line">
                   <td className="py-2">{line.description}</td>
                   <td className="py-2 text-right">{qty(line.quantity)}</td>
                   <td className="py-2 text-right font-medium">{rm(line.unitPrice)}</td>
@@ -335,7 +335,7 @@ function PrintRow({ job }: { job: Job }) {
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex gap-2">
-      <dt className="w-32 shrink-0 text-slate-500">{label}</dt>
+      <dt className="w-32 shrink-0 text-ink-muted">{label}</dt>
       <dd>{value}</dd>
     </div>
   );
@@ -366,8 +366,8 @@ function WarrantyLine({ serialNo }: { serialNo: string }) {
     <div
       className={`mt-3 rounded-lg px-3 py-2 text-sm ring-1 ring-inset ${
         covered
-          ? 'bg-emerald-50 text-emerald-900 ring-emerald-200'
-          : 'bg-slate-50 text-slate-700 ring-slate-200'
+          ? 'bg-positive-soft text-positive ring-positive/30'
+          : 'bg-surface-sunken text-ink-muted ring-line'
       }`}
     >
       {covered ? (

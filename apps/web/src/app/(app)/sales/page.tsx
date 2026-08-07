@@ -80,7 +80,7 @@ export default function SalesPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Sales &amp; invoices</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Sales &amp; invoices</h1>
 
       <CreditNotesCard />
 
@@ -99,7 +99,7 @@ export default function SalesPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-ink-muted">
               Nothing unpaid. Every invoice issued has been settled.
             </p>
           )
@@ -171,15 +171,15 @@ function InvoiceRow({
   });
 
   return (
-    <div className="rounded-md border border-slate-200 p-3">
+    <div className="rounded-md border border-line p-3">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <span className="font-medium">{invoice.invoiceNo}</span>
-          <span className="ml-2 text-sm text-slate-500">{invoice.contactName}</span>
+          <span className="ml-2 text-sm text-ink-muted">{invoice.contactName}</span>
         </div>
         <div className="text-right">
           <div className="font-semibold">{rm(invoice.amountDue)} due</div>
-          <div className={`text-xs ${overdue ? 'font-medium text-red-600' : 'text-slate-500'}`}>
+          <div className={`text-xs ${overdue ? 'font-medium text-negative' : 'text-ink-muted'}`}>
             {overdue ? 'overdue since ' : 'due '}
             {displayDate(invoice.dueDate)}
           </div>
@@ -222,13 +222,13 @@ function InvoiceRow({
       {credit.isError ? <ErrorNote error={credit.error} /> : null}
 
       {paying ? (
-        <div className="mt-2 flex flex-wrap items-end gap-2 rounded-md bg-slate-50 p-2">
+        <div className="mt-2 flex flex-wrap items-end gap-2 rounded-md bg-surface-sunken p-2">
           <Field label="Amount">
             <Input value={amount} onChange={(e) => setAmount(e.target.value)} className="w-28" />
           </Field>
           <Field label="Method">
             <select
-              className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
+              className="rounded-lg border-0 bg-surface-raised shadow-sm ring-1 ring-inset ring-line-strong px-2 py-2 text-sm"
               value={method}
               onChange={(e) => setMethod(e.target.value)}
             >
@@ -239,7 +239,7 @@ function InvoiceRow({
           </Field>
           <Field label="Into">
             <select
-              className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
+              className="rounded-lg border-0 bg-surface-raised shadow-sm ring-1 ring-inset ring-line-strong px-2 py-2 text-sm"
               value={depositAccountId}
               onChange={(e) => setDepositAccountId(e.target.value)}
             >
@@ -342,7 +342,7 @@ function NewInvoiceCard({
         <div className="flex flex-wrap gap-3">
           <Field label="Customer">
             <select
-              className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
+              className="rounded-lg border-0 bg-surface-raised shadow-sm ring-1 ring-inset ring-line-strong px-2 py-2 text-sm"
               value={contactId}
               onChange={(e) => setContactId(e.target.value)}
             >
@@ -370,7 +370,7 @@ function NewInvoiceCard({
         </div>
 
         {lines.map((line, i) => (
-          <div key={i} className="flex flex-wrap items-end gap-2 rounded-md bg-slate-50 p-2">
+          <div key={i} className="flex flex-wrap items-end gap-2 rounded-md bg-surface-sunken p-2">
             <Field label="Description">
               <Input
                 value={line.description}
@@ -395,7 +395,7 @@ function NewInvoiceCard({
             </Field>
             <Field label="Revenue account">
               <select
-                className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
+                className="rounded-lg border-0 bg-surface-raised shadow-sm ring-1 ring-inset ring-line-strong px-2 py-2 text-sm"
                 value={line.accountId}
                 onChange={(e) => setLine(i, { accountId: e.target.value })}
               >
@@ -407,7 +407,7 @@ function NewInvoiceCard({
             </Field>
             <Field label="Tax">
               <select
-                className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
+                className="rounded-lg border-0 bg-surface-raised shadow-sm ring-1 ring-inset ring-line-strong px-2 py-2 text-sm"
                 value={line.taxCodeId}
                 onChange={(e) => setLine(i, { taxCodeId: e.target.value })}
               >
@@ -428,7 +428,7 @@ function NewInvoiceCard({
         </div>
         {issue.isError ? <ErrorNote error={issue.error} /> : null}
         {issued ? (
-          <p className="text-sm text-emerald-700">
+          <p className="text-sm text-positive">
             {issued.invoiceNo} issued for {rm(issued.total)}.{' '}
             <button
               className="underline"
@@ -492,7 +492,7 @@ function CreditNotesCard() {
     <Card title="Credit notes">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-xs text-slate-500">
+          <tr className="text-left text-xs text-ink-muted">
             <th className="pb-2">Note</th>
             <th className="pb-2">Customer</th>
             <th className="pb-2">Why</th>
@@ -504,28 +504,28 @@ function CreditNotesCard() {
         </thead>
         <tbody>
           {list.map((note) => (
-            <tr key={note.id} className="border-t border-slate-100">
+            <tr key={note.id} className="border-t border-line">
               <td className="py-2">
                 <span className="font-mono text-xs">{note.creditNoteNo}</span>
-                <span className="ml-2 text-xs text-slate-500">
+                <span className="ml-2 text-xs text-ink-muted">
                   {displayDate(note.creditDate)}
                 </span>
               </td>
               <td className="py-2">{note.customer}</td>
-              <td className="py-2 text-slate-600">
+              <td className="py-2 text-ink-muted">
                 {CREDIT_REASON[note.reason] ?? note.reason}
               </td>
-              <td className="py-2 text-xs text-slate-500">
-                {note.againstInvoiceNo ?? <span className="text-slate-400">standalone</span>}
+              <td className="py-2 text-xs text-ink-muted">
+                {note.againstInvoiceNo ?? <span className="text-ink-faint">standalone</span>}
               </td>
               <td className="py-2 text-right font-medium">{rm(note.total)}</td>
               <td className="py-2 text-right">
                 {/* A credit not yet spent is money the customer can still use,
                     and it is invisible unless it is on the screen. */}
                 {note.unallocated === '0.0000' ? (
-                  <span className="text-slate-300">—</span>
+                  <span className="text-ink-faint">—</span>
                 ) : (
-                  <span className="font-medium text-emerald-700">{rm(note.unallocated)}</span>
+                  <span className="font-medium text-positive">{rm(note.unallocated)}</span>
                 )}
               </td>
               <td className="py-2 text-right">

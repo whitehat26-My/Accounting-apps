@@ -16,10 +16,10 @@ export function Button({
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'danger' }) {
   const styles = {
     primary:
-      'bg-emerald-600 text-white shadow-sm hover:bg-emerald-700 active:bg-emerald-800 disabled:bg-slate-300 disabled:shadow-none',
+      'bg-positive text-surface-raised shadow-sm hover:brightness-110 active:brightness-95 disabled:bg-line disabled:text-ink-faint disabled:shadow-none',
     ghost:
-      'bg-white text-slate-700 shadow-sm ring-1 ring-inset ring-slate-300 hover:bg-slate-50 disabled:text-slate-400',
-    danger: 'bg-red-600 text-white shadow-sm hover:bg-red-700 disabled:bg-slate-300',
+      'bg-surface-raised text-ink shadow-sm ring-1 ring-inset ring-line-strong hover:bg-surface-sunken disabled:text-ink-faint',
+    danger: 'bg-negative text-surface-raised shadow-sm hover:brightness-110 disabled:bg-line disabled:text-ink-faint',
   }[variant];
   /*
    * `active:scale` gives a press somewhere to land — 0.98 is felt in the
@@ -30,7 +30,7 @@ export function Button({
    */
   return (
     <button
-      className={`min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-[background-color,transform,box-shadow] duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-600 focus-visible:ring-offset-2 motion-safe:active:scale-[0.98] disabled:cursor-not-allowed ${styles} ${className}`}
+      className={`min-h-10 rounded-lg px-3.5 py-2 text-sm font-medium transition-[background-color,filter,transform,box-shadow] duration-150 motion-safe:active:scale-[0.98] disabled:cursor-not-allowed ${styles} ${className}`}
       {...props}
     />
   );
@@ -43,7 +43,7 @@ export function Skeleton({ rows = 3 }: { rows?: number }) {
       {Array.from({ length: rows }, (_, i) => (
         <div
           key={i}
-          className="emil-shimmer h-4 rounded bg-slate-200/80"
+          className="emil-shimmer h-4 rounded"
           style={{ width: `${[85, 60, 72, 48, 66][i % 5]}%` }}
         />
       ))}
@@ -55,7 +55,7 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
       {...props}
-      className={`w-full rounded-lg border-0 bg-white px-3 py-2 text-sm text-slate-900 shadow-sm ring-1 ring-inset ring-slate-300 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-600 ${props.className ?? ''}`}
+      className={`w-full rounded-lg border-0 bg-surface-raised px-3 py-2 text-sm text-ink shadow-sm ring-1 ring-inset ring-line-strong placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-brand ${props.className ?? ''}`}
     />
   );
 }
@@ -63,7 +63,7 @@ export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
 export function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="block">
-      <span className="mb-1 block text-xs font-medium text-slate-500">{label}</span>
+      <span className="mb-1 block text-xs font-medium text-ink-muted">{label}</span>
       {children}
     </label>
   );
@@ -86,7 +86,7 @@ export function Card({
   style?: CSSProperties;
 }) {
   return (
-    <div className={`rounded-2xl bg-white shadow-sm ring-1 ring-slate-900/5 ${className}`} style={style}>
+    <div className={`rounded-2xl bg-surface-raised shadow-sm ring-1 ring-line ${className}`} style={style}>
       {/*
         `flex-wrap` on the header for the phone: several cards put date pickers
         or a filter in `action`, and on a 390px screen a title plus two date
@@ -96,8 +96,8 @@ export function Card({
         than pushing the action out of the card.
       */}
       {title ? (
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-slate-100 px-5 py-3.5">
-          <h2 className="min-w-0 text-sm font-semibold text-slate-900">{title}</h2>
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-5 py-3.5">
+          <h2 className="min-w-0 text-sm font-semibold text-ink">{title}</h2>
           {action ?? null}
         </div>
       ) : null}
@@ -115,40 +115,65 @@ export function Card({
   );
 }
 
+/**
+ * A status chip.
+ *
+ * ---------------------------------------------------------------------------
+ * FIVE TONES, NOT TWENTY-FIVE COLOURS.
+ *
+ * This mapped each of ~25 statuses to its own literal palette
+ * (`bg-caution-soft text-caution ring-caution/30` …), which meant twenty-five
+ * places to get night mode wrong and no way to see that DECLINED and CANCELLED
+ * were meant to read the same. Statuses do not have twenty-five meanings; they
+ * have five:
+ *
+ *   neutral   nothing is being asked of anybody yet
+ *   waiting   the ball is in someone else's court
+ *   working   in hand, in this shop, right now
+ *   done      finished well
+ *   stopped   finished badly, or refused
+ *
+ * The tone carries the meaning and the token carries the theme, so a status
+ * added later picks a tone rather than inventing a colour.
+ * ---------------------------------------------------------------------------
+ */
+type Tone = 'neutral' | 'waiting' | 'working' | 'done' | 'stopped';
+
+const TONE: Record<Tone, string> = {
+  neutral: 'bg-surface-sunken text-ink-muted ring-line',
+  waiting: 'bg-caution-soft text-caution ring-caution/30',
+  working: 'bg-brand/10 text-brand ring-brand/30',
+  done: 'bg-positive-soft text-positive ring-positive/30',
+  stopped: 'bg-negative-soft text-negative ring-negative/30',
+};
+
+const STATUS_TONE: Record<string, Tone> = {
+  // Repairs
+  RECEIVED: 'neutral', QUOTED: 'waiting', APPROVED: 'working',
+  IN_PROGRESS: 'working', READY: 'done', COLLECTED: 'done',
+  DECLINED: 'stopped', CANCELLED: 'stopped',
+  // Invoices
+  ISSUED: 'waiting', PART_PAID: 'waiting', PAID: 'done',
+  // Periods and books
+  ACTIVE: 'done', OPEN: 'done', CLOSED: 'waiting', LOCKED: 'neutral',
+  // Quotes. DRAFT is neutral because a draft commits nobody; SENT waits on
+  // someone else; EXPIRED stopped without anybody deciding.
+  DRAFT: 'neutral', SENT: 'waiting', ACCEPTED: 'done',
+  EXPIRED: 'neutral', INVOICED: 'working',
+  // Audit
+  MANUAL: 'working', REVERSAL: 'stopped',
+  CREATE: 'done', UPDATE: 'working', DELETE: 'stopped',
+};
+
 export function Badge({ status }: { status: string }) {
-  const tone =
-    {
-      RECEIVED: 'bg-slate-100 text-slate-700 ring-slate-200',
-      QUOTED: 'bg-amber-50 text-amber-800 ring-amber-200',
-      APPROVED: 'bg-sky-50 text-sky-800 ring-sky-200',
-      IN_PROGRESS: 'bg-sky-50 text-sky-800 ring-sky-200',
-      READY: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
-      COLLECTED: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
-      DECLINED: 'bg-red-50 text-red-700 ring-red-200',
-      CANCELLED: 'bg-red-50 text-red-700 ring-red-200',
-      PAID: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
-      ISSUED: 'bg-amber-50 text-amber-800 ring-amber-200',
-      PART_PAID: 'bg-amber-50 text-amber-800 ring-amber-200',
-      ACTIVE: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
-      OPEN: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
-      CLOSED: 'bg-amber-50 text-amber-800 ring-amber-200',
-      LOCKED: 'bg-slate-800 text-white ring-slate-800',
-      MANUAL: 'bg-sky-50 text-sky-800 ring-sky-200',
-      // Quote statuses. DRAFT is grey because a draft is not yet a commitment
-      // to anybody; SENT is amber because it is waiting on someone else.
-      DRAFT: 'bg-slate-100 text-slate-700 ring-slate-200',
-      SENT: 'bg-amber-50 text-amber-800 ring-amber-200',
-      ACCEPTED: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
-      EXPIRED: 'bg-slate-200 text-slate-600 ring-slate-300',
-      INVOICED: 'bg-sky-50 text-sky-800 ring-sky-200',
-      REVERSAL: 'bg-red-50 text-red-700 ring-red-200',
-      CREATE: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
-      UPDATE: 'bg-sky-50 text-sky-800 ring-sky-200',
-      DELETE: 'bg-red-50 text-red-700 ring-red-200',
-    }[status] ?? 'bg-slate-100 text-slate-700 ring-slate-200';
   return (
     <span
-      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${tone}`}
+      // `whitespace-nowrap`: a status is one word to the reader even when it is
+      // two on the page. Without it "IN PROGRESS" breaks across two lines and
+      // spills out of its own pill the moment the column is narrow.
+      className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
+        TONE[STATUS_TONE[status] ?? 'neutral']
+      }`}
     >
       {status.replace(/_/g, ' ')}
     </span>
@@ -159,7 +184,7 @@ export function ErrorNote({ error }: { error: unknown }) {
   if (!error) return null;
   const message = error instanceof Error ? error.message : String(error);
   return (
-    <p className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-800 ring-1 ring-inset ring-red-200">
+    <p className="rounded-lg bg-negative-soft px-3 py-2 text-sm text-negative ring-1 ring-inset ring-negative/30">
       {message}
     </p>
   );

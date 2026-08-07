@@ -7,6 +7,7 @@ import { apiBlobUrl, clearSession, loadSession, type Session } from '@/lib/api';
 import { can, ROLE_LABELS, useMe, type Me } from '@/lib/me';
 import { Icon } from '@/components/icons';
 import { Assistant } from '@/components/assistant';
+import { ThemeToggle } from '@/components/theme';
 // Static import so the demo's GitHub Pages base path is baked in at build.
 import mark from '@/brand/mark.png';
 
@@ -138,9 +139,15 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         it are white — a lighter panel here would cost contrast, which is the
         one thing the glass is not allowed to do.
       */}
+      {/*
+        `ring-rail-line`, not `ring-line`: at night the page itself is dark and
+        the rail can no longer separate from it by brightness, so the edge has
+        to be a LIT one. `--line` is a hairline drawn on a pale surface and
+        goes dark with the theme — exactly backwards for this one border.
+      */}
       <aside
-        className="flex w-16 flex-col bg-slate-950 text-slate-300 ring-1 ring-white/5 md:w-60
-                   supports-[backdrop-filter]:bg-slate-950/85 supports-[backdrop-filter]:backdrop-blur-xl"
+        className="flex w-16 flex-col bg-rail text-rail-ink ring-1 ring-rail-line md:w-60
+                   supports-[backdrop-filter]:bg-rail/90 supports-[backdrop-filter]:backdrop-blur-xl"
       >
         {/*
           THE ORGANISATION LEADS, NOT THE PRODUCT.
@@ -153,10 +160,10 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         <div className="flex items-center justify-center gap-3 px-2 pb-5 pt-6 md:justify-start md:px-5">
           <OrgMark name={session.organisationName} />
           <div className="hidden min-w-0 md:block">
-            <div className="truncate text-sm font-semibold text-white">
+            <div className="truncate text-sm font-semibold text-rail-ink-strong">
               {session.organisationName || 'Your organisation'}
             </div>
-            <div className="text-xs text-slate-400">
+            <div className="text-xs text-rail-ink/70">
               {me.data ? (ROLE_LABELS[me.data.role] ?? me.data.role) : ' '}
             </div>
           </div>
@@ -166,7 +173,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           {visibleSections.map((section) => (
             <div key={section.label ?? 'root'}>
               {section.label ? (
-                <div className="hidden px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-500 md:block">
+                <div className="hidden px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-rail-ink/50 md:block">
                   {section.label}
                 </div>
               ) : null}
@@ -178,16 +185,22 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                       key={item.href}
                       href={item.href}
                       title={item.label}
+                      // `rail-accent`, NOT `positive`. The rail is dark in both
+                      // themes, so its accent must be too — and `--positive` is
+                      // a DARK green by day, which put the selected page in
+                      // near-black on near-black. Caught by screenshotting the
+                      // light theme, not by reading the diff: at night the very
+                      // same class looked perfect.
                       className={`relative flex items-center justify-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13px] transition-colors md:justify-start ${
                         active
-                          ? 'bg-emerald-500/10 font-medium text-emerald-300'
-                          : 'text-slate-300 hover:bg-white/5 hover:text-white'
+                          ? 'bg-rail-accent/15 font-medium text-rail-accent'
+                          : 'text-rail-ink hover:bg-rail-ink/10 hover:text-rail-ink-strong'
                       }`}
                     >
                       {active ? (
-                        <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-emerald-400" />
+                        <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-rail-accent" />
                       ) : null}
-                      <Icon name={item.icon} className={active ? 'text-emerald-400' : 'text-slate-500'} />
+                      <Icon name={item.icon} className={active ? 'text-rail-accent' : 'text-rail-ink/60'} />
                       <span className="hidden md:inline">{item.label}</span>
                     </Link>
                   );
@@ -197,15 +210,21 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           ))}
         </nav>
 
-        <div className="hidden border-t border-white/10 px-5 py-4 md:block">
+        <div className="hidden border-t border-rail-line px-5 py-4 md:block">
+          {/* Brightness sits above the sign-out, not in Settings: the shop
+              turns the lights down at dusk, and a setting you reach for daily
+              does not belong three clicks away behind a tax-rate screen. */}
+          <div className="mb-3">
+            <ThemeToggle />
+          </div>
           {/* The product's name, where it belongs on somebody else's screen:
               small, at the bottom, beside the way out. */}
           <div className="mb-2 flex items-center gap-2">
             <img src={mark.src} alt="" className="h-4 w-4 shrink-0 opacity-60" />
-            <span className="truncate text-[11px] text-slate-500">{APP_NAME}</span>
+            <span className="truncate text-[11px] text-rail-ink/50">{APP_NAME}</span>
           </div>
           <button
-            className="text-xs text-slate-500 transition-colors hover:text-white"
+            className="text-xs text-rail-ink/60 transition-colors hover:text-rail-ink-strong"
             onClick={() => {
               clearSession();
               router.push('/login');
@@ -222,7 +241,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         blur is invisible and the translucency just looks like a lighter colour.
         Kept very low contrast so it never competes with the cards on top.
       */}
-      <main className="min-w-0 flex-1 bg-slate-100/70 bg-gradient-to-br from-sky-50 via-slate-100/70 to-emerald-50/40 p-4 md:p-6 lg:p-8">
+      <main className="min-w-0 flex-1 bg-surface p-4 md:p-6 lg:p-8">
         {/*
           `key={pathname}` remounts the wrapper on navigation so each screen
           arrives with the same short rise the sign-in card uses. The nav rail
@@ -267,19 +286,19 @@ function Guarded({
   if (me === undefined || can(me, needs)) return <>{children}</>;
 
   return (
-    <div className="mx-auto max-w-lg rounded-2xl bg-white p-8 text-center shadow-sm ring-1 ring-slate-900/5">
-      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-slate-100">
-        <Icon name="settings" className="text-slate-400" />
+    <div className="mx-auto max-w-lg rounded-2xl bg-surface-raised p-8 text-center shadow-sm ring-1 ring-line">
+      <div className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-surface-sunken">
+        <Icon name="settings" className="text-ink-faint" />
       </div>
-      <h1 className="mt-4 text-lg font-semibold text-slate-900">Not part of your work here</h1>
+      <h1 className="mt-4 text-lg font-semibold text-ink">Not part of your work here</h1>
       {/*
         Names the role rather than the permission. "You need payroll.read" is
         a message written for whoever built the app; "signed in as Technician"
         is one the person can act on — they know who to ask.
       */}
-      <p className="mt-2 text-sm text-slate-600">
+      <p className="mt-2 text-sm text-ink-muted">
         You are signed in as{' '}
-        <span className="font-medium text-slate-900">
+        <span className="font-medium text-ink">
           {me ? (ROLE_LABELS[me.role] ?? me.role) : 'a member'}
         </span>
         , and this screen is not part of that role. If you need it, the shop owner can
@@ -287,7 +306,7 @@ function Guarded({
       </p>
       <Link
         href="/"
-        className="mt-5 inline-flex rounded-xl bg-slate-900 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-slate-800"
+        className="mt-5 inline-flex rounded-xl bg-brand px-4 py-2 text-sm font-medium text-surface-raised transition-[filter] hover:brightness-110"
       >
         Back to Today
       </Link>
@@ -342,12 +361,12 @@ function OrgMark({ name }: { name: string | undefined }) {
     .join('');
 
   return (
-    <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-white shadow-lg shadow-black/40">
+    <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-plate shadow-lg shadow-black/40">
       {url ? (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={url} alt={name} className="h-full w-full object-contain p-1" />
       ) : (
-        <span className="text-[11px] font-bold tracking-tight text-slate-700">
+        <span className="text-[11px] font-bold tracking-tight text-plate-ink">
           {initials || '·'}
         </span>
       )}

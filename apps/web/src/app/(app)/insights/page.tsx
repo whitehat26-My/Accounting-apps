@@ -58,7 +58,7 @@ export default function InsightsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Insights</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Insights</h1>
 
       <Card title="Daily takings — last 14 days">
         {daily.data ? (
@@ -100,7 +100,7 @@ export default function InsightsPage() {
                 ]}
               />
               {f.overdueReceivables.count > 0 ? (
-                <p className="text-xs text-amber-800">
+                <p className="text-xs text-caution">
                   Plus {rm(f.overdueReceivables.total)} overdue — timing unknown, chase it.
                 </p>
               ) : null}
@@ -122,7 +122,7 @@ export default function InsightsPage() {
               }))}
             />
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-ink-muted">
               Appears once the first weekly digest is stored.
             </p>
           )

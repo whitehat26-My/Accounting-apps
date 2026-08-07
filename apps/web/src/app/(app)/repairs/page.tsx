@@ -79,17 +79,17 @@ export default function RepairsPage() {
   return (
     <div className="grid grid-cols-2 gap-4">
       <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Repairs</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Repairs</h1>
         <Card title="On the bench">
           {open.length === 0 ? (
-            <p className="text-sm text-slate-500">Nothing in the workshop.</p>
+            <p className="text-sm text-ink-muted">Nothing in the workshop.</p>
           ) : (
             <div className="space-y-2">
               {open.map((job) => (
                 <Link
                   key={job.id}
                   href={`/repairs/job?id=${job.id}`}
-                  className="block rounded-md border border-slate-100 p-3 hover:border-emerald-500"
+                  className="block rounded-md border border-line p-3 hover:border-positive"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">
@@ -97,7 +97,7 @@ export default function RepairsPage() {
                     </span>
                     <Badge status={job.status} />
                   </div>
-                  <div className="mt-1 text-xs text-slate-500">
+                  <div className="mt-1 text-xs text-ink-muted">
                     {displayDate(job.receivedOn)} · {job.reportedFault}
                   </div>
                 </Link>
@@ -112,9 +112,9 @@ export default function RepairsPage() {
                 <Link
                   key={job.id}
                   href={`/repairs/job?id=${job.id}`}
-                  className="flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-slate-50"
+                  className="flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-surface-sunken"
                 >
-                  <span className="text-slate-600">
+                  <span className="text-ink-muted">
                     {job.jobNo} — {job.deviceDescription}
                   </span>
                   <Badge status={job.status} />
@@ -127,7 +127,7 @@ export default function RepairsPage() {
       </div>
 
       <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">&nbsp;</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">&nbsp;</h1>
         <Card title="Take a device in">
           <form
             className="space-y-3"
@@ -228,7 +228,7 @@ function AccessoryPicker({
 
   return (
     <div>
-      <div className="text-xs font-medium text-slate-600">Came in with it</div>
+      <div className="text-xs font-medium text-ink-muted">Came in with it</div>
       <div className="mt-1.5 flex flex-wrap gap-1.5">
         {COMMON_ACCESSORIES.map((item) => (
           <button
@@ -238,8 +238,8 @@ function AccessoryPicker({
             aria-pressed={chosen.includes(item)}
             className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
               chosen.includes(item)
-                ? 'bg-slate-900 text-white'
-                : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                ? 'bg-ink text-surface'
+                : 'bg-surface-sunken text-ink-muted hover:bg-line'
             }`}
           >
             {item}
@@ -251,7 +251,7 @@ function AccessoryPicker({
             type="button"
             onClick={() => toggle(item)}
             aria-pressed
-            className="rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white"
+            className="rounded-full bg-ink px-3 py-1 text-xs font-medium text-surface"
           >
             {item} ✕
           </button>
@@ -276,7 +276,7 @@ function AccessoryPicker({
           Add
         </Button>
       </div>
-      <p className="mt-1 text-xs text-slate-500">
+      <p className="mt-1 text-xs text-ink-muted">
         Printed on the receipt the customer takes away — it is what settles “I gave you the
         charger”.
       </p>
@@ -324,7 +324,7 @@ function BenchProfitCard() {
     <Card title="The bench, last 30 days">
       <table className="w-full text-sm">
         <thead>
-          <tr className="text-left text-xs text-slate-500">
+          <tr className="text-left text-xs text-ink-muted">
             <th className="pb-2">Job</th>
             <th className="pb-2 text-right">Billed</th>
             <th className="pb-2 text-right">Parts</th>
@@ -333,22 +333,22 @@ function BenchProfitCard() {
         </thead>
         <tbody>
           {data.jobs.slice(0, 8).map((job) => (
-            <tr key={job.jobNo} className="border-t border-slate-100">
+            <tr key={job.jobNo} className="border-t border-line">
               <td className="py-2">
-                <span className="text-xs text-slate-500">{job.jobNo}</span> {job.device}
+                <span className="text-xs text-ink-muted">{job.jobNo}</span> {job.device}
               </td>
               <td className="py-2 text-right">{rm(job.revenue)}</td>
               <td className="py-2 text-right">{rm(job.partsCost)}</td>
               <td
                 className={`py-2 text-right font-medium ${
-                  job.margin.startsWith('-') ? 'text-red-600' : ''
+                  job.margin.startsWith('-') ? 'text-negative' : ''
                 }`}
               >
                 {rm(job.margin)}
               </td>
             </tr>
           ))}
-          <tr className="border-t-2 border-slate-200 font-medium">
+          <tr className="border-t-2 border-line font-medium">
             <td className="py-2">All collected jobs</td>
             <td className="py-2 text-right">{rm(data.totals.revenue)}</td>
             <td className="py-2 text-right">{rm(data.totals.partsCost)}</td>
@@ -356,7 +356,7 @@ function BenchProfitCard() {
           </tr>
         </tbody>
       </table>
-      <p className="mt-2 text-xs text-slate-500">
+      <p className="mt-2 text-xs text-ink-muted">
         Ex-tax billing minus parts at their real weighted-average cost. What is left pays
         for the technician's time — the wage itself lives in Payroll.
       </p>

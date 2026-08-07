@@ -289,7 +289,7 @@ export function Assistant() {
       <button
         aria-label="Open assistant"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-gradient-to-br from-emerald-400 to-emerald-600 p-3 text-slate-950 shadow-lg shadow-emerald-500/30 transition-transform hover:scale-105"
+        className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-positive p-3 text-surface-raised shadow-lg shadow-positive/30 transition-transform hover:scale-105"
       >
         <SparkleIcon />
       </button>
@@ -303,17 +303,17 @@ export function Assistant() {
   return (
     <div
       className="fixed bottom-5 right-5 z-40 flex max-h-[78vh] w-[min(26rem,calc(100vw-2.5rem))] flex-col
-                 overflow-hidden rounded-2xl bg-white shadow-2xl ring-1 ring-slate-900/10
-                 supports-[backdrop-filter]:bg-white/80 supports-[backdrop-filter]:backdrop-blur-xl"
+                 overflow-hidden rounded-2xl bg-surface-raised shadow-2xl ring-1 ring-line
+                 supports-[backdrop-filter]:bg-surface-raised/80 supports-[backdrop-filter]:backdrop-blur-xl"
     >
-      <div className="flex items-center justify-between gap-3 bg-slate-950 px-4 py-3 text-white">
+      <div className="flex items-center justify-between gap-3 bg-rail px-4 py-3 text-rail-ink-strong">
         <div className="flex items-center gap-2.5">
-          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-gradient-to-br from-emerald-400 to-emerald-600 p-1.5 text-slate-950">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg bg-rail-accent p-1.5 text-rail">
             <SparkleIcon />
           </span>
           <div>
             <div className="text-sm font-semibold leading-tight">Assistant</div>
-            <div className="text-[11px] text-slate-400">
+            <div className="text-[11px] text-rail-ink-dim">
               {status.data && !status.data.configured
                 ? 'Guides only — model not connected'
                 : help.title}
@@ -323,7 +323,7 @@ export function Assistant() {
         <button
           aria-label="Close assistant"
           onClick={() => setOpen(false)}
-          className="rounded-md p-1 text-slate-400 transition-colors hover:text-white"
+          className="rounded-md p-1 text-rail-ink-dim transition-colors hover:text-rail-ink-strong"
         >
           <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
             <path d="M4 4l8 8m0-8-8 8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
@@ -332,14 +332,14 @@ export function Assistant() {
       </div>
 
       <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto px-4 py-3">
-        <details className="rounded-xl bg-slate-50 px-3.5 py-2.5 ring-1 ring-inset ring-slate-200" open={thread.length === 0}>
-          <summary className="cursor-pointer select-none text-xs font-semibold text-slate-700">
+        <details className="rounded-xl bg-surface-sunken px-3.5 py-2.5 ring-1 ring-inset ring-line" open={thread.length === 0}>
+          <summary className="cursor-pointer select-none text-xs font-semibold text-ink-muted">
             How to use {help.title}
           </summary>
-          <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-slate-600">
+          <ul className="mt-2 space-y-1.5 text-xs leading-relaxed text-ink-muted">
             {help.steps.map((step) => (
               <li key={step} className="flex gap-2">
-                <span className="mt-0.5 text-emerald-600">•</span>
+                <span className="mt-0.5 text-positive">•</span>
                 <span>{step}</span>
               </li>
             ))}
@@ -347,7 +347,7 @@ export function Assistant() {
         </details>
 
         {status.data && !status.data.configured ? (
-          <p className="rounded-xl bg-amber-50 px-3.5 py-2.5 text-xs leading-relaxed text-amber-900 ring-1 ring-inset ring-amber-200">
+          <p className="rounded-xl bg-caution-soft px-3.5 py-2.5 text-xs leading-relaxed text-caution ring-1 ring-inset ring-caution/30">
             The chat needs the server connected to the model — set ANTHROPIC_API_KEY there and
             restart. The guides above work regardless.
           </p>
@@ -359,7 +359,7 @@ export function Assistant() {
               <button
                 key={prompt}
                 onClick={() => void send(prompt)}
-                className="rounded-full bg-white px-3 py-1.5 text-xs text-slate-600 ring-1 ring-inset ring-slate-300 transition-colors hover:bg-emerald-50 hover:text-emerald-800 hover:ring-emerald-300"
+                className="rounded-full bg-surface-raised px-3 py-1.5 text-xs text-ink-muted ring-1 ring-inset ring-line-strong transition-colors hover:bg-positive-soft hover:text-positive hover:ring-positive/40"
               >
                 {prompt}
               </button>
@@ -372,8 +372,8 @@ export function Assistant() {
             <div
               className={
                 entry.role === 'user'
-                  ? 'ml-8 rounded-2xl rounded-br-md bg-emerald-600 px-3.5 py-2 text-sm text-white'
-                  : 'mr-4 whitespace-pre-wrap rounded-2xl rounded-bl-md bg-slate-100 px-3.5 py-2 text-sm text-slate-800'
+                  ? 'ml-8 rounded-2xl rounded-br-md bg-positive px-3.5 py-2 text-sm text-surface-raised'
+                  : 'mr-4 whitespace-pre-wrap rounded-2xl rounded-bl-md bg-surface-sunken px-3.5 py-2 text-sm text-ink'
               }
             >
               {entry.content}
@@ -381,7 +381,7 @@ export function Assistant() {
             {entry.actions?.map((action) => (
               <div
                 key={action.id}
-                className="mr-4 rounded-xl bg-emerald-50 px-3.5 py-2 text-xs text-emerald-900 ring-1 ring-inset ring-emerald-200"
+                className="mr-4 rounded-xl bg-positive-soft px-3.5 py-2 text-xs text-positive ring-1 ring-inset ring-positive/30"
               >
                 ✓ {action.label}
               </div>
@@ -391,12 +391,12 @@ export function Assistant() {
         ))}
 
         {busy ? (
-          <div className="mr-4 w-fit rounded-2xl rounded-bl-md bg-slate-100 px-3.5 py-2.5">
+          <div className="mr-4 w-fit rounded-2xl rounded-bl-md bg-surface-sunken px-3.5 py-2.5">
             <span className="inline-flex gap-1">
               {[0, 1, 2].map((d) => (
                 <span
                   key={d}
-                  className="h-1.5 w-1.5 animate-bounce rounded-full bg-slate-400"
+                  className="h-1.5 w-1.5 animate-bounce rounded-full bg-ink-faint"
                   style={{ animationDelay: `${d * 150}ms` }}
                 />
               ))}
@@ -405,14 +405,14 @@ export function Assistant() {
         ) : null}
 
         {error ? (
-          <p className="rounded-xl bg-red-50 px-3.5 py-2 text-xs text-red-800 ring-1 ring-inset ring-red-200">
+          <p className="rounded-xl bg-negative-soft px-3.5 py-2 text-xs text-negative ring-1 ring-inset ring-negative/30">
             {error}
           </p>
         ) : null}
       </div>
 
       <form
-        className="flex items-center gap-2 border-t border-slate-100 px-3 py-2.5"
+        className="flex items-center gap-2 border-t border-line px-3 py-2.5"
         onSubmit={(e) => {
           e.preventDefault();
           void send(input);
@@ -422,13 +422,13 @@ export function Assistant() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder='Ask, or say "add item…", "invoice…"'
-          className="min-w-0 flex-1 rounded-full bg-slate-100 px-4 py-2 text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-600"
+          className="min-w-0 flex-1 rounded-full bg-surface-sunken px-4 py-2 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-positive"
         />
         <button
           type="submit"
           disabled={busy || input.trim().length === 0}
           aria-label="Send"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white transition-colors hover:bg-emerald-700 disabled:bg-slate-300"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-positive text-surface-raised transition-[filter] hover:brightness-110 disabled:bg-line-strong"
         >
           <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
             <path d="M2.5 8h10M9 4.5 13 8l-4 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
@@ -482,35 +482,35 @@ function DraftCard({ draft }: { draft: Draft }) {
   }
 
   return (
-    <div className="mr-4 overflow-hidden rounded-xl ring-1 ring-inset ring-slate-200">
-      <div className="flex items-center justify-between bg-slate-50 px-3.5 py-2">
-        <span className="text-xs font-semibold text-slate-700">{draft.title}</span>
-        <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-semibold text-amber-900">
+    <div className="mr-4 overflow-hidden rounded-xl ring-1 ring-inset ring-line">
+      <div className="flex items-center justify-between bg-surface-sunken px-3.5 py-2">
+        <span className="text-xs font-semibold text-ink-muted">{draft.title}</span>
+        <span className="rounded-full bg-caution-soft px-2 py-0.5 text-[10px] font-semibold text-caution">
           {state === 'done' ? 'DONE' : 'DRAFT'}
         </span>
       </div>
-      <div className="space-y-1 px-3.5 py-2 text-xs text-slate-600">
+      <div className="space-y-1 px-3.5 py-2 text-xs text-ink-muted">
         {draft.lines.map((line, i) => (
           <div key={i} className="flex justify-between gap-3">
             <span>{line.label}</span>
-            <span className="font-medium text-slate-800">{rm(line.amount)}</span>
+            <span className="font-medium text-ink">{rm(line.amount)}</span>
           </div>
         ))}
       </div>
       <div className="px-3.5 pb-3">
         {state === 'done' ? (
-          <p className="text-xs font-medium text-emerald-700">✓ {note}</p>
+          <p className="text-xs font-medium text-positive">✓ {note}</p>
         ) : (
           <>
             <Button className="w-full" disabled={state === 'saving'} onClick={() => void confirm()}>
               {state === 'saving' ? 'Saving…' : 'Confirm & save'}
             </Button>
-            <p className="mt-1.5 text-[10px] text-slate-400">
+            <p className="mt-1.5 text-[10px] text-ink-faint">
               Nothing is recorded until you confirm. Review the lines first.
             </p>
           </>
         )}
-        {error ? <p className="mt-1.5 text-xs text-red-700">{error}</p> : null}
+        {error ? <p className="mt-1.5 text-xs text-negative">{error}</p> : null}
       </div>
     </div>
   );

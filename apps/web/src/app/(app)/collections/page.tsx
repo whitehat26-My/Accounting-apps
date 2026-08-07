@@ -68,7 +68,7 @@ export default function CollectionsPage() {
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Collections</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Collections</h1>
         {chases ? (
           <Button onClick={() => run.mutate()} disabled={run.isPending}>
             {run.isPending ? 'Running…' : 'Run follow-up now'}
@@ -86,7 +86,7 @@ export default function CollectionsPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-ink-muted">
               Queue is empty. Reminders appear here when an invoice crosses day 3, 7 or 14
               overdue — or press “Run follow-up now”.
             </p>
@@ -101,7 +101,7 @@ export default function CollectionsPage() {
           overdue.data.overdue.length > 0 ? (
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-slate-500">
+                <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-2">Invoice</th>
                   <th className="pb-2">Customer</th>
                   <th className="pb-2 text-right">Days late</th>
@@ -111,12 +111,12 @@ export default function CollectionsPage() {
               </thead>
               <tbody>
                 {overdue.data.overdue.map((row) => (
-                  <tr key={row.invoiceId} className="border-t border-slate-100">
+                  <tr key={row.invoiceId} className="border-t border-line">
                     <td className="py-2 font-medium">{row.invoiceNo}</td>
-                    <td className="py-2 text-slate-600">{row.contactName}</td>
-                    <td className="py-2 text-right text-red-600">{row.daysOverdue}</td>
+                    <td className="py-2 text-ink-muted">{row.contactName}</td>
+                    <td className="py-2 text-right text-negative">{row.daysOverdue}</td>
                     <td className="py-2 text-right font-medium">{rm(row.amountDue)}</td>
-                    <td className="py-2 text-right text-xs text-slate-500">
+                    <td className="py-2 text-right text-xs text-ink-muted">
                       {TIER_LABELS[row.highestTierRaised] ?? '—'}
                       {row.queuedReminders > 0 ? ' · 1 queued' : ''}
                     </td>
@@ -125,7 +125,7 @@ export default function CollectionsPage() {
               </tbody>
             </table>
           ) : (
-            <p className="text-sm text-slate-500">
+            <p className="text-sm text-ink-muted">
               Nobody is overdue. This page being boring is the goal.
             </p>
           )
@@ -165,7 +165,7 @@ function ReminderRow({
   });
 
   const tone =
-    reminder.tone === 'OWNER_ALERT' ? 'bg-red-50' : reminder.tone === 'FIRM' ? 'bg-amber-50' : 'bg-slate-50';
+    reminder.tone === 'OWNER_ALERT' ? 'bg-negative-soft' : reminder.tone === 'FIRM' ? 'bg-caution-soft' : 'bg-surface-sunken';
 
   return (
     <div className={`rounded-md p-3 ${tone}`}>
@@ -175,7 +175,7 @@ function ReminderRow({
         </span>
         <span className="text-sm font-semibold">{rm(reminder.amountDue)}</span>
       </div>
-      <p className="mt-1 whitespace-pre-wrap text-sm text-slate-700">{reminder.message}</p>
+      <p className="mt-1 whitespace-pre-wrap text-sm text-ink-muted">{reminder.message}</p>
       {canSend ? (
         <div className="mt-2 flex flex-wrap gap-2">
           <Button

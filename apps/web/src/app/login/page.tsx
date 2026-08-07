@@ -140,10 +140,10 @@ export default function LoginPage() {
             <button
               key={org.tenantId}
               onClick={() => void enter(org.tenantId, org.tenantName, refreshToken)}
-              className="flex w-full items-center justify-between gap-3 rounded-xl bg-white px-4 py-3.5 text-left shadow-lg shadow-black/10 ring-1 ring-slate-900/5 transition-colors hover:bg-emerald-50 hover:ring-emerald-200"
+              className="flex w-full items-center justify-between gap-3 rounded-xl bg-surface-raised px-4 py-3.5 text-left shadow-lg shadow-black/10 ring-1 ring-line transition-colors hover:bg-positive-soft hover:ring-positive/30"
             >
-              <span className="font-medium text-slate-900">{org.tenantName}</span>
-              <span className="text-xs text-slate-500">{org.role}</span>
+              <span className="font-medium text-ink">{org.tenantName}</span>
+              <span className="text-xs text-ink-muted">{org.role}</span>
             </button>
           ))}
         </div>
@@ -169,8 +169,8 @@ export default function LoginPage() {
         field never fight the photograph behind them.
       */}
       <div
-        className="rounded-2xl bg-white p-6 shadow-2xl shadow-black/25 ring-1 ring-white/40
-                   supports-[backdrop-filter]:bg-white/88 supports-[backdrop-filter]:backdrop-blur-2xl"
+        className="rounded-2xl bg-surface-raised p-6 shadow-2xl shadow-black/25 ring-1 ring-line
+                   supports-[backdrop-filter]:bg-surface-raised/88 supports-[backdrop-filter]:backdrop-blur-2xl"
       >
         <form
           className="space-y-4"
@@ -236,7 +236,7 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={() => setShowPassword(!showPassword)}
-                className="absolute inset-y-0 right-0 px-3 text-xs font-medium text-slate-500 transition-colors hover:text-slate-800"
+                className="absolute inset-y-0 right-0 px-3 text-xs font-medium text-ink-muted transition-colors hover:text-ink"
               >
                 {showPassword ? 'Hide' : 'Show'}
               </button>
@@ -244,7 +244,7 @@ export default function LoginPage() {
           </Field>
 
           {mode === 'register' ? (
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-ink-faint">
               At least 12 characters. A short phrase you will remember beats a clever
               word you will not.
             </p>
@@ -258,10 +258,10 @@ export default function LoginPage() {
         </form>
       </div>
 
-      <p className="text-center text-sm text-slate-300">
+      <p className="text-center text-sm text-rail-ink">
         {mode === 'login' ? 'New here?' : 'Already registered?'}{' '}
         <button
-          className="font-medium text-emerald-300 underline-offset-2 hover:underline"
+          className="font-medium text-rail-accent underline-offset-2 hover:underline"
           onClick={() => {
             setMode(mode === 'login' ? 'register' : 'login');
             setError(null);
@@ -279,8 +279,8 @@ export default function LoginPage() {
 function Heading({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="space-y-1">
-      <h1 className="text-2xl font-semibold tracking-tight text-white drop-shadow-sm">{title}</h1>
-      <p className="text-sm text-slate-300">{subtitle}</p>
+      <h1 className="text-2xl font-semibold tracking-tight text-rail-ink-strong drop-shadow-sm">{title}</h1>
+      <p className="text-sm text-rail-ink">{subtitle}</p>
     </div>
   );
 }
@@ -340,18 +340,18 @@ function AuthShell({ children }: { children: ReactNode }) {
       <div className="relative flex min-h-screen flex-col lg:flex-row">
         <aside className="hidden w-[46%] max-w-2xl flex-col justify-between p-12 lg:flex">
           <div className="emil-rise flex items-center gap-3.5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white p-1.5 shadow-lg shadow-black/40">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-plate p-1.5 shadow-lg shadow-black/40">
               <img src={mark.src} alt="" className="h-full w-full object-contain" />
             </div>
             <div>
-              <div className="text-base font-semibold leading-tight text-white">Shah G Tech</div>
-              <div className="text-xs text-slate-300">shop &amp; books</div>
+              <div className="text-base font-semibold leading-tight text-rail-ink-strong">Shah G Tech</div>
+              <div className="text-xs text-rail-ink">shop &amp; books</div>
             </div>
           </div>
 
           <div className="space-y-8">
             <h2
-              className="emil-rise max-w-md text-3xl font-semibold leading-snug tracking-tight text-white"
+              className="emil-rise max-w-md text-3xl font-semibold leading-snug tracking-tight text-rail-ink-strong"
               style={{ animationDelay: '80ms' }}
             >
               The counter, the workshop and the accounts — one system, one set of numbers.
@@ -360,10 +360,10 @@ function AuthShell({ children }: { children: ReactNode }) {
               {PROMISES.map((promise, i) => (
                 <li
                   key={promise.icon}
-                  className="emil-rise flex items-start gap-3 text-sm text-slate-200"
+                  className="emil-rise flex items-start gap-3 text-sm text-rail-ink-strong"
                   style={{ animationDelay: `${160 + i * 90}ms` }}
                 >
-                  <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-emerald-400/15 text-emerald-300 ring-1 ring-inset ring-emerald-400/20">
+                  <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-rail-accent/15 text-rail-accent ring-1 ring-inset ring-rail-accent/20">
                     <Icon name={promise.icon} />
                   </span>
                   <span className="max-w-sm leading-relaxed">{promise.text}</span>
@@ -373,7 +373,7 @@ function AuthShell({ children }: { children: ReactNode }) {
           </div>
 
           <p
-            className="emil-rise max-w-sm text-xs leading-relaxed text-slate-400"
+            className="emil-rise max-w-sm text-xs leading-relaxed text-rail-ink-dim"
             style={{ animationDelay: '440ms' }}
           >
             Ringgit Malaysia, Kuala Lumpur time. The ledger is append-only — a mistake is
@@ -388,7 +388,7 @@ function AuthShell({ children }: { children: ReactNode }) {
           >
             {/* The brand panel is hidden below lg, so the mark comes along here. */}
             <div className="mb-2 flex items-center justify-center gap-3 lg:hidden">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white p-1.5 shadow-lg shadow-black/40">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-plate p-1.5 shadow-lg shadow-black/40">
                 <img src={mark.src} alt="" className="h-full w-full object-contain" />
               </div>
               <img src={wordmark.src} alt="Shah G Tech" className="h-9 w-auto brightness-0 invert" />
@@ -399,10 +399,10 @@ function AuthShell({ children }: { children: ReactNode }) {
             {/* And so do the promises — on an iPad in portrait this is the whole
                 of the sign-in screen, and a page that says nothing about itself
                 is the thing this redesign set out to fix. */}
-            <ul className="space-y-2.5 border-t border-white/15 pt-5 lg:hidden">
+            <ul className="space-y-2.5 border-t border-rail-line pt-5 lg:hidden">
               {PROMISES.map((promise) => (
-                <li key={promise.icon} className="flex items-start gap-2.5 text-xs text-slate-300">
-                  <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-emerald-400/15 text-emerald-300">
+                <li key={promise.icon} className="flex items-start gap-2.5 text-xs text-rail-ink">
+                  <span className="mt-px flex h-5 w-5 shrink-0 items-center justify-center rounded-md bg-rail-accent/15 text-rail-accent">
                     <Icon name={promise.icon} className="!h-3 !w-3" />
                   </span>
                   <span className="leading-relaxed">{promise.text}</span>
