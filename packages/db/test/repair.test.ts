@@ -13,11 +13,13 @@ import {
   REPAIR_PHOTO_LIMIT,
   REPAIR_PHOTO_MAX_BYTES,
   getRepairJob,
+  listRepairBoard,
   listRepairJobs,
   quoteRepairJob,
   setFittedSerials,
   transitionRepairJob,
 } from '../src/repair.js';
+import { issueInvoice } from '../src/invoice.js';
 import { findSerial, stockLevels } from '../src/inventory.js';
 import { detectRollupDrift } from '../src/ledger.js';
 import { createTestDatabase, seedTenant, type Tenant } from './helpers.js';
@@ -592,5 +594,148 @@ describe('repair job photographs', () => {
     expect(rows.length).toBeGreaterThan(0);
     expect(rows.some((r) => r.action === 'CREATE')).toBe(true);
     expect(rows.some((r) => r.action === 'DELETE')).toBe(true);
+  });
+});
+
+/**
+ * The board is a READ, and everything that makes it worth opening comes from
+ * one query. These tests exist because each of those lateral joins is a place
+ * a silent wrong answer can hide: a warranty that matches the wrong tenant, a
+ * photo count that counts the wrong stage, an age off by a day.
+ */
+describe('the workshop board', () => {
+  let laptopId: string;
+  let boardJobId: string;
+
+  beforeAll(async () => {
+    // A promised item, sold, so there is a real warranty to find.
+    const laptop = await withTenant(sql, ctx, (tx) =>
+      createItem(tx, ctx, {
+        code: 'NB-BOARD',
+        name: 'ThinkPad, board fixture',
+        itemType: 'GOODS',
+        isTracked: true,
+        isSerialised: true,
+        isSold: true,
+        isPurchased: true,
+        warrantyMonths: 12,
+        sale: {
+          unitPrice: '5200.00',
+          accountId: tenant.accounts['4000']!,
+          taxCodeId: tenant.taxCodes['NONE']!,
+        },
+        purchase: { accountId: tenant.accounts['5000']!, taxCodeId: tenant.taxCodes['NONE']! },
+      }),
+    );
+    laptopId = laptop.id;
+
+    await withTenant(sql, ctx, (tx) =>
+      enterBill(tx, ctx, {
+        supplierId: tenant.supplierId,
+        billNo: 'PARTS-BOARD',
+        billDate: '2026-08-01',
+        lines: [{ itemId: laptopId, quantity: '1', unitPrice: '4000.00', serialNumbers: ['TP-9001'] }],
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    await withTenant(sql, ctx, (tx) =>
+      issueInvoice(tx, ctx, {
+        contactId: tenant.customerId,
+        issueDate: '2026-08-02',
+        lines: [{ itemId: laptopId, quantity: '1', serialNumbers: ['TP-9001'] }],
+        idempotencyKey: randomUUID(),
+      }),
+    );
+  }, 60_000);
+
+  it('carries the customer, not just the contact id', async () => {
+    const job = await withTenant(sql, ctx, (tx) =>
+      createRepairJob(tx, ctx, {
+        contactId: tenant.customerId,
+        deviceDescription: 'ThinkPad back in',
+        // LOWER CASE on purpose: a serial is typed at a counter, and matching
+        // it raw is how a warranty silently fails to be found.
+        deviceSerial: 'tp-9001',
+        reportedFault: 'Fan noise',
+        receivedOn: '2026-08-05',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+    boardJobId = job.id;
+
+    const cards = await withTenant(sql, ctx, (tx) =>
+      listRepairBoard(tx, ctx, { today: '2026-08-08' }),
+    );
+    const card = cards.find((c) => c.id === boardJobId);
+    expect(card).toBeDefined();
+    expect(card!.customerName).toBeTruthy();
+  });
+
+  it('flashes the warranty for a serial this shop sold, however it was typed', async () => {
+    const cards = await withTenant(sql, ctx, (tx) =>
+      listRepairBoard(tx, ctx, { today: '2026-08-08' }),
+    );
+    const card = cards.find((c) => c.id === boardJobId)!;
+
+    expect(card.warranty).not.toBeNull();
+    expect(card.warranty!.soldOn).toBe('2026-08-02');
+    expect(card.warranty!.expiresOn).toBe('2027-08-02');
+    expect(card.warranty!.status).toBe('ACTIVE');
+  });
+
+  it('says nothing at all about a device this shop never sold', async () => {
+    const job = await withTenant(sql, ctx, (tx) =>
+      createRepairJob(tx, ctx, {
+        contactId: tenant.customerId,
+        deviceDescription: 'Somebody else’s laptop',
+        deviceSerial: 'NOT-OURS-1',
+        reportedFault: 'Screen flickers',
+        receivedOn: '2026-08-06',
+        idempotencyKey: randomUUID(),
+      }),
+    );
+
+    const cards = await withTenant(sql, ctx, (tx) =>
+      listRepairBoard(tx, ctx, { today: '2026-08-08' }),
+    );
+    const card = cards.find((c) => c.id === job.id)!;
+    // `null`, never "expired". The board must not imply a promise was made.
+    expect(card.warranty).toBeNull();
+  });
+
+  it('counts the age in whole days from the date it arrived', async () => {
+    const cards = await withTenant(sql, ctx, (tx) =>
+      listRepairBoard(tx, ctx, { today: '2026-08-08' }),
+    );
+    const card = cards.find((c) => c.id === boardJobId)!;
+    expect(card.ageDays).toBe(3); // received 05/08, board read on 08/08
+  });
+
+  it('reports the intake evidence, which is what gates quoting', async () => {
+    const before = await withTenant(sql, ctx, (tx) =>
+      listRepairBoard(tx, ctx, { today: '2026-08-08' }),
+    );
+    expect(before.find((c) => c.id === boardJobId)!.intakePhotoCount).toBe(0);
+
+    await attach(boardJobId, 'PHOTO', 'RECEIVED');
+    // A photo at a LATER stage must not satisfy the intake gate — the picture
+    // of how it arrived is the one nobody can recreate.
+    await attach(boardJobId, 'PHOTO', 'IN_PROGRESS');
+    await attach(boardJobId, 'SIGNATURE', 'RECEIVED');
+
+    const after = await withTenant(sql, ctx, (tx) =>
+      listRepairBoard(tx, ctx, { today: '2026-08-08' }),
+    );
+    const card = after.find((c) => c.id === boardJobId)!;
+    expect(card.intakePhotoCount).toBe(1);
+    expect(card.intakeSignatureCount).toBe(1);
+  });
+
+  it('shows another tenant nothing of this one', async () => {
+    const other = await seedTenant(admin, 'Rival Repairs Sdn Bhd');
+    const otherCtx = { tenantId: other.tenantId, userId: other.userId };
+    const cards = await withTenant(sql, otherCtx, (tx) => listRepairBoard(tx, otherCtx));
+    expect(cards).toEqual([]);
   });
 });

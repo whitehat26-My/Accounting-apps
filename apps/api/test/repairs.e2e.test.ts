@@ -225,6 +225,68 @@ describe('the workshop over HTTP', () => {
 });
 
 /**
+ * The board.
+ *
+ * The route matters as much as the query: `/board` sits beside `/:id`, and a
+ * router that preferred the parameter would send the word "board" to a uuid
+ * parser and answer 400 for a screen that used to work.
+ */
+describe('the workshop board', () => {
+  it('serves the board, and “board” is not read as a job id', async () => {
+    const board = await call(api, { method: 'GET', ...as('/v1/repairs/board') });
+    expect(board.status).toBe(200);
+
+    const cards = board.body['cards'] as Record<string, unknown>[];
+    expect(Array.isArray(cards)).toBe(true);
+
+    const card = cards.find((c) => c['id'] === jobId);
+    expect(card).toBeDefined();
+    // The three things the board adds over the flat list.
+    expect(card).toHaveProperty('customerName');
+    expect(card).toHaveProperty('ageDays');
+    expect(card).toHaveProperty('intakePhotoCount');
+    expect(typeof card!['ageDays']).toBe('number');
+  });
+
+  it('is guarded by repair.read, the same as the flat list', async () => {
+    /*
+     * Asserted against the GENERATED document rather than by finding a role
+     * that is refused, because every role in the shop holds `repair.read` —
+     * it is the one view the whole counter shares. The document reflects the
+     * same `@Requires` metadata `AuthGuard` reads, so this is the guard
+     * itself, not a description of it.
+     */
+    const spec = await call(api, { method: 'GET', url: '/openapi.json' });
+    const paths = spec.body['paths'] as Record<string, Record<string, unknown>>;
+
+    const board = paths['/v1/repairs/board']?.['get'] as { security?: unknown[] } | undefined;
+    expect(board, 'the board must appear in the document at all').toBeDefined();
+
+    // Whatever the flat list requires, the board requires — they are two views
+    // of one thing, and a board that leaked past the queue's guard would be a
+    // second door to the same room.
+    const list = paths['/v1/repairs']?.['get'] as { security?: unknown[] };
+    expect(JSON.stringify(board!.security)).toBe(JSON.stringify(list.security));
+    expect(JSON.stringify(board)).toContain('repair.read');
+  });
+
+  it('answers a foreign tenant with an empty board, never another shop’s jobs', async () => {
+    const other = await seedTenant(api.admin, 'Rival Repairs Sdn Bhd');
+    const rival = await makeUser(api, { tenantId: other.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, rival.refreshToken, other.tenantId);
+
+    const board = await call(api, {
+      method: 'GET',
+      url: '/v1/repairs/board',
+      token: accessToken,
+      tenantId: other.tenantId,
+    });
+    expect(board.status).toBe(200);
+    expect(board.body['cards']).toEqual([]);
+  });
+});
+
+/**
  * Photographs over HTTP.
  *
  * Its own job, so it does not depend on where the journey above left the

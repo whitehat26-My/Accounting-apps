@@ -2,12 +2,15 @@ import {
   checkRepairTransition,
   describeRepairViolation,
   isErr,
+  promiseStatus,
+  warrantyWindow,
+  type PromiseStatus,
   type RepairStatus,
 } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { recordCashSale, type CashSaleResult } from './pos.js';
 import { issueInvoice, type IssueInvoiceLine } from './invoice.js';
-import { toIsoDate } from './internal.js';
+import { businessToday, toIsoDate } from './internal.js';
 import type { PaymentMethod } from '@emil/domain';
 
 /**
@@ -498,6 +501,165 @@ export async function listRepairJobs(
   // The queue view carries no lines; the detail view does. A workshop list of
   // 200 jobs does not need 200 line sub-queries.
   return jobs.map((j) => toView(j, []));
+}
+
+/**
+ * The board: the same open jobs, plus the three things a technician looks for
+ * before touching anything.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE QUERY, NOT ONE PER CARD.
+ *
+ * `listRepairJobs` deliberately carries no lines because 200 jobs would mean
+ * 200 sub-queries. The same argument applies here and is why the customer, the
+ * evidence counts and the warranty all arrive as lateral joins on the single
+ * statement rather than as a fetch per card. A board that costs 60 round trips
+ * to open is a board the workshop stops opening.
+ *
+ * The three additions each answer a question the flat list forced someone to
+ * go and look up:
+ *
+ *   - WHOSE is it. A job number identifies a row; a name identifies the person
+ *     standing at the counter asking about it.
+ *   - Is the EVIDENCE there. Quoting is refused without an intake photograph
+ *     (`NO_INTAKE_PHOTO`), and finding that out at the moment you try to name
+ *     a price means walking back to a device you have already put down.
+ *   - Did WE SELL IT. A device still inside its warranty is not a job to be
+ *     quoted, and discovering that after quoting is an awkward phone call.
+ * ---------------------------------------------------------------------------
+ */
+export interface RepairBoardCard {
+  readonly id: string;
+  readonly jobNo: string;
+  readonly deviceDescription: string;
+  readonly deviceSerial: string | null;
+  readonly reportedFault: string;
+  readonly status: RepairStatus;
+  readonly receivedOn: string;
+  readonly customerName: string | null;
+  /** Days on the premises, inclusive of the day it arrived. */
+  readonly ageDays: number;
+  readonly intakePhotoCount: number;
+  readonly intakeSignatureCount: number;
+  /**
+   * Set only when this shop sold this exact serial and the item carries a
+   * warranty. `null` means "not ours, or we do not know" — never "expired".
+   */
+  readonly warranty: {
+    readonly soldOn: string;
+    readonly expiresOn: string;
+    readonly status: PromiseStatus;
+  } | null;
+}
+
+interface BoardRow {
+  id: string;
+  job_no: string;
+  device_description: string;
+  device_serial: string | null;
+  reported_fault: string;
+  status: RepairStatus;
+  received_on: Date;
+  customer_name: string | null;
+  intake_photos: number;
+  intake_signatures: number;
+  sold_on: Date | null;
+  warranty_months: number | null;
+}
+
+export async function listRepairBoard(
+  tx: Tx,
+  ctx: TenantContext,
+  options: { readonly today?: string } = {},
+): Promise<readonly RepairBoardCard[]> {
+  const today = options.today ?? businessToday();
+
+  const rows = await tx<BoardRow[]>`
+      SELECT j.id, j.job_no, j.device_description, j.device_serial,
+             j.reported_fault, j.status, j.received_on,
+             c.name AS customer_name,
+             COALESCE(e.intake_photos, 0)     AS intake_photos,
+             COALESCE(e.intake_signatures, 0) AS intake_signatures,
+             w.sold_on, w.warranty_months
+        FROM repair_job j
+        LEFT JOIN contact c
+               ON c.tenant_id = j.tenant_id AND c.id = j.contact_id
+        LEFT JOIN LATERAL (
+               SELECT
+                 COUNT(*) FILTER (WHERE kind = 'PHOTO'     AND stage = 'RECEIVED')::int
+                   AS intake_photos,
+                 COUNT(*) FILTER (WHERE kind = 'SIGNATURE' AND stage = 'RECEIVED')::int
+                   AS intake_signatures
+                 FROM repair_job_photo p
+                WHERE p.tenant_id = j.tenant_id AND p.repair_job_id = j.id
+             ) e ON TRUE
+        /*
+         * Same normalisation as the promises register: a repair's serial is
+         * free text typed at a counter, and matching it raw silently misses
+         * every one a technician entered in lower case.
+         */
+        LEFT JOIN LATERAL (
+               SELECT m.moved_on AS sold_on, i.warranty_months
+                 FROM stock_unit u
+                 JOIN item i           ON i.tenant_id = u.tenant_id AND i.id = u.item_id
+                 JOIN stock_movement m ON m.tenant_id = u.tenant_id
+                                      AND m.id = u.issued_movement_id
+                WHERE u.tenant_id = j.tenant_id
+                  AND u.status = 'SOLD'
+                  AND i.warranty_months > 0
+                  AND u.serial_no =
+                      upper(regexp_replace(btrim(j.device_serial), '\\s+', ' ', 'g'))
+                ORDER BY m.moved_on DESC
+                LIMIT 1
+             ) w ON j.device_serial IS NOT NULL
+       WHERE j.tenant_id = ${ctx.tenantId}
+       ORDER BY j.received_on DESC, j.job_no DESC
+       LIMIT 200
+  `;
+
+  return rows.map((r) => {
+    const receivedOn = toIsoDate(r.received_on);
+    return {
+      id: r.id,
+      jobNo: r.job_no,
+      deviceDescription: r.device_description,
+      deviceSerial: r.device_serial,
+      reportedFault: r.reported_fault,
+      status: r.status,
+      receivedOn,
+      customerName: r.customer_name,
+      ageDays: daysBetween(receivedOn, today),
+      intakePhotoCount: r.intake_photos,
+      intakeSignatureCount: r.intake_signatures,
+      warranty:
+        r.sold_on !== null && r.warranty_months !== null
+          ? (() => {
+              const soldOn = toIsoDate(r.sold_on!);
+              const window = warrantyWindow(soldOn, r.warranty_months!);
+              return {
+                soldOn,
+                expiresOn: window.expiresOn,
+                status: promiseStatus(today, window),
+              };
+            })()
+          : null,
+    };
+  });
+}
+
+/**
+ * Whole days from one calendar date to another, inclusive of the first.
+ *
+ * Both arguments are `YYYY-MM-DD` accounting dates, never timestamps, so this
+ * parses them at UTC midnight and subtracts — no timezone can shift the answer
+ * by a day, which is exactly the bug a `new Date()` here would introduce for a
+ * shop in Kuala Lumpur reading a board written by a server in UTC.
+ */
+function daysBetween(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.max(0, Math.round((b - a) / 86_400_000));
 }
 
 // ------------------------------------------------------------------ internal

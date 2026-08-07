@@ -13,6 +13,7 @@ import {
   deleteRepairPhoto,
   getRepairJob,
   getRepairPhoto,
+  listRepairBoard,
   listRepairJobs,
   listRepairPhotos,
   quoteRepairJob,
@@ -59,6 +60,23 @@ export class RepairsController {
       jobs: await withTenant(this.sql, ctx, (tx) =>
         listRepairJobs(tx, ctx, parsed !== undefined ? { status: parsed } : {}),
       ),
+    };
+  }
+
+  /**
+   * The board. Declared BEFORE `:id` deliberately.
+   *
+   * Fastify's router prefers a static segment over a parameter, so this would
+   * resolve correctly either way — but reading it above `:id` is what stops
+   * the next person moving it and wondering why /board started 404ing as a
+   * malformed uuid.
+   */
+  @Requires('repair.read')
+  @Get('board')
+  async board(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return {
+      cards: await withTenant(this.sql, ctx, (tx) => listRepairBoard(tx, ctx)),
     };
   }
 

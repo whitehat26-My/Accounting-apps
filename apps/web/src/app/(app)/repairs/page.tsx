@@ -6,6 +6,7 @@ import { useState } from 'react';
 import { api } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { RepairBoard } from '@/components/repair-board';
 
 /**
  * The workshop queue, plus intake.
@@ -77,10 +78,38 @@ export default function RepairsPage() {
   );
 
   return (
-    <div className="grid grid-cols-2 gap-4">
-      <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">Repairs</h1>
-        <Card title="On the bench">
+    <div className="space-y-4">
+      {/*
+        THE BOARD LEADS, AND IT SPANS THE FULL WIDTH.
+
+        A workshop queue is spatial — "what is on the bench" is a question
+        about a place, not a list — so it gets the width and sits above
+        everything. Intake drops below it because taking a device in happens
+        once per device, while looking at the queue happens all day.
+      */}
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Repairs</h1>
+      <RepairBoard />
+
+      {/*
+        Intake FIRST below the board, in a fixed column.
+
+        With the board taking the full width, the two things under it are the
+        intake form and whatever history exists. Putting the lists first left a
+        hole where they were empty — a new shop has no finished jobs and no
+        bench profit, so the form appeared marooned on the right of a blank
+        row. Leading with the form makes an empty right column read as ordinary
+        whitespace instead.
+      */}
+      <div className="grid gap-4 lg:grid-cols-[24rem_1fr]">
+      <div className="space-y-3 lg:order-last">
+        {/*
+          The same open jobs as a plain list. NOT redundant: this is what the
+          counter phone gets, because five columns on a 390px screen is a maze
+          rather than a board. `lg:hidden` here pairs with `hidden lg:flex` on
+          the board itself, so exactly one of them is ever on screen.
+        */}
+        <div className="lg:hidden">
+          <Card title="On the bench">
           {open.length === 0 ? (
             <p className="text-sm text-ink-muted">Nothing in the workshop.</p>
           ) : (
@@ -104,7 +133,8 @@ export default function RepairsPage() {
               ))}
             </div>
           )}
-        </Card>
+          </Card>
+        </div>
         {closed.length > 0 ? (
           <Card title="Finished">
             <div className="space-y-1">
@@ -126,8 +156,7 @@ export default function RepairsPage() {
         <BenchProfitCard />
       </div>
 
-      <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-ink">&nbsp;</h1>
+      <div className="space-y-3 lg:order-first">
         <Card title="Take a device in">
           <form
             className="space-y-3"
@@ -174,6 +203,7 @@ export default function RepairsPage() {
             </Button>
           </form>
         </Card>
+      </div>
       </div>
     </div>
   );
