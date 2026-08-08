@@ -36,6 +36,19 @@ COPY apps/web apps/web
 ARG NEXT_PUBLIC_APP_NAME
 ENV NEXT_PUBLIC_APP_NAME=${NEXT_PUBLIC_APP_NAME}
 
+# Where /api/* is proxied to — ALSO a build arg, and for a less obvious reason
+# than the name above.
+#
+# `rewrites()` in next.config.ts is evaluated during `next build` and the
+# result is frozen into .next/routes-manifest.json. `next start` serves that
+# manifest and never re-reads the config, so an API_ORIGIN supplied only at
+# runtime arrives after the only moment it mattered — and the image keeps the
+# development fallback, 127.0.0.1:3001, which inside a container is the
+# container itself. Nothing is listening there, so every write fails with
+# ECONNREFUSED while the API sits healthy one hostname away.
+ARG API_ORIGIN
+ENV API_ORIGIN=${API_ORIGIN}
+
 RUN pnpm --filter @emil/web build
 
 # Drop root: run as the image's unprivileged `node` user (uid 1000). Done after

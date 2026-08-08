@@ -48,6 +48,10 @@ const NOT_PLUMBED: Record<string, string> = {
  * Variables `apps/web` reads that the compose file deliberately does not pass.
  */
 const WEB_NOT_PLUMBED: Record<string, string> = {
+  DEMO_BASE_PATH:
+    'the sub-path the GitHub Pages export is served under, set by that workflow. '
+    + 'The production compose file serves from the root, where the correct value is '
+    + 'the empty string next.config.ts already defaults to.',
   NEXT_PUBLIC_BASE_PATH:
     'set by next.config.ts from DEMO_BASE_PATH for the GitHub Pages export, which '
     + 'is served under a repository sub-path. The real deployment is served from '
@@ -103,11 +107,31 @@ function composeKeys(service: string, section: 'environment' | 'args'): string[]
 
 const envNamesPassedToApi = () => composeKeys('api', 'environment');
 
-/** Every `NEXT_PUBLIC_*` the web app reads, anywhere in its source. */
+/**
+ * Every environment variable the web app needs at BUILD time.
+ *
+ * Two sources, and the second was learned the hard way. `NEXT_PUBLIC_*` in the
+ * source is the obvious one — Next inlines those into the bundle. The other is
+ * anything `next.config.ts` reads, because `rewrites()` is evaluated during
+ * `next build` and frozen into `.next/routes-manifest.json`; `next start`
+ * serves that manifest and never re-reads the config.
+ *
+ * `API_ORIGIN` is exactly that second kind, and the first version of this test
+ * only looked for the first kind. The image shipped with the development
+ * fallback baked in — `127.0.0.1:3001`, which inside a container is the
+ * container itself — so every write failed with ECONNREFUSED while a healthy
+ * API sat one hostname away.
+ */
 function envNamesReadByWeb(): string[] {
   const src = join(root, 'apps/web/src');
-  const found = execFileSync('grep', ['-rhoE', 'NEXT_PUBLIC_[A-Z0-9_]+', src], { encoding: 'utf8' });
-  return [...new Set(found.split('\n').filter(Boolean))].sort();
+  const inlined = execFileSync('grep', ['-rhoE', 'NEXT_PUBLIC_[A-Z0-9_]+', src], { encoding: 'utf8' });
+
+  // `process.env['X']` and `process.env.X` in the build config itself.
+  const config = read('apps/web/next.config.ts');
+  const fromConfig = [...config.matchAll(/process\.env(?:\['([A-Z0-9_]+)'\]|\.([A-Z0-9_]+))/g)]
+    .map((m) => m[1] ?? m[2]!);
+
+  return [...new Set([...inlined.split('\n').filter(Boolean), ...fromConfig])].sort();
 }
 
 describe('the production deployment can set what the API reads', () => {
@@ -190,7 +214,17 @@ describe('the production deployment can set what the WEB APP reads', () => {
     const example = read('.env.prod.example');
     const deploy = read('docs/DEPLOY.md');
 
-    for (const name of composeKeys('web', 'args')) {
+    /*
+     * Only the ones an operator can actually set. A build arg written as a
+     * literal — `API_ORIGIN: http://api:3000` — is fixed by the topology, not a
+     * knob, and demanding a line in .env.prod.example for it would be inviting
+     * somebody to change a value that only has one correct answer.
+     */
+    const block = serviceBlock('web').join('\n');
+    const settable = composeKeys('web', 'args').filter((name) =>
+      new RegExp(`^\\s*${name}:\\s*\\$\\{`, 'm').test(block));
+
+    for (const name of settable) {
       expect(
         new RegExp(`^#?\\s*${name}=`, 'm').test(example),
         `${name} is a build arg but is missing from .env.prod.example`,

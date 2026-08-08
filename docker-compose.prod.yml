@@ -119,6 +119,10 @@ services:
         # A build arg, not an environment entry: Next inlines NEXT_PUBLIC_* at
         # build time. Changing it therefore needs `up -d --build`.
         NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Emil Books}
+        # Baked into the route manifest by `next build`; see web.Dockerfile.
+        # It must be here as well as below — the entry underneath reaches the
+        # running container, which is far too late for a rewrite rule.
+        API_ORIGIN: http://api:3000
     environment:
       API_ORIGIN: http://api:3000
     ports:

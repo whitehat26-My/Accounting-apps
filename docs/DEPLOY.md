@@ -366,7 +366,7 @@ again — that is what rotating a signing key means.
 | `PUBLIC_BASE_URL` | api | The address printed as a QR code on every document, no trailing slash. Defaults to `http://localhost:$WEB_PORT`, which is a dead link on paper a customer takes away. See above. |
 | `ANTHROPIC_API_KEY` | api | Optional. Connects the in-app assistant; empty means it reports itself unconfigured and everything else works. |
 | `ASSISTANT_RATE_LIMIT` | api | Assistant chat requests per minute, per tenant. Default 30 — its cost is a paid model call, so it is capped tighter than ordinary routes. |
-| `API_ORIGIN` | web | Set in the compose file; where Next proxies `/api/*`. |
+| `API_ORIGIN` | web | Where Next proxies `/api/*`. Fixed at `http://api:3000` by the compose file — not a knob. Passed as a **build arg**: `rewrites()` is evaluated during `next build` and frozen into the route manifest, so a runtime value arrives too late and the image keeps the development fallback. |
 | `SIGNUP_MODE` | api | `invite` (default) or `open`. Invite-only unless the network is the gate. See above. |
 | `NEXT_PUBLIC_APP_NAME` | web | This INSTALLATION's name — sign-in page, browser tab, and the small line above Sign out. Instance branding, the same for everybody who reaches this address. A tenant's own name and logo come from their `organisation` row and are set in Settings → Letterhead. Passed as a **build arg**, because Next inlines `NEXT_PUBLIC_*` at build time: changing it needs `up -d --build`, and setting it under `environment:` would do nothing at all. Default `Emil Books`. |
 
