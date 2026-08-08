@@ -29,9 +29,40 @@ What that means in practice:
 | **Any VPS running this compose file** (Hetzner, DigitalOcean, Vultr, a spare PC) | ✅ The `db` container's `postgres` user is a real superuser. This is the recommended path, ~RM 25–40/month. |
 | **Railway** | ✅ Its PostgreSQL template is the plain `postgres` image — the provided user is a superuser. Deploy the three Dockerfiles as three services. |
 | **Fly.io** (unmanaged Postgres) | ✅ Full control. |
+| **Supabase** | ⚠️ Its `postgres` role is [not a superuser](https://supabase.com/docs/guides/database/postgres/roles-superuser). Whether it carries BYPASSRLS decides it, and the answer is one query — `docs/CLOUD-SETUP.md` step 0. If the answer is no, Railway's own PostgreSQL is the drop-in. |
 | **Render / Heroku managed PostgreSQL** | ❌ Their database user has neither SUPERUSER nor BYPASSRLS and they will not grant it. Migration 0021 refuses, on purpose. Use their compute with an external PostgreSQL if you must use them. |
 
-## The VPS path (recommended)
+## Cloud (Netlify + Supabase + Railway)
+
+The deployment that is reachable from anywhere, on a real domain, without a PC
+in the shop staying switched on. **Runbook: [`docs/CLOUD-SETUP.md`](CLOUD-SETUP.md).**
+
+Netlify serves the screens as static files and proxies `/api/*` onward with a
+status-200 rewrite; the API and worker stay long-running containers on Railway
+or Fly; PostgreSQL is Supabase (or Railway's). The browser sees one origin, so
+CORS still never exists.
+
+Two things are worth knowing before starting, because both decide the shape:
+
+- **A static export never runs `next.config.ts`'s `headers()`** — there is no
+  server to run it. `netlify.toml` restates CSP, HSTS and the frame lock, and
+  `apps/web/test/netlify-headers.test.ts` fails if the two drift apart.
+- **Netlify does not substitute environment variables into redirect targets.**
+  `scripts/netlify-redirects.mjs` writes the `/api` proxy rule at build time
+  from `API_ORIGIN` and fails the build without it — otherwise the site deploys
+  green and only signing in fails.
+
+This is also the only path on which **the QR code printed on invoices, receipts
+and warranty cards resolves for the customer holding the paper.** On a LAN
+address it cannot, which is a permanent limitation of the two paths below rather
+than something left to configure.
+
+Cost is honestly **RM 100–200/month** once past the free tiers — mostly Supabase
+Pro, because repair photos are stored as `BYTEA` inside PostgreSQL and a shop
+photographing jobs passes the free 500 MB. The VPS path below is cheaper and
+does everything except be reachable without your own domain and TLS.
+
+## The VPS path (recommended for a single company)
 
 Prerequisites: a server with Docker + the compose plugin, and this repository
 cloned onto it.
@@ -366,7 +397,8 @@ again — that is what rotating a signing key means.
 | `PUBLIC_BASE_URL` | api | The address printed as a QR code on every document, no trailing slash. Defaults to `http://localhost:$WEB_PORT`, which is a dead link on paper a customer takes away. See above. |
 | `ANTHROPIC_API_KEY` | api | Optional. Connects the in-app assistant; empty means it reports itself unconfigured and everything else works. |
 | `ASSISTANT_RATE_LIMIT` | api | Assistant chat requests per minute, per tenant. Default 30 — its cost is a paid model call, so it is capped tighter than ordinary routes. |
-| `API_ORIGIN` | web | Where Next proxies `/api/*`. Fixed at `http://api:3000` by the compose file — not a knob. Passed as a **build arg**: `rewrites()` is evaluated during `next build` and frozen into the route manifest, so a runtime value arrives too late and the image keeps the development fallback. |
+| `API_ORIGIN` | web | Where `/api/*` is proxied. On the compose path it is fixed at `http://api:3000` — not a knob — and passed as a **build arg**, because `rewrites()` is evaluated during `next build` and frozen into the route manifest, so a runtime value arrives too late and the image keeps the development fallback. **On Netlify it is the Railway API's public https address**, and it is required: `scripts/netlify-redirects.mjs` fails the build without it rather than deploy a site whose every login 404s. |
+| `EMIL_STATIC` | web (Netlify only) | `1` selects the static export — a directory of files with no server. Set in `netlify.toml`; it must NEVER be set for the compose build, which would produce a web image that starts, serves every screen, and has no route to the API at all. The deployment-config guard enforces that it is absent from `docker-compose.prod.yml`. |
 | `SIGNUP_MODE` | api | `invite` (default) or `open`. Invite-only unless the network is the gate. See above. |
 | `NEXT_PUBLIC_APP_NAME` | web | This INSTALLATION's name — sign-in page, browser tab, and the small line above Sign out. Instance branding, the same for everybody who reaches this address. A tenant's own name and logo come from their `organisation` row and are set in Settings → Letterhead. Passed as a **build arg**, because Next inlines `NEXT_PUBLIC_*` at build time: changing it needs `up -d --build`, and setting it under `environment:` would do nothing at all. Default `Emil Books`. |
 
