@@ -41,6 +41,15 @@ cp .env.prod.example .env.prod        # fill in the four secrets (openssl rand -
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
+**On a Windows shop PC, `scripts/install-windows.ps1` does the above plus the
+two settings people forget** — `PUBLIC_BASE_URL` and `NEXT_PUBLIC_APP_NAME` —
+generating the secrets with a CSPRNG and waiting until the app actually answers
+rather than until the containers exist. It never overwrites an existing
+`.env.prod`, because that file holds the only copy of the database passwords and
+replacing it would leave a running database nobody can log into. There is no
+Linux equivalent and there does not need to be: the two commands above are the
+whole procedure.
+
 Startup order is enforced inside the file: PostgreSQL → `migrate` (one-shot,
 as superuser) → `roles` (one-shot: creates `emil_app_login` /
 `emil_worker_login`, NOBYPASSRLS, mirroring the test harness) → API → worker →

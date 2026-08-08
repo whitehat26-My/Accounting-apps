@@ -352,6 +352,17 @@ callout('Where does the repository URL come from?',
 // ---------------------------------------------------------------------------
 h1('STEP 3', 'Create your passwords file');
 
+callout('There is a shortcut for Steps 3 to 5',
+  'One command does all three: it writes the passwords file, asks you the two questions the system '
+  + 'cannot answer for itself, and starts everything. It is safe to run twice and will never '
+  + 'overwrite a passwords file you already have. Steps 3 to 5 below are what it does, written out '
+  + 'in full — read them anyway, because when something goes wrong later it is these you will come '
+  + 'back to.\n\n'
+  + `    cd ${DIR}\n`
+  + '    powershell -ExecutionPolicy Bypass -File scripts\\install-windows.ps1\n\n'
+  + 'Then skip to Step 6. On Linux or macOS there is no script: the three commands in Steps 3 to 5 '
+  + 'work as they are.', GOOD);
+
 body('The system needs four secrets. They are never typed by a person again, so make them long and '
   + 'random rather than memorable. This command generates all four and writes the file for you:');
 
