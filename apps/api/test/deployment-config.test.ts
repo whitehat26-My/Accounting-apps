@@ -200,6 +200,68 @@ describe('the production deployment can set what the WEB APP reads', () => {
   });
 });
 
+describe('the images contain the config the source needs to compile', () => {
+  /*
+   * Written after the first real deployment failed on it.
+   *
+   * Every workspace project except apps/web `extends: "../../tsconfig.base.json"`,
+   * and no Dockerfile copied that file. A missing extends target does not
+   * degrade gracefully — the whole tsconfig is discarded, taking its
+   * compilerOptions with it. For the API that meant `experimentalDecorators`
+   * was lost, and Nest's entire dependency injection is parameter decorators,
+   * so the container crash-looped on:
+   *
+   *   ERROR: Parameter decorators only work when experimental decorators are enabled
+   *
+   * Nothing caught it: the tests run from the repo, where the file is present,
+   * and CI never builds the images. The worker was failing silently too — it
+   * started only because it happens to use no decorators.
+   */
+  const DOCKERFILES = ['docker/api.Dockerfile', 'docker/worker.Dockerfile', 'docker/web.Dockerfile'];
+
+  /** Root-level tsconfigs that workspace projects extend. */
+  function extendedRootConfigs(): string[] {
+    const projects = ['apps/api', 'apps/worker', 'apps/web', 'packages/db', 'packages/domain', 'packages/contracts'];
+    const needed = new Set<string>();
+    for (const p of projects) {
+      let raw: string;
+      try {
+        raw = read(`${p}/tsconfig.json`);
+      } catch {
+        continue;
+      }
+      const ext = /"extends"\s*:\s*"([^"]+)"/.exec(raw)?.[1];
+      // Only the ones that climb out of their own directory are a Docker
+      // problem; a sibling path travels with the project already.
+      if (ext?.startsWith('../../')) needed.add(ext.replace('../../', ''));
+    }
+    return [...needed].sort();
+  }
+
+  it.each(DOCKERFILES)('%s copies every tsconfig its projects extend', (dockerfile) => {
+    const content = read(dockerfile);
+    /*
+     * An actual COPY instruction, not a mention. The first version of this
+     * test asked `content.includes('tsconfig.base.json')`, which a commented-
+     * out COPY satisfies — so it passed against the very Dockerfile whose
+     * missing COPY had just crash-looped the API in production. A guard that
+     * cannot fail is worse than no guard, because it is also reassuring.
+     */
+    const copies = (cfg: string) =>
+      new RegExp(`^COPY\\s+[^#\\n]*${cfg.replace('.', '\\.')}`, 'm').test(content);
+
+    const missing = extendedRootConfigs().filter((cfg) => !copies(cfg));
+
+    expect(
+      missing,
+      `${dockerfile} never copies ${missing.join(', ')}, but the projects it builds `
+        + '`extends` it. A missing extends target silently discards the WHOLE tsconfig, '
+        + 'so the image runs with default compilerOptions — which for the API drops '
+        + 'experimentalDecorators and stops Nest from starting at all. Add a COPY line.',
+    ).toEqual([]);
+  });
+});
+
 describe('PUBLIC_BASE_URL', () => {
   const base = {
     DATABASE_URL: 'postgres://x@localhost/x',

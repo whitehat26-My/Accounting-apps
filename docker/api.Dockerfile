@@ -7,6 +7,11 @@ RUN corepack enable
 
 # Manifests first, so dependency layers cache across source-only changes.
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+# The tsconfig every workspace project `extends`. Without it the extends target
+# is missing, the whole tsconfig is discarded, and its compilerOptions go with
+# it — which for the API means `experimentalDecorators` is lost and Nest's
+# parameter-decorator dependency injection cannot be transformed at all.
+COPY tsconfig.base.json ./
 COPY packages/contracts/package.json packages/contracts/
 COPY packages/domain/package.json    packages/domain/
 COPY packages/db/package.json        packages/db/
