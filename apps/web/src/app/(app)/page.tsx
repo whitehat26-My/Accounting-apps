@@ -123,10 +123,10 @@ export default function TodayPage() {
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {/* Raw decimal strings, not rm() — Money formats the resting frame
               itself and counts through changes (a sale rings, Takings rolls). */}
-          <Stat label="Takings" value={t ? t.receiptsTotal : '—'} delay={0} />
+          <Stat label="Takings" value={t ? t.receiptsTotal : '—'} delay={0} delta />
           <Stat label="Sales" value={t ? `${t.invoiceCount}` : '—'} plain delay={60} />
           <Stat label="Cost of goods" value={t ? t.costOfGoodsSold : '—'} delay={120} />
-          <Stat label="Gross profit" value={t ? t.grossProfit : '—'} highlight delay={180} />
+          <Stat label="Gross profit" value={t ? t.grossProfit : '—'} highlight delay={180} delta />
         </div>
       ) : null}
 
@@ -276,6 +276,7 @@ function Stat({
   highlight,
   plain,
   delay = 0,
+  delta = false,
 }: {
   label: string;
   value: string;
@@ -284,6 +285,8 @@ function Stat({
   plain?: boolean;
   /** Entrance stagger in ms — the charts.tsx idiom, capped by the caller. */
   delay?: number;
+  /** Flash what the figure moved by when it changes. See the note below. */
+  delta?: boolean;
 }) {
   return (
     <div
@@ -296,7 +299,15 @@ function Stat({
           highlight ? 'text-positive' : 'text-ink'
         }`}
       >
-        {plain ? value : <Money value={value} />}
+        {/*
+          `delta` only on the tiles a sale actually moves.
+
+          Takings and gross profit change the moment somebody rings something
+          up, and the chip is what turns a dashboard that refreshes every 60s
+          into a shop keeping score. Cost of goods moves too but nobody watches
+          it land, and a count of invoices is not money at all.
+        */}
+        {plain ? value : <Money value={value} delta={delta} />}
       </div>
     </div>
   );

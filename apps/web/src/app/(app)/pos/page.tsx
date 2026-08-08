@@ -314,16 +314,41 @@ export default function PosPage() {
         {result ? (
           <Card title={`Done — ${result.invoiceNo}`}>
             <div className="space-y-2 text-sm">
+              {/*
+                CHANGE DUE COMES FIRST, AND IT IS THE BIGGEST THING ON THE
+                SCREEN.
+
+                It used to be `text-lg` on the second row of a small card,
+                below the total. It is the highest-stakes glance in the shop:
+                a cashier is about to hand over real money to somebody
+                standing in front of them, and getting it wrong costs the till
+                or costs the customer. Reading order should match that, and it
+                did not.
+              */}
+              {result.changeDue ? (
+                <div
+                  // The FIRST aria-live in the app. A till is driven looking at
+                  // the drawer and the customer, not at the screen, so the
+                  // figure has to be announceable rather than only visible.
+                  role="status"
+                  aria-live="polite"
+                  className="rounded-xl bg-positive-soft px-4 py-3 text-center"
+                >
+                  <div className="text-xs font-semibold uppercase tracking-wider text-positive">
+                    Change due
+                  </div>
+                  <div
+                    data-testid="change-due"
+                    className="mt-0.5 text-4xl font-bold tabular-nums text-positive"
+                  >
+                    {rm(result.changeDue)}
+                  </div>
+                </div>
+              ) : null}
               <div className="flex justify-between">
                 <span>Total</span>
                 <span className="font-bold">{rm(result.total)}</span>
               </div>
-              {result.changeDue ? (
-                <div className="flex justify-between text-lg font-bold text-positive">
-                  <span>Change due</span>
-                  <span data-testid="change-due">{rm(result.changeDue)}</span>
-                </div>
-              ) : null}
               <Button
                 variant="ghost"
                 className="w-full"
