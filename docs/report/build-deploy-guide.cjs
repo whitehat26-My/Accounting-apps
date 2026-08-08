@@ -518,7 +518,38 @@ code([
 body('On Linux with ufw instead: "sudo ufw allow 8080/tcp".');
 
 // ---------------------------------------------------------------------------
-h1('STEP 8', 'Connect the phones');
+h1('STEP 8', 'Put an app icon on this PC');
+
+body('So far you open the books in a browser. On the shop PC itself you can turn that into a proper '
+  + 'app: an icon on the desktop that opens the books in their OWN WINDOW - no browser around it, no '
+  + 'address bar, your logo as the icon, exactly like any other program on the machine.');
+
+body('One command does it:');
+
+code([
+  `cd ${DIR}`,
+  'powershell -ExecutionPolicy Bypass -File scripts\\create-desktop-app.ps1',
+]);
+
+body('Or do it by hand, which also lists it under Installed apps in Windows Settings: open Microsoft '
+  + 'Edge, go to http://localhost:8080, click the ... menu at the top right, choose Apps, then '
+  + '"Install this site as an app". Tick the desktop-shortcut box.');
+
+callout('On this PC, use localhost - not the number',
+  'The desktop app opens http://localhost:8080. "localhost" means THIS computer, and it is the one '
+  + 'address the browser fully trusts, so the "install as an app" option and everything else work '
+  + 'here where they would not over the 192.168 number. The phones in the next step DO use the '
+  + 'number, because to a phone "localhost" would mean the phone itself.', BRAND);
+
+callout('This is still the same system, not a second copy',
+  'The icon is a front door, nothing more. Behind it is the engine already running on this PC - the '
+  + 'database and the server, kept alive quietly by Docker the way a Windows service is. You never '
+  + 'open Docker to use the shop; it starts with the PC (as long as you ticked "Start Docker Desktop '
+  + 'when you log in" in Step 1) and the icon is all you touch. Nothing here lives on the internet: '
+  + 'your books are a file on this machine, and the shop works with the internet unplugged.', GOOD);
+
+// ---------------------------------------------------------------------------
+h1('STEP 9', 'Connect the phones');
 
 body('On each phone, connected to the shop WiFi, open the browser and go to the address you wrote '
   + 'down in Step 6, followed by :8080 — for example:');
@@ -553,7 +584,7 @@ body('The screens are built to work at phone size: the menu becomes a strip of i
   + 'iPad.');
 
 // ---------------------------------------------------------------------------
-h1('STEP 9', 'Add your staff');
+h1('STEP 10', 'Add your staff');
 
 body('Each member of staff registers themselves first, then you give them access:');
 
