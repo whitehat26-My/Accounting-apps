@@ -106,7 +106,19 @@ services:
     restart: unless-stopped
 
   web:
-    build: { context: ., dockerfile: docker/web.Dockerfile }
+    build:
+      context: .
+      dockerfile: docker/web.Dockerfile
+      args:
+        # The name on the sign-in page and the browser tab — THIS instance's
+        # own, not any one tenant's. A tenant's name and logo come from their
+        # `organisation` row and appear once somebody has signed in; this is
+        # what a person sees BEFORE that, when nobody knows whose books are
+        # behind the address yet.
+        #
+        # A build arg, not an environment entry: Next inlines NEXT_PUBLIC_* at
+        # build time. Changing it therefore needs `up -d --build`.
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Emil Books}
     environment:
       API_ORIGIN: http://api:3000
     ports:

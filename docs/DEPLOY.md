@@ -110,6 +110,35 @@ everything needed to verify through any future one, and `/verify` accepts it
 typed. Documents printed after you change the value carry the new address; the
 old ones keep the old. There is no re-print step and no migration.
 
+### Whose name is on the sign-in page
+
+**`NEXT_PUBLIC_APP_NAME` is this installation's own name**, and it is the one
+piece of branding the app cannot work out for itself. Everything after sign-in
+— the rail, every PDF, the assistant — reads the signed-in `organisation` row,
+so each tenant's documents carry that tenant's mark. The sign-in page comes
+*before* anybody has said who they are, so it has to be told.
+
+```bash
+NEXT_PUBLIC_APP_NAME=Shah G Tech — shop & books
+```
+
+Text before an em-dash is set larger with the rest beneath it; a single line
+with no dash is fine. For a logo, put a PNG at `apps/web/public/brand/mark.png`
+before building — supply nothing and the page shows the name's initials on a
+tile, which is a real mark rather than a placeholder. `wordmark.png` and
+`shop.jpg` in the same folder are picked up if present and simply absent if
+not; with no photograph the sign-in page falls back to its own gradient.
+
+**It is read at build time.** Next compiles `NEXT_PUBLIC_*` into the pages, so
+this one variable behaves unlike every other in `.env.prod`: it is passed as a
+build arg, and changing it needs
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+
+A plain `up -d` will keep the old name with no error and no warning.
+
 ### Backups — non-negotiable
 
 The `backup` service runs `pg_dump` nightly into `./backups`, keeping 14.
@@ -230,6 +259,25 @@ it were added by mistake.
 
 ### Taking on another company
 
+There are two ways, and the difference is not technical — it is who holds the
+books, and it is the whole decision. Pick deliberately.
+
+| | **They are a tenant here** | **They run their own copy** |
+| --- | --- | --- |
+| Deployment | none — mint an invite code | their own PC or server |
+| Their database | yours, alongside your own | theirs |
+| Their backups | in your `./backups` | theirs to take, and to lose |
+| Can you read their books? | **yes**, via superuser `psql` | no |
+| Who upgrades | you, for everyone at once | them, by this runbook |
+| Who they call when it breaks | you | you, but you cannot see it |
+| What you give them | a code | the repository URL and their own setup guide |
+
+Neither is more correct. The first is a service you run; the second is software
+you hand over. The rest of this section covers the first; **"Giving them their
+own copy"** below covers the second.
+
+#### They are a tenant here
+
 The system is multi-tenant: one server, one database, each company its own
 tenant, separated by RLS (`tenant_id` first in every primary key, policies
 carrying both `USING` and `WITH CHECK`, cross-tenant reads answering 404).
@@ -256,9 +304,38 @@ Two things to understand before you take money for this:
   entirely. That is inherent to hosting somebody's books and is exactly what
   they are trusting you with. Say so plainly rather than implying otherwise.
 
-A company that wants neither of those runs its own copy of this compose file
-on its own machine. Same software, their database, their backups; they update
-themselves, by the runbook above.
+#### Giving them their own copy
+
+A company that wants neither of those runs its own copy of this compose file on
+its own machine. Same software, their database, their backups; they update
+themselves, by the runbook above. You hand over two things:
+
+1. **The repository URL.** They clone it and check out a tag, exactly as you do.
+2. **A setup guide with their name on it**, generated for them:
+
+```bash
+node docs/report/build-deploy-guide.cjs \
+  --company "Delima Trading" --tagline "kedai & akaun" --folder delima
+#   → docs/report/Delima-Trading-Setup-Guide.pdf
+```
+
+Every command inside says `C:\delima`, the cover carries their name, and no
+part of it mentions anybody else's shop — a guide that tells somebody to `cd
+C:\shahgtech` is one they will mistype, and a cover with another company's name
+reads as though it was sent to them by mistake. `--logo` adds their mark to the
+cover; without it the cover is their name set in type, which is a complete
+cover. Running it with no arguments regenerates the original unchanged.
+
+They set `NEXT_PUBLIC_APP_NAME` and drop their logo into
+`apps/web/public/brand/` as the guide's Step 6 describes, so their staff sign in
+to their own front door rather than yours. Everything past sign-in was already
+theirs: the rail, every PDF and the assistant read their `organisation` row.
+
+**What you keep and what you give up.** They own their data and their outage;
+you own neither. You cannot restore their backup for them, cannot look at their
+books to answer a question, and cannot fix a bad upgrade from where you are.
+They will still call you when it breaks. Decide whether that is the arrangement
+you want before you offer it, not afterwards.
 
 ### Password rotation
 
@@ -282,7 +359,7 @@ again — that is what rotating a signing key means.
 | `ASSISTANT_RATE_LIMIT` | api | Assistant chat requests per minute, per tenant. Default 30 — its cost is a paid model call, so it is capped tighter than ordinary routes. |
 | `API_ORIGIN` | web | Set in the compose file; where Next proxies `/api/*`. |
 | `SIGNUP_MODE` | api | `invite` (default) or `open`. Invite-only unless the network is the gate. See above. |
-| `NEXT_PUBLIC_APP_NAME` | web | The PRODUCT's name — browser tab, and the small line above Sign out. Instance branding, the same for everybody on this server. A tenant's own name and logo come from their `organisation` row and are set in Settings → Letterhead. Build-time: Next inlines `NEXT_PUBLIC_*`, so changing it needs a rebuild. |
+| `NEXT_PUBLIC_APP_NAME` | web | This INSTALLATION's name — sign-in page, browser tab, and the small line above Sign out. Instance branding, the same for everybody who reaches this address. A tenant's own name and logo come from their `organisation` row and are set in Settings → Letterhead. Passed as a **build arg**, because Next inlines `NEXT_PUBLIC_*` at build time: changing it needs `up -d --build`, and setting it under `environment:` would do nothing at all. Default `Emil Books`. |
 
 ## What this deliberately does not include
 

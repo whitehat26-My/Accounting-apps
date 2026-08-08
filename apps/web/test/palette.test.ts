@@ -106,6 +106,25 @@ const ALLOWED: { file: string; tokens: string[]; because: string }[] = [
       'colour, stored per-organisation and rendered into their PDFs. It describes ' +
       'their paper, not this app’s screen, and it must not follow the reader’s theme.',
   },
+  {
+    file: 'app/layout.tsx',
+    tokens: ['#11161f', '#05070d'],
+    because:
+      'The `theme-color` meta tags, which colour the phone’s status bar once the app ' +
+      'is on a home screen. They are read by the OPERATING SYSTEM, outside the ' +
+      'document, where no CSS variable exists to resolve — a token here is not a ' +
+      'worse colour, it is no colour at all. Both themes are given, each converted ' +
+      'from the --color-rail oklch token so the seam above the rail does not show.',
+  },
+  {
+    file: 'app/manifest.ts',
+    tokens: ['#11161f', '#f3f6fa'],
+    because:
+      'The web app manifest is JSON parsed by the browser before the app runs, so it ' +
+      'cannot reference a stylesheet either. Same two surfaces as above: the chrome ' +
+      'matches --color-rail, the splash matches --color-surface. If the palette moves, ' +
+      'these move with it — that is what the conversion comments in each file are for.',
+  },
 ];
 
 function walk(dir: string): string[] {

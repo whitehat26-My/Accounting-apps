@@ -5,9 +5,8 @@ import { useState, type ReactNode } from 'react';
 import { api, saveSession } from '@/lib/api';
 import { Button, ErrorNote, Field, Input } from '@/components/ui';
 import { Icon } from '@/components/icons';
-import mark from '@/brand/mark.png';
-import wordmark from '@/brand/wordmark.png';
-import shop from '@/brand/shop.jpg';
+import { BrandMark, useImageFallback } from '@/components/brand';
+import { APP_NAME, BRAND_PHOTO, BRAND_WORDMARK, appNameParts } from '@/lib/brand';
 
 /**
  * Sign in / register, then land somewhere useful.
@@ -18,12 +17,21 @@ import shop from '@/brand/shop.jpg';
  * is brand new, so they go to /setup carrying the refresh token. Several: pick.
  *
  * ---------------------------------------------------------------------------
- * THE DOOR SHOWS THE SHOP.
+ * THE DOOR SHOWS THE SHOP — WHICHEVER SHOP THIS IS.
  *
- * The background is a photograph of Shah G Tech itself — the signboard, the
- * counter, the floor. Nobody signing in has to wonder whether they are in the
- * right system, and the five people who use this see their own workplace
- * rather than a stock gradient.
+ * The background is a photograph of the operator's own premises, if they
+ * supplied one at `public/brand/shop.jpg`: the signboard, the counter, the
+ * floor. Nobody signing in has to wonder whether they are in the right
+ * system, and the people who use it see their own workplace rather than a
+ * stock gradient.
+ *
+ * Everything here is OPTIONAL and everything here is theirs. This page used to
+ * hardcode one shop's name, wordmark and shopfront, which was fine while there
+ * was one shop and wrong the moment a second company ran their own copy — they
+ * would have signed in through somebody else's front door every morning. Name
+ * comes from `NEXT_PUBLIC_APP_NAME`, images from `public/brand/`, and each has
+ * a fallback that is a design rather than a gap: initials on a tile, and the
+ * gradients below standing on their own.
  *
  * A photograph behind a form is only ever as good as its scrim. Two layers
  * sit over it: a heavy left-to-right gradient so the headline has near-black
@@ -216,7 +224,7 @@ export default function LoginPage() {
               onChange={(e) => setEmail(e.target.value)}
               required
               autoComplete="email"
-              placeholder="you@shahgtech.my"
+              placeholder="you@company.com"
             />
           </Field>
 
@@ -292,16 +300,65 @@ function Heading({ title, subtitle }: { title: string; subtitle: string }) {
  * transform it without repainting a background-position every frame, and so
  * the browser can pick it up as a normal image request.
  */
-function AuthShell({ children }: { children: ReactNode }) {
+/**
+ * The wordmark, or the name set as text.
+ *
+ * `brightness-0 invert` paints whatever the operator supplied flat white,
+ * which is what makes an arbitrary logo sit correctly on a dark scrim without
+ * anybody having to prepare a light-on-dark variant. The text fallback is
+ * styled to match its weight, so a company with no wordmark gets a heading
+ * rather than a hole.
+ */
+function Wordmark() {
+  const { ref, failed, onError } = useImageFallback();
+
+  if (failed) {
+    return (
+      <span className="text-lg font-semibold tracking-tight text-rail-ink-strong">
+        {appNameParts().primary}
+      </span>
+    );
+  }
   return (
-    <div className="relative min-h-screen overflow-hidden">
+    // eslint-disable-next-line @next/next/no-img-element
+    <img
+      ref={ref}
+      src={BRAND_WORDMARK}
+      alt={APP_NAME}
+      className="h-9 w-auto brightness-0 invert"
+      onError={onError}
+    />
+  );
+}
+
+function AuthShell({ children }: { children: ReactNode }) {
+  /*
+   * No photograph is the ordinary case for a fresh installation, so its
+   * absence is handled rather than assumed away. On a 404 the <img> is dropped
+   * entirely: the two scrims and the brand wash below already paint a complete
+   * background, and they were designed to sit over dark anyway, so what is
+   * left reads as a deliberate deep-navy page rather than as a missing image.
+   */
+  const photo = useImageFallback();
+
+  return (
+    <div className="relative min-h-screen overflow-hidden bg-rail">
       {/* The shop itself, drifting slowly. `inset-0` with object-cover means
-          the crop follows the viewport rather than the photo's own ratio. */}
+          the crop follows the viewport rather than the photo's own ratio.
+          Hidden rather than unmounted when it fails, so the element survives
+          for the hook to inspect — a load that ended before hydration cannot
+          be detected from a node that is no longer there. */}
       <img
-        src={shop.src}
+        ref={photo.ref}
+        src={BRAND_PHOTO}
         alt=""
         aria-hidden
-        className="emil-drift absolute inset-0 h-full w-full object-cover"
+        className={
+          photo.failed
+            ? 'hidden'
+            : 'emil-drift absolute inset-0 h-full w-full object-cover'
+        }
+        onError={photo.onError}
       />
 
       {/* Scrim one, in two directions.
@@ -340,12 +397,14 @@ function AuthShell({ children }: { children: ReactNode }) {
       <div className="relative flex min-h-screen flex-col lg:flex-row">
         <aside className="hidden w-[46%] max-w-2xl flex-col justify-between p-12 lg:flex">
           <div className="emil-rise flex items-center gap-3.5">
-            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-plate p-1.5 shadow-lg shadow-black/40">
-              <img src={mark.src} alt="" className="h-full w-full object-contain" />
-            </div>
+            <BrandMark />
             <div>
-              <div className="text-base font-semibold leading-tight text-rail-ink-strong">Shah G Tech</div>
-              <div className="text-xs text-rail-ink">shop &amp; books</div>
+              <div className="text-base font-semibold leading-tight text-rail-ink-strong">
+                {appNameParts().primary}
+              </div>
+              {appNameParts().secondary ? (
+                <div className="text-xs text-rail-ink">{appNameParts().secondary}</div>
+              ) : null}
             </div>
           </div>
 
@@ -388,10 +447,8 @@ function AuthShell({ children }: { children: ReactNode }) {
           >
             {/* The brand panel is hidden below lg, so the mark comes along here. */}
             <div className="mb-2 flex items-center justify-center gap-3 lg:hidden">
-              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-plate p-1.5 shadow-lg shadow-black/40">
-                <img src={mark.src} alt="" className="h-full w-full object-contain" />
-              </div>
-              <img src={wordmark.src} alt="Shah G Tech" className="h-9 w-auto brightness-0 invert" />
+              <BrandMark className="h-10 w-10" textClass="text-xs" />
+              <Wordmark />
             </div>
 
             {children}
