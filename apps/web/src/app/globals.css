@@ -351,3 +351,103 @@ tbody tr:hover {
     transform: none;
   }
 }
+
+/* ---------------------------------------------------------------------------
+ * PRINTING A SCREEN.
+ *
+ * Invoices, receipts, statements, credit notes, the day sheet and the repair
+ * documents are real PDFs, generated server-side, and nothing here touches
+ * them. This is for the screens that have no PDF and get printed anyway —
+ * Reports, Insights, the audit trail — where until now Ctrl-P produced the
+ * dark navigation rail, the floating assistant bubble and a page of shadows.
+ *
+ * THE IMPORTANT PART IS THE THEME OVERRIDE, and it is not obvious.
+ *
+ * The palette is re-declared under `.dark`. A shop that prints at 9pm — which
+ * is when a shop prints — would otherwise send a near-black page to a printer:
+ * unreadable, and most of an ink cartridge. Paper has exactly one colour, so
+ * the print block puts the LIGHT values back under `.dark` as well. Nothing
+ * about the screen changes; this only applies while printing.
+ * ------------------------------------------------------------------------ */
+
+@media print {
+  /* Paper is white and ink is dark, whatever the screen was doing. */
+  :root,
+  .dark {
+    --color-surface: oklch(100% 0 0);
+    --color-surface-raised: oklch(100% 0 0);
+    --color-surface-sunken: oklch(97% 0 0);
+    --color-ink: oklch(15% 0 0);
+    --color-ink-muted: oklch(38% 0 0);
+    --color-ink-faint: oklch(50% 0 0);
+    --color-line: oklch(80% 0 0);
+    --color-line-strong: oklch(65% 0 0);
+    /* The accents keep their hue but darken: a printer that is out of colour
+       still has to render a loss differently from a profit, and mid-tone
+       green and red survive greyscale as distinguishable densities. */
+    --color-positive: oklch(45% 0.13 155);
+    --color-positive-soft: oklch(96% 0.02 155);
+    --color-negative: oklch(45% 0.19 25);
+    --color-negative-soft: oklch(96% 0.02 25);
+    --color-caution: oklch(48% 0.11 75);
+    --color-caution-soft: oklch(96% 0.03 85);
+    --color-brand: oklch(45% 0.14 245);
+    color-scheme: light;
+  }
+
+  /*
+   * Navigation is not content. The rail, the assistant and the theme toggle
+   * are how you GOT to the page; nobody wants them on the paper.
+   *
+   * `[aria-label="Screen brightness"]` rather than a print-only class: the
+   * toggle already names itself for assistive technology, and a second name
+   * for the same element is a second thing to keep in step.
+   */
+  aside,
+  [aria-label="Screen brightness"] {
+    display: none !important;
+  }
+
+  /* The assistant's launcher and panel, and the notice stack — all fixed
+     overlays, all of which would otherwise print on top of the first page. */
+  .fixed {
+    display: none !important;
+  }
+
+  /*
+   * The token, not a literal — the block above has already redefined
+   * `--color-surface` to paper white for both themes, so a hex here would be
+   * a second place to change and one the guard test correctly refuses. (It
+   * caught this exact line.)
+   */
+  body {
+    background: var(--color-surface);
+  }
+
+  /* Shadows and rings render as grey mush on paper; the border does the job. */
+  * {
+    box-shadow: none !important;
+  }
+
+  /* A card cut in half across a page break is the thing that makes a printed
+     screen look accidental. */
+  table,
+  section,
+  article,
+  .rounded-2xl,
+  .rounded-xl {
+    break-inside: avoid;
+  }
+
+  /* Let the content have the paper: the shell's max-width and padding exist
+     to centre a page in a browser window, not on A4. */
+  main {
+    padding: 0 !important;
+  }
+
+  /* A URL after every link is noise here — these are app routes, not
+     references somebody can follow off the page. */
+  a[href]::after {
+    content: none !important;
+  }
+}

@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { api, apiDownload } from '@/lib/api';
 import { displayDate, qty, rm, todayIso } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { useNotice } from '@/components/notice';
 
 /**
  * The shelf: levels at weighted-average cost, with the movement trail one
@@ -316,6 +317,7 @@ const PROMISE_STYLE: Record<Promise_['status'], string> = {
  * exists, take it back and it is gone.
  */
 function PromisesCard() {
+  const notice = useNotice();
   const [showExpired, setShowExpired] = useState(false);
   const register = useQuery({
     queryKey: ['warranties'],
@@ -403,7 +405,7 @@ function PromisesCard() {
                     void apiDownload(
                       `/v1/stock/warranties/${encodeURIComponent(p.serialNo)}/card.pdf`,
                       `warranty-${p.serialNo}.pdf`,
-                    ).catch((e: Error) => window.alert(e.message))
+                    ).catch((e: Error) => notice.error(e, 'Could not print the warranty card'))
                   }
                 >
                   Card

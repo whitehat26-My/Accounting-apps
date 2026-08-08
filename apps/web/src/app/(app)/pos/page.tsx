@@ -5,6 +5,7 @@ import { useState } from 'react';
 import { api, apiBlobUrl } from '@/lib/api';
 import { qty, rm, todayIso } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { useNotice } from '@/components/notice';
 
 /**
  * The till.
@@ -47,6 +48,7 @@ interface SaleResult {
 }
 
 export default function PosPage() {
+  const notice = useNotice();
   const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartLine[]>([]);
@@ -159,6 +161,13 @@ export default function PosPage() {
       setResult(sale);
       setCart([]);
       setTendered('');
+      /*
+       * Short and factual, with the number on it. The screen already shows the
+       * sale, so this is not news to somebody looking at it — it is for the
+       * cashier whose eyes are on the drawer, and for anyone reading the
+       * screen aloud, since it is announced.
+       */
+      notice.ok(`Sale rung — ${sale.invoiceNo}`);
       /*
        * The sale just changed the day's takings and the shelf. Say so to the
        * cache, or a cashier who rings and flips straight to Today sees the
@@ -355,7 +364,9 @@ export default function PosPage() {
                 onClick={() =>
                   void apiBlobUrl(`/v1/receipts/${result.receiptId}/pdf?format=thermal`)
                     .then((url) => window.open(url, '_blank'))
-                    .catch((e: Error) => window.alert(e.message))
+                    // Was a native alert: a modal browser box at a counter with
+                    // a customer waiting, over a receipt that did not open.
+                    .catch((e: Error) => notice.error(e, 'Could not open the receipt'))
                 }
               >
                 Print receipt

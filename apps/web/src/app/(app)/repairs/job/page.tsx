@@ -8,6 +8,7 @@ import { displayDate, qty, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 import { RepairPhotos } from '@/components/repair-photos';
 import { RepairSignatures } from '@/components/signature-pad';
+import { useNotice } from '@/components/notice';
 
 /**
  * One job, driven through its life: quote it, record the approval, mark it
@@ -306,10 +307,13 @@ function RepairDetail() {
  * others beside it.
  */
 function PrintRow({ job }: { job: Job }) {
+  const notice = useNotice();
   const open = (path: string) => {
     void apiBlobUrl(path)
       .then((url) => window.open(url, '_blank'))
-      .catch((e: Error) => window.alert(e.message));
+      // A native alert box is modal: it stops the counter until somebody
+      // clicks it, over a document that simply did not open.
+      .catch((e: Error) => notice.error(e, 'Could not open the document'));
   };
   const reportable = !['RECEIVED'].includes(job.status);
 
@@ -350,6 +354,7 @@ function Row({ label, value }: { label: string; value: string }) {
  * to ignore the line that matters.
  */
 function WarrantyLine({ serialNo }: { serialNo: string }) {
+  const notice = useNotice();
   const warranty = useQuery({
     queryKey: ['warranty', serialNo],
     queryFn: () =>
@@ -394,7 +399,7 @@ function WarrantyLine({ serialNo }: { serialNo: string }) {
           void apiDownload(
             `/v1/stock/warranties/${encodeURIComponent(serialNo)}/card.pdf`,
             `warranty-${serialNo}.pdf`,
-          ).catch((e: Error) => window.alert(e.message))
+          ).catch((e: Error) => notice.error(e, 'Could not print the warranty card'))
         }
       >
         Print the card

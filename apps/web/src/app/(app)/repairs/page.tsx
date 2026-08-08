@@ -7,6 +7,7 @@ import { api } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 import { RepairBoard } from '@/components/repair-board';
+import { useNotice } from '@/components/notice';
 
 /**
  * The workshop queue, plus intake.
@@ -26,6 +27,7 @@ interface Job {
 }
 
 export default function RepairsPage() {
+  const notice = useNotice();
   const queryClient = useQueryClient();
   const jobs = useQuery({
     queryKey: ['repairs'],
@@ -46,7 +48,7 @@ export default function RepairsPage() {
         method: 'POST',
         body: { name: customer, isCustomer: true, ...(phone ? { phone } : {}) },
       });
-      return api('/v1/repairs', {
+      return api<{ jobNo: string }>('/v1/repairs', {
         method: 'POST',
         body: {
           contactId: contact.id,
@@ -58,7 +60,9 @@ export default function RepairsPage() {
         },
       });
     },
-    onSuccess: () => {
+    onSuccess: (job) => {
+      // The job number is the thing the counter writes on the device's bag.
+      notice.ok(`Taken in — ${job.jobNo}`);
       setCustomer('');
       setPhone('');
       setDevice('');

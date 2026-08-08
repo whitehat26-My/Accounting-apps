@@ -6,6 +6,7 @@ import { api } from '@/lib/api';
 import { displayDate } from '@/lib/display';
 import { ErrorNote, Skeleton } from '@/components/ui';
 import { useFlip } from '@/components/board';
+import { useNotice } from '@/components/notice';
 
 /**
  * The workshop, laid out the way the workshop is.
@@ -67,6 +68,7 @@ const ADVANCE: Record<string, { to: string; label: string } | undefined> = {
 };
 
 export function RepairBoard() {
+  const notice = useNotice();
   const queryClient = useQueryClient();
   const board = useQuery({
     queryKey: ['repair-board'],
@@ -79,7 +81,11 @@ export function RepairBoard() {
     // which is why the error is now rendered rather than merely handled.
     mutationFn: ({ id, to }: { id: string; to: string }) =>
       api(`/v1/repairs/${id}/status`, { method: 'POST', body: { to } }),
-    onSuccess: () => {
+    onSuccess: (_data, { to }) => {
+      // The card visibly travels, so this is not the primary feedback — it is
+      // the announced one, and the one that survives reduced motion, where
+      // the card simply appears in its new column with nothing to notice.
+      notice.ok(to === 'IN_PROGRESS' ? 'On the bench' : 'Ready for collection');
       void queryClient.invalidateQueries({ queryKey: ['repair-board'] });
       // The flat list and the bench-profit card read the same jobs.
       void queryClient.invalidateQueries({ queryKey: ['repairs'] });
