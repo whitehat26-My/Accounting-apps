@@ -1,0 +1,45 @@
+# Netlify serves the screens. The API and the worker are long-running
+# containers elsewhere (Railway or Fly), and PostgreSQL is Supabase.
+# Runbook: docs/DEPLOY.md § Cloud.
+#
+#   browser -> Netlify            static files, /api/* proxied onward
+#                 \-> Railway     API container + worker container
+#                        \-> Supabase   PostgreSQL
+#
+# Two things about this file are load-bearing and both are easy to lose.
+#
+# 1. THE /api PROXY IS DELIBERATELY NOT HERE. Netlify does not substitute
+#    environment variables into redirect targets, and each site points at a
+#    different shop's API host, so the rule cannot be a constant. It is written
+#    into `out/_redirects` by `scripts/netlify-redirects.mjs` during the build
+#    below, from API_ORIGIN, and that script fails the build rather than deploy
+#    a site where every screen loads and every login 404s.
+#
+# 2. THE HEADERS BELOW ARE THE ONLY ONES THIS DEPLOYMENT GETS. `next.config.ts`
+#    declares them in `headers()`, which Next runs on a server — and a static
+#    export has no server, so that function is never called. Copied here, the
+#    two can drift apart silently; `apps/web/test/netlify-headers.test.ts`
+#    asserts they stay byte-identical.
+
+[build]
+  command = "EMIL_STATIC=1 pnpm --filter @emil/web build && node scripts/netlify-redirects.mjs"
+  publish = "apps/web/out"
+
+[build.environment]
+  NODE_VERSION = "22"
+
+# Keep these in step with `headers()` in apps/web/next.config.ts.
+# The load-bearing one for an accounting app is `frame-ancestors 'none'` /
+# `X-Frame-Options: DENY`: without it the POS, approvals and sign-off screens
+# can be framed and clickjacked. `blob:` on img and connect is required —
+# "Print receipt" fetches the PDF and opens it as a blob URL.
+[[headers]]
+  for = "/*"
+
+  [headers.values]
+    Content-Security-Policy = "default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; font-src 'self'; connect-src 'self' blob:; frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+    X-Frame-Options = "DENY"
+    X-Content-Type-Options = "nosniff"
+    Referrer-Policy = "strict-origin-when-cross-origin"
+    Permissions-Policy = "camera=(), microphone=(), geolocation=()"
+    Strict-Transport-Security = "max-age=63072000; includeSubDomains"

@@ -55,6 +55,12 @@ const NOT_PLUMBED: Record<string, string> = {
  * Variables `apps/web` reads that the compose file deliberately does not pass.
  */
 const WEB_NOT_PLUMBED: Record<string, string> = {
+  EMIL_STATIC:
+    'the Netlify build target — `output: export`, a directory of files with no server. '
+    + 'The compose file exists to run the OPPOSITE build: the one whose `rewrites()` '
+    + 'proxies /api to the api container. Setting this there would produce a web image '
+    + 'that starts, serves every screen, and has no route to the API at all. Netlify '
+    + 'sets it in netlify.toml, which is the only place it belongs.',
   DEMO_BASE_PATH:
     'the sub-path the GitHub Pages export is served under, set by that workflow. '
     + 'The production compose file serves from the root, where the correct value is '
