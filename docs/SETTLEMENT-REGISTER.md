@@ -60,6 +60,7 @@ The ledger core and everything that posts to it.
 | Period close, chart of accounts, manual journals | `0017` |
 | **Year-end close and reopen** | `0025`, `packages/db/src/year-end.ts` |
 | Reporting: SOFP, SOPL, trial balance, cash flow, changes in equity, general ledger, CSV | `0009`, `0020` |
+| **Statements on any date, not only period ends** — whole periods from the rollup, the part-period at each edge from `journal_line` | `packages/db/src/report.ts` |
 | Tax returns with amendment history | `0019` |
 | Items catalogue | `0022` |
 | **Perpetual inventory**: weighted-average cost, COGS on sale, counted adjustments, shrinkage as its own line | `0026`, `packages/domain/src/inventory.ts`, `packages/db/src/inventory.ts` |

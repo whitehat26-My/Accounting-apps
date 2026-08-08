@@ -18,23 +18,108 @@ import { loadBaseCurrency } from './invoice.js';
 /**
  * Financial statements — M7, persistence layer.
  *
- * Reads ONLY `account_period_balance`, never `journal_line`. The rollup exists
- * so a balance sheet does not scan millions of rows; going to the journal here
- * would give up the reason it exists.
+ * ---------------------------------------------------------------------------
+ * THE ROLLUP FOR WHOLE PERIODS, THE JOURNAL FOR THE PART-PERIOD AT EACH EDGE.
  *
- * Two subtleties worth naming:
+ * `account_period_balance` holds ONE ROW PER ACCOUNT PER PERIOD. It cannot
+ * express "the first eight days of August", and for a long time these queries
+ * pretended that did not matter: a period was included only if it ended on or
+ * before the window's end date.
+ *
+ * Every statement asked for on a date that is not a period end was therefore
+ * missing the period in flight — which is to say, every statement anybody runs
+ * about the month they are living in. Run the profit and loss on the 8th and it
+ * reported RM 0.00 of revenue while the balance sheet beside it showed the
+ * year's earnings; run the balance sheet and the cash figure was days stale and
+ * disagreed with the dashboard. Found by printing the Reports screen and
+ * reading it, not by a failing test — there was no test that asked for a
+ * mid-month window.
+ *
+ * So the window is now answered in two parts, and the split is the whole idea:
+ *
+ *   - Periods lying ENTIRELY inside the window come from the rollup. This is
+ *     the overwhelming majority of any window and the reason the rollup exists;
+ *     a year of history stays a handful of rows per account.
+ *   - The period straddling either EDGE of the window is summed from
+ *     `journal_line` by entry date. That is at most two periods — a month or a
+ *     quarter of entries for one shop — and it is the only source that can
+ *     answer a partial period at all.
+ *
+ * The two sets are exact complements (`NOT` of the same predicate) so nothing
+ * is counted twice and nothing is dropped, and `journal_entry.fiscal_period_id`
+ * is NOT NULL with every entry dated inside its own period, which is what makes
+ * that true rather than merely likely.
+ * ---------------------------------------------------------------------------
+ *
+ * Two further subtleties worth naming:
  *
  * 1. `account_period_balance` has `currency` in its primary key, and today
- *    `postJournalEntry()` only ever writes base-currency rows. Every query
- *    below filters on the base currency explicitly anyway. If a
+ *    `postJournalEntry()` only ever writes base-currency rows. Every rollup
+ *    query below filters on the base currency explicitly anyway. If a
  *    transaction-currency row is ever written, an unfiltered SUM would
  *    double-count every foreign transaction and the balance sheet would be
  *    quietly wrong. `reportingSanityCheck()` asserts that has not happened.
+ *    The journal side needs no such filter: `base_debit` / `base_credit` are
+ *    already base-currency amounts, which is exactly what the rollup stores.
  *
  * 2. A cumulative balance is `SUM(net_movement)` over periods, because opening
  *    balances are real dated journal entries rather than a rollup column —
  *    see migration 0008.
  */
+
+/**
+ * A fiscal period lying ENTIRELY within the window, so its rollup row is an
+ * exact answer for it. `from = null` means since inception, so only the upper
+ * edge constrains it.
+ *
+ * Defined once and used by every statement: the whole-period rule and the
+ * part-period rule below must stay exact complements, and two copies of a
+ * predicate is how they stop being.
+ */
+function wholePeriodsIn(tx: Tx, window: { from: string | null; to: string }) {
+  return tx`
+        p.end_date <= ${window.to}::date
+    AND (${window.from}::date IS NULL OR p.start_date >= ${window.from}::date)
+  `;
+}
+
+/**
+ * The part-period at each edge: entries dated inside the window, belonging to a
+ * period that is NOT wholly inside it.
+ *
+ * ---------------------------------------------------------------------------
+ * THE PERIOD BOUNDS ARE WHAT KEEP THIS CHEAP, AND THEY ARE NOT REDUNDANT.
+ *
+ * `NOT (wholePeriodsIn)` alone is correct but not selective: for a balance
+ * sheet, `from` is null, so "entries dated on or before `to`" is the ENTIRE
+ * history, and PostgreSQL would read every journal line ever posted before
+ * discarding all but the current month. That is precisely the scan the rollup
+ * exists to avoid, so the fix would have quietly undone the reason for the
+ * table it was fixing.
+ *
+ * Adding "and the period overlaps the window at all" bounds the driving set to
+ * AT MOST TWO periods — the one straddling each edge — which are then reached
+ * through `journal_entry_period_idx` and `journal_line_entry_idx`. The query
+ * plans as an index scan over one month of a shop's entries rather than a
+ * sequential scan over its life.
+ * ---------------------------------------------------------------------------
+ *
+ * `REVERSED` is included alongside `POSTED` because that is what the rollup
+ * itself counts (see `detectRollupDrift`): the ledger is append-only, so a
+ * reversed entry's lines still stand and are cancelled by the reversing entry's
+ * own lines rather than by deletion. Counting only `POSTED` here would make the
+ * journal disagree with the rollup at the seam between them.
+ */
+function partPeriodEntriesIn(tx: Tx, window: { from: string | null; to: string }) {
+  return tx`
+        NOT (${wholePeriodsIn(tx, window)})
+    AND p.start_date <= ${window.to}::date
+    AND (${window.from}::date IS NULL OR p.end_date >= ${window.from}::date)
+    AND e.status IN ('POSTED', 'REVERSED')
+    AND e.entry_date <= ${window.to}::date
+    AND (${window.from}::date IS NULL OR e.entry_date >= ${window.from}::date)
+  `;
+}
 
 export class ReportError extends Error {
   constructor(
@@ -56,10 +141,15 @@ export class ReportError extends Error {
 }
 
 /**
- * Account balances aggregated over a period window.
+ * Account balances aggregated over a date window.
  *
  * `from = null` means since inception, which is what a balance sheet needs.
- * The window is period-based: `to` should be a fiscal period end date.
+ *
+ * The window is by DATE, and `to` may fall anywhere — mid-month is the normal
+ * case, not the exceptional one. This docstring used to say "`to` should be a
+ * fiscal period end date", which was not a contract so much as a description of
+ * the bug: every caller passed today's date, and today is almost never a period
+ * end. See the note at the top of this file.
  */
 export async function accountBalances(
   tx: Tx,
@@ -71,14 +161,35 @@ export async function accountBalances(
   const rows = await tx<
     { account_id: string; code: string; name: string; type: AccountType; movement: string; tags: string[] }[]
   >`
+      WITH whole AS (
+          -- Periods entirely inside the window: the rollup, doing its job.
+          SELECT b.account_id, SUM(b.net_movement) AS movement
+            FROM account_period_balance b
+            JOIN fiscal_period p
+              ON p.tenant_id = b.tenant_id AND p.id = b.fiscal_period_id
+           WHERE b.tenant_id = ${ctx.tenantId}
+             AND b.currency = ${baseCurrency}
+             AND ${wholePeriodsIn(tx, window)}
+           GROUP BY b.account_id
+      ),
+      part AS (
+          -- The period in flight at either edge, which the rollup cannot cut.
+          -- Driven FROM fiscal_period: see partPeriodEntriesIn.
+          SELECT l.account_id, SUM(l.base_debit - l.base_credit) AS movement
+            FROM fiscal_period p
+            JOIN journal_entry e
+              ON e.tenant_id = p.tenant_id AND e.fiscal_period_id = p.id
+            JOIN journal_line l
+              ON l.tenant_id = e.tenant_id AND l.journal_entry_id = e.id
+           WHERE p.tenant_id = ${ctx.tenantId}
+             AND ${partPeriodEntriesIn(tx, window)}
+           GROUP BY l.account_id
+      )
       SELECT a.id                                   AS account_id,
              a.code,
              a.name,
              a.type,
-             -- Conditional sum, not a WHERE filter. With a LEFT JOIN, a rollup
-             -- row whose period falls outside the window survives with p.*
-             -- NULL and would otherwise still be summed.
-             COALESCE(SUM(CASE WHEN p.id IS NOT NULL THEN b.net_movement ELSE 0 END), 0)::text
+             (COALESCE(w.movement, 0) + COALESCE(pt.movement, 0))::text
                                                     AS movement,
              COALESCE(
                ARRAY(SELECT t.tag FROM account_tag t
@@ -87,17 +198,9 @@ export async function accountBalances(
                '{}'
              )                                      AS tags
         FROM account a
-        LEFT JOIN account_period_balance b
-               ON b.tenant_id = a.tenant_id
-              AND b.account_id = a.id
-              AND b.currency = ${baseCurrency}
-        LEFT JOIN fiscal_period p
-               ON p.tenant_id = b.tenant_id
-              AND p.id = b.fiscal_period_id
-              AND p.end_date <= ${window.to}::date
-              AND (${window.from}::date IS NULL OR p.start_date >= ${window.from}::date)
+        LEFT JOIN whole w  ON w.account_id  = a.id
+        LEFT JOIN part  pt ON pt.account_id = a.id
        WHERE a.tenant_id = ${ctx.tenantId}
-       GROUP BY a.id, a.code, a.name, a.type, a.tenant_id
        ORDER BY a.code
   `;
 
@@ -161,16 +264,25 @@ async function yearEndCloseMovement(
         FROM journal_line l
         JOIN journal_entry e
           ON e.tenant_id = l.tenant_id AND e.id = l.journal_entry_id
-        JOIN fiscal_period p
-          ON p.tenant_id = e.tenant_id AND p.id = e.fiscal_period_id
        WHERE l.tenant_id = ${ctx.tenantId}
          AND e.source_document_type = 'YEAR_END_CLOSE'
          -- REVERSED included on purpose. A reopened year's closing entry and
          -- its reversal both stand in the ledger and cancel; dropping one would
          -- leave the other subtracted from the P&L on its own.
          AND e.status IN ('POSTED', 'REVERSED')
-         AND p.end_date <= ${window.to}::date
-         AND (${window.from}::date IS NULL OR p.start_date >= ${window.from}::date)
+         /*
+          * By ENTRY DATE, not by period containment — and this must match how
+          * accountBalances decides what is in the window, or the two disagree.
+          *
+          * It used to ask for whole periods, which was invisible while windows
+          * were always whole years: a close dated 31/12 sits in December, and
+          * December is wholly inside 01/01–31/12 either way. Now that a window
+          * can end mid-period, a close could be ADDED by the balance query and
+          * not SUBTRACTED here, which would report a closed year's trading as
+          * negative. Same rule on both sides, so they cannot drift apart.
+          */
+         AND e.entry_date <= ${window.to}::date
+         AND (${window.from}::date IS NULL OR e.entry_date >= ${window.from}::date)
        GROUP BY l.account_id
   `;
 
@@ -396,22 +508,50 @@ export async function trialBalanceReport(
   const rows = await tx<
     { account_id: string; code: string; name: string; type: AccountType; debit: string; credit: string }[]
   >`
-      SELECT a.id AS account_id, a.code, a.name, a.type,
-             COALESCE(SUM(CASE WHEN p.id IS NOT NULL THEN b.debit_total  ELSE 0 END), 0)::text AS debit,
-             COALESCE(SUM(CASE WHEN p.id IS NOT NULL THEN b.credit_total ELSE 0 END), 0)::text AS credit
-        FROM account a
-        LEFT JOIN account_period_balance b
-               ON b.tenant_id = a.tenant_id AND b.account_id = a.id
-              AND b.currency = ${baseCurrency}
-        LEFT JOIN fiscal_period p
-               ON p.tenant_id = b.tenant_id AND p.id = b.fiscal_period_id
-              AND p.end_date <= ${window.to}::date
-              AND (${window.from}::date IS NULL OR p.start_date >= ${window.from}::date)
-       WHERE a.tenant_id = ${ctx.tenantId}
-       GROUP BY a.id, a.code, a.name, a.type
-       HAVING COALESCE(SUM(CASE WHEN p.id IS NOT NULL THEN b.debit_total  ELSE 0 END), 0) <> 0
-           OR COALESCE(SUM(CASE WHEN p.id IS NOT NULL THEN b.credit_total ELSE 0 END), 0) <> 0
-       ORDER BY a.code
+      WITH whole AS (
+          SELECT b.account_id,
+                 SUM(b.debit_total)  AS debit,
+                 SUM(b.credit_total) AS credit
+            FROM account_period_balance b
+            JOIN fiscal_period p
+              ON p.tenant_id = b.tenant_id AND p.id = b.fiscal_period_id
+           WHERE b.tenant_id = ${ctx.tenantId}
+             AND b.currency = ${baseCurrency}
+             AND ${wholePeriodsIn(tx, window)}
+           GROUP BY b.account_id
+      ),
+      part AS (
+          /*
+           * Debit and credit kept APART, never netted. A trial balance whose
+           * two columns were derived from one signed movement could not show
+           * an account that took RM 500 in and RM 500 out — and "both columns
+           * are zero" is a different fact from "nothing happened here".
+           */
+          SELECT l.account_id,
+                 SUM(l.base_debit)  AS debit,
+                 SUM(l.base_credit) AS credit
+            FROM fiscal_period p
+            JOIN journal_entry e
+              ON e.tenant_id = p.tenant_id AND e.fiscal_period_id = p.id
+            JOIN journal_line l
+              ON l.tenant_id = e.tenant_id AND l.journal_entry_id = e.id
+           WHERE p.tenant_id = ${ctx.tenantId}
+             AND ${partPeriodEntriesIn(tx, window)}
+           GROUP BY l.account_id
+      ),
+      totals AS (
+          SELECT a.id AS account_id, a.code, a.name, a.type,
+                 COALESCE(w.debit,  0) + COALESCE(pt.debit,  0) AS debit,
+                 COALESCE(w.credit, 0) + COALESCE(pt.credit, 0) AS credit
+            FROM account a
+            LEFT JOIN whole w  ON w.account_id  = a.id
+            LEFT JOIN part  pt ON pt.account_id = a.id
+           WHERE a.tenant_id = ${ctx.tenantId}
+      )
+      SELECT account_id, code, name, type, debit::text, credit::text
+        FROM totals
+       WHERE debit <> 0 OR credit <> 0
+       ORDER BY code
   `;
 
   const totalDebit = rows.reduce(

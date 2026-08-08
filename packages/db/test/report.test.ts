@@ -425,3 +425,110 @@ describe('the rollup holds base-currency rows only', () => {
     expect(check.foreignCurrencyRollupRows).toBe(0);
   });
 });
+
+/**
+ * A statement asked for on a day that is not a period end.
+ *
+ * ---------------------------------------------------------------------------
+ * THE WINDOW USED TO BE PERIOD-GRANULAR, AND EVERY TEST ABOVE HID IT.
+ *
+ * `account_period_balance` holds one row per account per period, and the
+ * queries included a period only if it ENDED on or before the window's end
+ * date. Every test in this file asks for whole months or whole years, so the
+ * rule was never exercised at a boundary — and the bug it concealed was that
+ * a statement about the month you are LIVING IN reported nothing at all.
+ *
+ * On a real shop's books: profit or loss read RM 0.00 on the 8th of the month
+ * while the balance sheet beside it showed the year's earnings, and the cash
+ * figure was days stale. Found by printing the Reports screen and reading it.
+ *
+ * The window is now answered as whole periods from the rollup plus the
+ * part-period at each edge from `journal_line`. These tests pin both halves
+ * AND the seam between them, because the failure mode of a two-source query is
+ * double counting, which no single-window assertion would catch.
+ * ---------------------------------------------------------------------------
+ */
+describe('a window that ends inside a fiscal period', () => {
+  let t: Tenant;
+  let c: { tenantId: string; userId: string };
+
+  beforeAll(async () => {
+    t = await seedTenant(admin, 'Part Period Sdn Bhd');
+    c = { tenantId: t.tenantId, userId: t.userId };
+    // Two invoices inside ONE monthly period, so a window can cut between them.
+    await invoiceFor(t, '5000.00', 'NONE', '2026-08-05');
+    await invoiceFor(t, '3000.00', 'NONE', '2026-08-20');
+  }, 60_000);
+
+  const sopl = (from: string, to: string) =>
+    withTenant(sql, c, (tx) => statementOfProfitOrLoss(tx, c, { from, to }));
+
+  it('reports the trading that has actually happened this month', async () => {
+    // THE BUG, in one line: this reported RM 0.00.
+    const report = await sopl('2026-08-01', '2026-08-10');
+    expect(line(report, 'sopl-revenue').amount.toDecimalString()).toBe('5000.0000');
+  });
+
+  it('still reports the whole period correctly, from the rollup', async () => {
+    const report = await sopl('2026-08-01', '2026-08-31');
+    expect(line(report, 'sopl-revenue').amount.toDecimalString()).toBe('8000.0000');
+  });
+
+  it('does not count the part-period twice when the window covers it whole', async () => {
+    /*
+     * The failure mode of reading two sources: a period wholly inside the
+     * window is in the rollup AND its entries are in the journal. If the two
+     * halves were not exact complements this would read RM 16,000.
+     */
+    const report = await sopl('2026-01-01', '2026-12-31');
+    expect(line(report, 'sopl-revenue').amount.toDecimalString()).toBe('8000.0000');
+  });
+
+  it('cuts the lower edge of the window too, not only the upper', async () => {
+    const report = await sopl('2026-08-15', '2026-08-31');
+    expect(line(report, 'sopl-revenue').amount.toDecimalString()).toBe('3000.0000');
+  });
+
+  it('reads a window that lies entirely inside one period', async () => {
+    const report = await sopl('2026-08-10', '2026-08-25');
+    expect(line(report, 'sopl-revenue').amount.toDecimalString()).toBe('3000.0000');
+  });
+
+  it('carries the same movement onto the balance sheet as at that day', async () => {
+    const sofp = await withTenant(sql, c, (tx) =>
+      statementOfFinancialPosition(tx, c, { asOfDate: '2026-08-10' }),
+    );
+    // The receivable exists on the 10th, so the balance sheet has to show it.
+    expect(line(sofp, 'sofp-ar').amount.toDecimalString()).toBe('5000.0000');
+    expect(line(sofp, 'sofp-cye').amount.toDecimalString()).toBe('5000.0000');
+    // And it must still balance — a part-period added to one side only would
+    // be a worse bug than the one being fixed.
+    expect(line(sofp, 'sofp-t-assets').amount.toDecimalString()).toBe(
+      line(sofp, 'sofp-t-eqliab').amount.toDecimalString(),
+    );
+  });
+
+  it('keeps the trial balance balanced mid-period', async () => {
+    const tb = await withTenant(sql, c, (tx) =>
+      trialBalanceReport(tx, c, { from: null, to: '2026-08-10' }),
+    );
+    expect(tb.balanced).toBe(true);
+    expect(tb.totalDebit).toBe('5000.0000');
+
+    const revenue = tb.rows.find((r) => r.code === '4000');
+    // Debit and credit stay APART: the revenue line is a credit, not a
+    // negative debit, and a netted part-period would have lost that.
+    expect(revenue?.credit).toBe('5000.0000');
+    expect(revenue?.debit).toBe('0.0000');
+  });
+
+  it('agrees with the accounting equation mid-period', async () => {
+    const equation = await withTenant(sql, c, (tx) =>
+      accountingEquationAt(tx, c, '2026-08-10'),
+    );
+    // `balances`, present tense — it is a question about this instant, not a
+    // flag somebody set.
+    expect(equation.balances).toBe(true);
+    expect(equation.difference.toDecimalString()).toBe('0.0000');
+  });
+});
