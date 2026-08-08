@@ -516,15 +516,24 @@ code(['http://192.168.1.50:8080']);
 
 h2('Put it on the home screen');
 
-body('So it opens like an app rather than a bookmark:');
+body('Do this on every phone and on the counter iPad. It is not a bookmark: the system tells the '
+  + 'phone it is an app, so it gets its own icon on the home screen and opens FULL SCREEN, with no '
+  + 'address bar and no browser buttons across the top. Staff will not be able to tell it apart from '
+  + 'anything else on their phone, and there is one less row of pixels between a cashier and the '
+  + '"Change due" figure.');
 
 table(
   [{ label: 'Phone', width: 0.22 }, { label: 'How', width: 0.78 }],
   [
     [{ text: 'iPhone / iPad', bold: true }, 'Open the page in Safari, tap the Share button (the square with an arrow), scroll down and tap "Add to Home Screen".'],
-    [{ text: 'Android', bold: true }, 'Open the page in Chrome, tap the three dots at the top right, tap "Add to Home screen".'],
+    [{ text: 'Android', bold: true }, 'Open the page in Chrome, tap the three dots at the top right, tap "Install app" or "Add to Home screen".'],
   ],
 );
+
+body(`The icon is the picture you put at ${DIR}\\apps\\web\\public\\brand\\mark.png in Step 6. `
+  + 'If you did not put one there, the phone shows a letter tile instead — still a proper icon, just '
+  + 'not yours. Change the picture and rebuild, and the icon follows on every phone the next time it '
+  + 'is added.');
 
 body('The screens are built to work at phone size: the menu becomes a strip of icons down the left, '
   + 'and wide tables scroll sideways inside their own box rather than dragging the whole page about. '

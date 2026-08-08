@@ -1,9 +1,9 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
 import { GeistSans } from 'geist/font/sans';
 import './globals.css';
 import { Providers } from './providers';
-import { APP_NAME } from '@/lib/brand';
+import { APP_NAME, BRAND_MARK, appNameParts } from '@/lib/brand';
 
 /**
  * The browser tab carries the INSTALLATION's name, not any one tenant's.
@@ -17,6 +17,64 @@ import { APP_NAME } from '@/lib/brand';
 export const metadata: Metadata = {
   title: APP_NAME,
   description: 'Point of sale, workshop and accounts for Malaysian businesses',
+
+  /**
+   * iOS does not read the web app manifest for any of this.
+   *
+   * Android takes `display: standalone` from `manifest.ts` and is done.
+   * Safari has its own, older mechanism and ignores the manifest's display
+   * mode, so "Add to Home Screen" without these tags gives an icon that opens
+   * a browser with an address bar — the exact thing the setup guide promises
+   * it will not do. Both halves are needed, and only one of them is standard.
+   *
+   * `statusBarStyle: 'default'` and not `black-translucent`: translucent
+   * hands the app the area behind the clock and battery, which is right for a
+   * photo-led screen and wrong for this one — the rail would slide under the
+   * status bar and the first nav item would sit beneath the time.
+   */
+  appleWebApp: {
+    capable: true,
+    title: appNameParts().primary,
+    statusBarStyle: 'default',
+  },
+
+  /*
+   * Safari uses `apple-touch-icon` rather than the manifest's icons, so the
+   * operator's own mark has to be named twice. Same file both times — a
+   * company replaces `public/brand/mark.png` and both follow.
+   */
+  icons: { apple: BRAND_MARK },
+
+  /*
+   * The legacy Apple tag, by hand, because Next no longer emits it.
+   *
+   * `appleWebApp.capable: true` above now produces only the standardised
+   * `mobile-web-app-capable`, which Chrome reads and older Safari does not.
+   * iOS 16.4 and later honour the manifest's `display: standalone` and are
+   * fine without this; everything before that needs the old name or the app
+   * opens with an address bar over it.
+   *
+   * That older group is exactly the hardware a shop has — the counter iPad
+   * bought a few years ago, the spare phone behind the till. Two duplicated
+   * tags are a trivial price for those devices behaving like the guide says
+   * they will, and the tag is inert on any phone that no longer needs it.
+   */
+  other: { 'apple-mobile-web-app-capable': 'yes' },
+};
+
+/**
+ * The colour behind the phone's status bar once installed.
+ *
+ * Two values, because the app has two themes and a single one is visibly
+ * wrong in the other: a light bar over the night palette is a white stripe
+ * above a near-black rail. Converted from the `--color-rail` oklch tokens in
+ * `globals.css` rather than chosen by eye, so the seam does not show.
+ */
+export const viewport: Viewport = {
+  themeColor: [
+    { media: '(prefers-color-scheme: light)', color: '#11161f' },
+    { media: '(prefers-color-scheme: dark)', color: '#05070d' },
+  ],
 };
 
 /**
