@@ -1,7 +1,16 @@
 /*
- * Builds the shop-PC setup guide PDF.
+ * Builds the shop-PC setup guide PDF — for whichever company is installing it.
  *
  *   node docs/report/build-deploy-guide.cjs
+ *   node docs/report/build-deploy-guide.cjs --company "Delima Trading" \
+ *        --tagline "kedai & akaun" --folder delima --logo /path/to/their.png
+ *
+ * Every company that runs its own copy needs this document with its own name
+ * on it, its own folder in the commands, and no trace of anybody else's shop —
+ * a guide that tells somebody to `cd C:\shahgtech` is a guide they will
+ * mistype, and one headed with another company's name reads like it was sent
+ * to them by mistake. Defaults reproduce the original Shah G Tech guide
+ * exactly, so regenerating without arguments changes nothing.
  *
  * The layout helpers below are deliberately a copy of the ones in
  * build-report.cjs rather than a shared module. Two documents is not yet a
@@ -14,8 +23,33 @@ const fs = require('node:fs');
 
 const ROOT = path.join(__dirname, '..', '..');
 const PDFDocument = require(path.join(ROOT, 'apps/api/node_modules/pdfkit'));
-const LOGO = path.join(ROOT, 'apps/api/src/pdf/wordmark.png');
-const OUT = path.join(__dirname, 'Shah-G-Tech-Setup-Guide.pdf');
+
+/** `--name value` from the command line, or the default. */
+function arg(name, fallback) {
+  const i = process.argv.indexOf(`--${name}`);
+  const value = i > -1 ? process.argv[i + 1] : undefined;
+  return value && !value.startsWith('--') ? value : fallback;
+}
+
+const COMPANY = arg('company', 'Shah G Tech');
+const TAGLINE = arg('tagline', 'shop & books');
+/** The folder the app is installed into: `C:\<folder>` throughout the guide. */
+const FOLDER = arg('folder', 'shahgtech');
+const DIR = `C:\\${FOLDER}`;
+
+/*
+ * The cover logo belongs to whoever the guide is for, so it is NOT defaulted
+ * for a named company: passing `--company` without `--logo` produces a cover
+ * with their name set in type and no mark at all, which is correct. Only the
+ * unparameterised Shah G Tech build keeps the bundled wordmark. Putting one
+ * shop's logo on another shop's manual is the same mistake the invoices used
+ * to make, in a place nobody would think to check.
+ */
+const NAMED = process.argv.includes('--company');
+const LOGO = arg('logo', NAMED ? '' : path.join(ROOT, 'apps/api/src/pdf/wordmark.png'));
+
+const SLUG = COMPANY.replace(/[^A-Za-z0-9]+/g, '-').replace(/^-|-$/g, '');
+const OUT = path.join(__dirname, `${SLUG}-Setup-Guide.pdf`);
 
 const BRAND = '#1875BE';
 const BRAND_DARK = '#12598f';
@@ -40,8 +74,8 @@ const pdf = new PDFDocument({
   margins: { top: M, bottom: 64, left: M, right: M },
   bufferPages: true,
   info: {
-    Title: 'Shah G Tech shop & books — Setup Guide',
-    Author: 'Shah G Tech',
+    Title: `${COMPANY} ${TAGLINE} — Setup Guide`,
+    Author: COMPANY,
     Subject: 'Running the system on the shop PC, with staff phones on the shop WiFi',
   },
 });
@@ -198,7 +232,9 @@ function callout(title, text, tone = BRAND) {
 // Cover
 // ---------------------------------------------------------------------------
 pdf.rect(0, 0, PAGE_W, 132).fill(BRAND);
-pdf.image(LOGO, M, 40, { height: 52 });
+// No mark for a company that did not supply one — their name on the cover is
+// a complete cover. A missing file must not stop their guide being produced.
+if (LOGO && fs.existsSync(LOGO)) pdf.image(LOGO, M, 40, { height: 52 });
 
 pdf.fillColor(INK).font('Helvetica-Bold').fontSize(29)
   .text('Setting up on the', M, 205, { width: CONTENT });
@@ -210,7 +246,7 @@ pdf.moveTo(M, pdf.y).lineTo(M + 70, pdf.y).lineWidth(3).strokeColor(BRAND).strok
 pdf.y += 20;
 
 pdf.fillColor(MUTED).font('Helvetica').fontSize(13)
-  .text('Shah G Tech shop & books', M, pdf.y, { width: CONTENT });
+  .text(`${COMPANY} ${TAGLINE}`, M, pdf.y, { width: CONTENT });
 pdf.y += 4;
 pdf.fillColor(LIGHT).font('Helvetica').fontSize(11)
   .text('One PC runs everything. Staff phones and the counter iPad reach it\nover the shop WiFi. Follow the steps in order.',
@@ -301,17 +337,17 @@ code([
   '# Install Git (skip if already installed)',
   'winget install --id Git.Git -e',
   '',
-  '# Download the app into C:\\shahgtech',
+  `# Download the app into ${DIR}`,
   'cd C:\\',
-  'git clone <YOUR REPOSITORY URL> shahgtech',
-  'cd C:\\shahgtech',
+  `git clone <YOUR REPOSITORY URL> ${FOLDER}`,
+  `cd ${DIR}`,
 ]);
 
 callout('Where does the repository URL come from?',
   'It is the address of this project on GitHub — the same one you use to view the code. If you are '
   + 'not sure, ask whoever set up the GitHub account, or copy it from the green "Code" button on the '
   + 'repository page. If you would rather not use Git at all, download the project as a ZIP from that '
-  + 'same button and unzip it to C:\\shahgtech instead.');
+  + `same button and unzip it to ${DIR} instead.`);
 
 // ---------------------------------------------------------------------------
 h1('STEP 3', 'Create your passwords file');
@@ -320,7 +356,7 @@ body('The system needs four secrets. They are never typed by a person again, so 
   + 'random rather than memorable. This command generates all four and writes the file for you:');
 
 code([
-  'cd C:\\shahgtech',
+  `cd ${DIR}`,
   'Copy-Item .env.prod.example .env.prod',
   '',
   '# Generate four random secrets and put them in the file',
@@ -347,7 +383,7 @@ body('This builds and starts everything. The first run downloads a lot and can t
   + 'after that, starting takes seconds.');
 
 code([
-  'cd C:\\shahgtech',
+  `cd ${DIR}`,
   'docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build',
 ]);
 
@@ -363,7 +399,7 @@ body('Now open a browser on the PC itself and go to:');
 
 code(['http://localhost:8080']);
 
-body('You should see the Shah G Tech sign-in page. If you do, the hard part is over.');
+body(`You should see the ${COMPANY} sign-in page. If you do, the hard part is over.`);
 
 // ---------------------------------------------------------------------------
 h1('STEP 5', 'Create your account and set up the shop');
@@ -406,7 +442,7 @@ body('Every invoice, receipt, warranty card and repair report you print carries 
   + 'paper in their hand is genuine and has not been altered. The app has to be told what address to '
   + 'print in that code, because it cannot know it by itself.');
 
-body('Open C:\\shahgtech\\.env.prod in Notepad, find the line beginning PUBLIC_BASE_URL, and put the '
+body(`Open ${DIR}\\.env.prod in Notepad, find the line beginning PUBLIC_BASE_URL, and put the `
   + 'address from this step after the equals sign:');
 
 code(['PUBLIC_BASE_URL=http://192.168.1.50:8080']);
@@ -414,7 +450,7 @@ code(['PUBLIC_BASE_URL=http://192.168.1.50:8080']);
 body('Save the file, then apply it:');
 
 code([
-  'cd C:\\shahgtech',
+  `cd ${DIR}`,
   'docker compose -f docker-compose.prod.yml --env-file .env.prod up -d',
 ]);
 
@@ -427,6 +463,36 @@ callout('A local address only works for people standing in your shop',
   + 'keeps: you can change it whenever you like, but paper already handed over keeps the old address.',
   WARN);
 
+h2('And put your own name on the sign-in page');
+
+body('The sign-in screen everybody sees each morning shows the name of this installation. Set it in '
+  + 'the same file, on the line beginning NEXT_PUBLIC_APP_NAME:');
+
+code([`NEXT_PUBLIC_APP_NAME=${COMPANY} — ${TAGLINE}`]);
+
+body('Whatever comes before the dash is set larger, and the rest goes underneath in smaller type. '
+  + 'A single name with no dash is perfectly fine.');
+
+body('For your logo, put a PNG file here — any square-ish image, your signboard or your mark:');
+
+code([`${DIR}\\apps\\web\\public\\brand\\mark.png`]);
+
+body('Two more are optional and go in the same folder: wordmark.png, your name drawn as a logo, and '
+  + 'shop.jpg, a photograph of your premises used as the background. Supply neither and the page '
+  + 'shows your initials on a tile over a plain dark background, which looks deliberate rather than '
+  + 'unfinished.');
+
+callout('This one needs --build on the end',
+  'The name and the pictures are baked in when the app is put together, not read while it runs, so '
+  + 'the usual command is not enough on its own. Use this one after changing any of them — it is the '
+  + 'same command with two extra words, and it takes a few minutes rather than a few seconds:',
+  BRAND);
+
+code([
+  `cd ${DIR}`,
+  'docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build',
+]);
+
 // ---------------------------------------------------------------------------
 h1('STEP 7', 'Let the phones through the firewall');
 
@@ -434,7 +500,7 @@ body('Windows blocks incoming connections by default. Open PowerShell as Adminis
   + 'PowerShell, "Run as administrator") and run:');
 
 code([
-  'New-NetFirewallRule -DisplayName "Shah G Tech books" `',
+  `New-NetFirewallRule -DisplayName "${COMPANY} books" \``,
   '  -Direction Inbound -LocalPort 8080 -Protocol TCP -Action Allow',
 ]);
 
@@ -501,7 +567,7 @@ callout('The technician role is the one worth understanding',
 h1('2', 'Backups — do not skip this');
 
 body('The system already takes a backup of everything every night and keeps the last fourteen, in '
-  + 'the "backups" folder inside C:\\shahgtech. That protects you from a mistake. It does NOT protect '
+  + `the "backups" folder inside ${DIR}. That protects you from a mistake. It does NOT protect `
   + 'you from the PC being stolen, catching fire, or its disk failing — because the backups are on '
   + 'that same disk.');
 
@@ -510,7 +576,7 @@ h2('Copy them off the PC — weekly at least');
 body('The simplest version that actually works: plug in a USB stick every Friday and run:');
 
 code([
-  'Copy-Item C:\\shahgtech\\backups\\*.dump E:\\shop-backups\\',
+  `Copy-Item ${DIR}\\backups\\*.dump E:\\shop-backups\\`,
 ]);
 
 body('(Replace E: with whatever letter the USB stick gets.) Better still, install a cloud sync '
@@ -527,7 +593,7 @@ callout('Test a restore once, before you need it',
 h1('3', 'Everyday running');
 
 table(
-  [{ label: 'What you want', width: 0.3 }, { label: 'What to type (in C:\\shahgtech)', width: 0.7 }],
+  [{ label: 'What you want', width: 0.3 }, { label: `What to type (in ${DIR})`, width: 0.7 }],
   [
     ['See if it is running', { text: 'docker compose -f docker-compose.prod.yml --env-file .env.prod ps', mono: true }],
     ['Start it', { text: 'docker compose -f docker-compose.prod.yml --env-file .env.prod up -d', mono: true }],
@@ -655,7 +721,7 @@ for (let i = range.start; i < range.start + range.count; i++) {
   pdf.page.margins.bottom = 0;
   pdf.rect(0, 0, PAGE_W, 3).fill(BRAND);
   pdf.fillColor(LIGHT).font('Helvetica').fontSize(7.6)
-    .text('SHAH G TECH SHOP & BOOKS — SETUP GUIDE', M, 22,
+    .text(`${COMPANY} ${TAGLINE} — SETUP GUIDE`.toUpperCase(), M, 22,
       { width: CONTENT, characterSpacing: 0.5 });
   pdf.moveTo(M, PAGE_H - 44).lineTo(M + CONTENT, PAGE_H - 44)
     .lineWidth(0.5).strokeColor(RULE).stroke();

@@ -16,6 +16,19 @@ const config: NextConfig = demo
   ? {
       output: 'export',
       basePath: process.env['DEMO_BASE_PATH'] ?? '',
+      /**
+       * The base path, again, where CLIENT code can see it.
+       *
+       * Next prefixes `basePath` onto its own routes and onto statically
+       * imported assets, but NOT onto a plain string in an `<img src>`. The
+       * brand images moved to `public/` (so a company that supplies no logo
+       * can still build), which makes them exactly that kind of plain string —
+       * and on Pages, where this is `/Accounting-apps`, an unprefixed
+       * `/brand/mark.png` is a 404 and the demo silently loses its logo.
+       *
+       * Only the demo needs it: the real deployment is served from the root.
+       */
+      env: { NEXT_PUBLIC_BASE_PATH: process.env['DEMO_BASE_PATH'] ?? '' },
       images: { unoptimized: true },
       // login/index.html instead of login.html, so /login and /login/ BOTH
       // resolve on a dumb file server. Without it, the trailing-slash form

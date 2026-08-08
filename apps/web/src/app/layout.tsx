@@ -3,18 +3,17 @@ import type { ReactNode } from 'react';
 import { GeistSans } from 'geist/font/sans';
 import './globals.css';
 import { Providers } from './providers';
+import { APP_NAME } from '@/lib/brand';
 
 /**
- * The PRODUCT's name, not any one tenant's.
+ * The browser tab carries the INSTALLATION's name, not any one tenant's.
  *
- * The browser tab is the same for everybody who reaches this URL — it is set
- * before anybody has signed in, so it cannot know whose books are behind it.
- * That makes it instance branding: yours if you host, theirs if they run their
- * own copy, and configurable either way. A tenant's own name appears inside
- * the app and on their documents, where the app knows who is asking.
+ * It is the same for everybody who reaches this URL, because it is set before
+ * anybody has signed in and so cannot know whose books are behind it: yours if
+ * you host, theirs if they run their own copy, configurable either way. A
+ * tenant's own name appears inside the app and on their documents, where the
+ * app knows who is asking. `@/lib/brand` is the one place that decides this.
  */
-const APP_NAME = process.env['NEXT_PUBLIC_APP_NAME'] ?? 'Shah G Tech — shop & books';
-
 export const metadata: Metadata = {
   title: APP_NAME,
   description: 'Point of sale, workshop and accounts for Malaysian businesses',

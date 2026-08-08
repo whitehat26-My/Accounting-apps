@@ -8,11 +8,8 @@ import { can, ROLE_LABELS, useMe, type Me } from '@/lib/me';
 import { Icon } from '@/components/icons';
 import { Assistant } from '@/components/assistant';
 import { ThemeToggle } from '@/components/theme';
-// Static import so the demo's GitHub Pages base path is baked in at build.
-import mark from '@/brand/mark.png';
-
-/** The product's name — instance branding, same for everyone on this server. */
-const APP_NAME = process.env['NEXT_PUBLIC_APP_NAME'] ?? 'Shah G Tech';
+import { BrandGlyph } from '@/components/brand';
+import { appNameParts, initialsOf } from '@/lib/brand';
 
 /**
  * The signed-in shell: dark rail on the left, work on the right.
@@ -220,8 +217,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           {/* The product's name, where it belongs on somebody else's screen:
               small, at the bottom, beside the way out. */}
           <div className="mb-2 flex items-center gap-2">
-            <img src={mark.src} alt="" className="h-4 w-4 shrink-0 opacity-60" />
-            <span className="truncate text-[11px] text-rail-ink/50">{APP_NAME}</span>
+            <BrandGlyph className="h-4 w-4 shrink-0 opacity-60" />
+            <span className="truncate text-[11px] text-rail-ink/50">{appNameParts().primary}</span>
           </div>
           <button
             className="text-xs text-rail-ink/60 transition-colors hover:text-rail-ink-strong"
@@ -348,17 +345,14 @@ function OrgMark({ name }: { name: string | undefined }) {
   }, []);
 
   /*
-   * `?? ''` because a session saved by an OLDER build of the login screen
-   * holds `organisationName: undefined` — that bug is fixed, but the sessions
-   * it wrote are in people's browsers until they sign in again, and a rail
-   * that throws is a rail nobody can sign out of to fix it.
+   * Shared with the sign-in page's own mark, so a company is not "DT" in one
+   * place and "D" in another. `initialsOf` tolerates undefined, which matters
+   * here: a session saved by an OLDER build of the login screen holds
+   * `organisationName: undefined`, and those sessions live in people's
+   * browsers until they sign in again. A rail that throws is a rail nobody can
+   * sign out of to fix.
    */
-  const initials = (name ?? '')
-    .split(/\s+/)
-    .filter((w) => /^[A-Za-z0-9]/.test(w))
-    .slice(0, 2)
-    .map((w) => w[0]!.toUpperCase())
-    .join('');
+  const initials = initialsOf(name);
 
   return (
     <div className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-xl bg-plate shadow-lg shadow-black/40">
