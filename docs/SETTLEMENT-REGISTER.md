@@ -439,6 +439,41 @@ Render/Heroku managed PostgreSQL refuse by design — a VPS, Railway or Fly are 
 homes that work. Unverifiable from this environment (no Docker here): the compose
 file is YAML-validated and the runbook states what to check on first boot.
 
+### 4.11 Cloud hosting — BUILT as configuration; two external answers still open
+
+`netlify.toml`, `scripts/netlify-redirects.mjs`, the `EMIL_STATIC` build target in
+`apps/web/next.config.ts`, `apps/web/test/netlify-headers.test.ts`, and the runbook
+`docs/CLOUD-SETUP.md`. Rehearsed end to end before any hosting account exists: built
+with the netlify.toml command verbatim, served `out/` behind a file server reading
+the GENERATED `_redirects` and the real toml headers, driven through register →
+onboard → dashboard and then 20 screens — zero page errors, zero CSP violations
+under the enforced policy.
+
+Two things cannot be settled from here and both are step 0 and 1 of the runbook:
+
+1. **Does Supabase's `postgres` role carry `BYPASSRLS`?** It is documented as not a
+   superuser, and migration 0021 refuses a migrating role that can do neither. One
+   query answers it. If the answer is no, Railway's own PostgreSQL is a drop-in and
+   nothing else changes — so this is a fork in the runbook, not a blocker.
+2. **`TRUST_PROXY`'s correct value** depends on a topology this repository cannot
+   see. The runbook gives a procedure (read `actor_ip` off your own audit row and
+   raise the hop count until it is your address) rather than a number, because
+   guessing high forges the audit trail and guessing low puts every tenant in one
+   rate-limit bucket.
+
+Measured rather than assumed, and recorded because it will otherwise be rediscovered
+painfully: this app uses prepared statements (postgres.js defaults to `prepare: true`;
+two parameterised queries leave three on the server), so Supabase's TRANSACTION pooler
+is unusable without `?prepare=false` on the connection string. The session pooler is
+the one to use — the direct connection is IPv6-only for projects created after
+January 2024.
+
+**Still outstanding, and it is the Supabase bill:** repair photographs live in
+PostgreSQL as `BYTEA` (§4.3), which is right for a single VPS with one backup to
+restore and wrong for a metered managed database. A shop photographing jobs passes the
+free 500 MB and needs Pro. Moving the bytes to object storage is its own migration and
+its own decision about who holds the objects; it is not a hosting setting.
+
 ### 4.8 `packages/ui` and `infra`
 
 Named in `CLAUDE.md` as planned. Neither exists. `infra` (Terraform) is not worth writing
