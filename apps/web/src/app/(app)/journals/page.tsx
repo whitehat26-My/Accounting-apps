@@ -165,7 +165,7 @@ export default function JournalsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Journals</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Journals</h1>
 
       {posts ? (
         <Card title="New manual journal — accruals, prepayments, corrections">
@@ -194,7 +194,7 @@ export default function JournalsPage() {
               {lines.map((line, i) => (
                 <div key={i} className="flex flex-wrap items-center gap-2">
                   <select
-                    className="min-w-0 flex-1 rounded-lg border-0 bg-white px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-emerald-600"
+                    className="min-w-0 flex-1 rounded-lg border-0 bg-surface-raised px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-line-strong focus:ring-2 focus:ring-positive"
                     value={line.accountId}
                     onChange={(e) => void chooseAccount(i, e.target.value)}
                     required
@@ -207,7 +207,7 @@ export default function JournalsPage() {
                     ))}
                   </select>
                   <select
-                    className="rounded-lg border-0 bg-white px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-emerald-600"
+                    className="rounded-lg border-0 bg-surface-raised px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-line-strong focus:ring-2 focus:ring-positive"
                     value={line.side}
                     onChange={(e) => setLine(i, { side: e.target.value as FormLine['side'] })}
                   >
@@ -226,7 +226,7 @@ export default function JournalsPage() {
                     <button
                       type="button"
                       aria-label="Remove line"
-                      className="text-slate-400 hover:text-red-600"
+                      className="text-ink-faint hover:text-negative"
                       onClick={() => setLines((all) => all.filter((_, j) => j !== i))}
                     >
                       ✕
@@ -249,14 +249,14 @@ export default function JournalsPage() {
               </Button>
             </div>
 
-            <p className="text-xs text-slate-400">
+            <p className="text-xs text-ink-faint">
               {suggesting
                 ? 'Checking how you posted this before…'
                 : 'Pick the first account and the amount fills both lines; the other account fills itself in from how you posted before, if it has seen the pair. Debits must equal credits — the server checks and will name the exact problem. Posted entries are permanent; a mistake is fixed by a reversing entry.'}
             </p>
             <ErrorNote error={post.error} />
             {posted ? (
-              <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 ring-1 ring-inset ring-emerald-200">
+              <p className="rounded-lg bg-positive-soft px-3 py-2 text-sm text-positive ring-1 ring-inset ring-positive/30">
                 Posted as {posted}.
               </p>
             ) : null}
@@ -271,7 +271,7 @@ export default function JournalsPage() {
             <Input type="date" className="!w-36" value={from} onChange={(e) => setFrom(e.target.value)} />
             <Input type="date" className="!w-36" value={to} onChange={(e) => setTo(e.target.value)} />
             <select
-              className="rounded-lg border-0 bg-white px-2.5 py-2 text-sm shadow-sm ring-1 ring-inset ring-slate-300 focus:ring-2 focus:ring-emerald-600"
+              className="rounded-lg border-0 bg-surface-raised px-2.5 py-2 text-sm shadow-sm ring-1 ring-inset ring-line-strong focus:ring-2 focus:ring-positive"
               value={module}
               onChange={(e) => setModule(e.target.value as (typeof MODULES)[number])}
             >
@@ -288,25 +288,25 @@ export default function JournalsPage() {
           book.data.entries.length > 0 ? (
             <div className="space-y-2">
               {book.data.truncated ? (
-                <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+                <p className="rounded-md bg-caution-soft px-3 py-2 text-xs text-caution">
                   More entries exist than are shown — narrow the dates.
                 </p>
               ) : null}
               {book.data.entries.map((entry) => (
-                <details key={entry.entryId} className="rounded-xl ring-1 ring-inset ring-slate-200">
+                <details key={entry.entryId} className="rounded-xl ring-1 ring-inset ring-line">
                   <summary className="flex cursor-pointer select-none flex-wrap items-center gap-3 px-3.5 py-2.5 text-sm">
-                    <span className="font-mono text-xs text-slate-500">{entry.entryNo}</span>
-                    <span className="text-slate-500">{displayDate(entry.entryDate)}</span>
+                    <span className="font-mono text-xs text-ink-muted">{entry.entryNo}</span>
+                    <span className="text-ink-muted">{displayDate(entry.entryDate)}</span>
                     <span className="min-w-0 flex-1 truncate">{entry.description ?? '—'}</span>
                     <Badge status={entry.sourceModule} />
                     {entry.reversalOfId ? <Badge status="REVERSAL" /> : null}
                     <span className="font-medium">{rm(entry.totalDebit)}</span>
                   </summary>
-                  <table className="w-full border-t border-slate-100 text-sm">
+                  <table className="w-full border-t border-line text-sm">
                     <tbody>
                       {entry.lines.map((line, i) => (
-                        <tr key={i} className="border-t border-slate-50">
-                          <td className="py-1.5 pl-3.5 font-mono text-xs text-slate-500">{line.accountCode}</td>
+                        <tr key={i} className="border-t border-line">
+                          <td className="py-1.5 pl-3.5 font-mono text-xs text-ink-muted">{line.accountCode}</td>
                           <td className="py-1.5">{line.accountName}</td>
                           <td className="py-1.5 text-right">{line.debit === '0.0000' ? '' : rm(line.debit)}</td>
                           <td className="py-1.5 pr-3.5 text-right">
@@ -320,7 +320,7 @@ export default function JournalsPage() {
               ))}
             </div>
           ) : (
-            <p className="text-sm text-slate-500">No entries in this window.</p>
+            <p className="text-sm text-ink-muted">No entries in this window.</p>
           )
         ) : (
           <Skeleton />

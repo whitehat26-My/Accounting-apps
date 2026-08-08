@@ -1,0 +1,598 @@
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  accessTokenFor,
+  call,
+  callRaw,
+  createTestApi,
+  pdfText,
+  makeUser,
+  seedTenant,
+  type TestApi,
+  type Tenant,
+} from './helpers.js';
+
+/**
+ * Statutory payroll over HTTP — contributions and income tax.
+ *
+ * The permission boundary is the point of this file. A wage is the most
+ * confidential figure in a five-person shop, and the person at the counter has
+ * no business seeing what the technician beside them earns — so SALES and
+ * TECHNICIAN are locked out, and the test proves it rather than trusting the
+ * decorator.
+ */
+
+let api: TestApi;
+let tenant: Tenant;
+let ownerToken: string;
+let salesToken: string;
+
+beforeAll(async () => {
+  api = await createTestApi('payroll');
+  tenant = await seedTenant(api.admin, 'Payroll Routes Sdn Bhd');
+
+  const owner = await makeUser(api, { tenantId: tenant.tenantId, role: 'OWNER' });
+  ({ accessToken: ownerToken } = await accessTokenFor(api, owner.refreshToken, tenant.tenantId));
+
+  const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+  ({ accessToken: salesToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId));
+}, 120_000);
+
+afterAll(async () => {
+  await api?.close();
+});
+
+const asOwner = (url: string) => ({ url, token: ownerToken, tenantId: tenant.tenantId });
+
+const assistant = {
+  wage: '2500.00',
+  asOf: '2026-08-01',
+  age: 24,
+  citizenship: 'CITIZEN' as const,
+};
+
+describe('contributions over HTTP', () => {
+  it('returns the schedule figures for a counter assistant on RM 2,500', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/contributions'),
+      body: assistant,
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.body).toMatchObject({
+      epfPart: 'A',
+      socsoCategory: 1,
+      eisApplies: true,
+      // 13%, not the 12% everyone quotes — the employer rate steps down only
+      // above RM5,000.
+      epf: { employer: '325.0000', employee: '275.0000' },
+    });
+
+    // No net pay from THIS route: it was not told who the employee is for tax
+    // purposes, and a take-home figure that quietly omitted income tax would be
+    // trusted precisely because it looks finished. `/payslip` is where net pay
+    // lives, and it demands the tax profile before it will produce one.
+    expect(response.body).not.toHaveProperty('netPay');
+    expect(response.body).toHaveProperty('wageAfterContributions');
+  });
+
+  it('tells the owner what the hire actually costs', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/employment-cost'),
+      body: assistant,
+    });
+
+    expect(response.status).toBe(201);
+    const { totalCost, breakdown } = response.body as {
+      totalCost: string;
+      breakdown: { totalEmployer: string };
+    };
+    expect(Number(totalCost)).toBeCloseTo(2500 + Number(breakdown.totalEmployer), 4);
+  });
+
+  it('serves the schedules themselves so the figures can be checked against PERKESO', async () => {
+    const response = await call(api, {
+      method: 'GET',
+      ...asOwner('/v1/payroll/schedules?asOf=2026-08-01&part=A'),
+    });
+
+    expect(response.status).toBe(200);
+    const body = response.body as {
+      epfBands: unknown[];
+      socsoBands: unknown[];
+      eisBands: unknown[];
+      epfRule: { ceiling: string };
+    };
+    expect(body.epfBands).toHaveLength(401);
+    expect(body.socsoBands).toHaveLength(65);
+    expect(body.eisBands).toHaveLength(65);
+    expect(body.epfRule.ceiling).toBe('20000.0000');
+  });
+});
+
+describe('who may ask', () => {
+  it('refuses SALES — a salary is not counter information', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      url: '/v1/payroll/contributions',
+      token: salesToken,
+      tenantId: tenant.tenantId,
+      body: assistant,
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it('refuses an unauthenticated caller', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      url: '/v1/payroll/contributions',
+      tenantId: tenant.tenantId,
+      body: assistant,
+    });
+    expect(response.status).toBe(401);
+  });
+});
+
+describe('what it refuses to guess', () => {
+  it('rejects a request with no contribution month rather than assuming today', async () => {
+    // SKBBK began on 1 June 2026. A default of `now()` would silently restate a
+    // re-run of an earlier month, so the date is required at the edge too.
+    const { asOf: _omitted, ...withoutDate } = assistant;
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/contributions'),
+      body: withoutDate,
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it('rejects a wage sent as a JSON number', async () => {
+    // Rule 2. A float that reaches this far has already lost sen.
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/contributions'),
+      body: { ...assistant, wage: 2500 },
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it('fails loudly for a date before any schedule this system carries', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/contributions'),
+      body: { ...assistant, asOf: '1999-01-01' },
+    });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(JSON.stringify(response.body)).toContain('NO_SCHEDULE_IN_FORCE');
+  });
+});
+
+describe('income tax over HTTP', () => {
+  /** Seven months of a RM6,000 wage already paid this year. */
+  const sevenMonthsIn = {
+    accumulatedGross: '42000.00',
+    accumulatedEpf: '4620.00',
+    accumulatedMtd: '1452.50',
+  };
+
+  const technician = {
+    wage: '6000.00',
+    asOf: '2026-08-01',
+    age: 35,
+    citizenship: 'CITIZEN' as const,
+  };
+
+  it('returns a real net pay once the tax profile is supplied', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip'),
+      body: {
+        ...technician,
+        tax: { resident: true, category: 1, qualifyingChildren: 0 },
+        taxYearToDate: sevenMonthsIn,
+      },
+    });
+
+    expect(response.status).toBe(201);
+    const body = response.body as {
+      pcb: { deduction: string; chargeableIncome: string } | null;
+      netPay: string | null;
+      totalEmployee: string;
+    };
+    expect(body.pcb?.deduction).toBe('207.5000');
+    expect(body.pcb?.chargeableIncome).toBe('59000.0000');
+    expect(body.netPay).not.toBeNull();
+    // Net pay is gross less contributions AND tax — strictly less than the
+    // contributions-only figure the other route returns.
+    expect(Number(body.netPay)).toBeLessThan(6000 - Number(body.totalEmployee));
+  });
+
+  it('refuses to invent a tax category', async () => {
+    // No default. Assuming "single" would over-deduct a married sole earner by
+    // RM4,000 of relief every year, and the client knows the answer.
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip'),
+      body: { ...technician, taxYearToDate: sevenMonthsIn },
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it('still refuses SALES — a payslip is not counter information', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      url: '/v1/payroll/payslip',
+      token: salesToken,
+      tenantId: tenant.tenantId,
+      body: {
+        ...technician,
+        tax: { resident: true, category: 1, qualifyingChildren: 0 },
+      },
+    });
+    expect(response.status).toBe(403);
+  });
+
+  it('leaves netPay null on the contributions route, which computes no tax', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/contributions'),
+      body: technician,
+    });
+    expect(response.status).toBe(201);
+    // Two routes, two different questions, and the one that does not know the
+    // tax profile does not pretend to know the take-home.
+    expect(response.body).not.toHaveProperty('netPay');
+    expect(response.body).toHaveProperty('wageAfterContributions');
+  });
+});
+
+describe('the printed payslip', () => {
+  const technician = {
+    wage: '6000.00',
+    asOf: '2026-08-01',
+    age: 35,
+    citizenship: 'CITIZEN' as const,
+    tax: { resident: true, category: 1, qualifyingChildren: 0 },
+    taxYearToDate: {
+      accumulatedGross: '42000.00',
+      accumulatedEpf: '4620.00',
+      accumulatedMtd: '1452.50',
+    },
+    employee: { name: 'Nurul Huda binti Ahmad', staffId: 'SGT-004', jobTitle: 'Technician' },
+  };
+
+  it('renders a PDF', async () => {
+    const response = await callRaw(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip/pdf'),
+      body: technician,
+    });
+
+    expect(response.status).toBe(201);
+    expect(response.headers['content-type']).toContain('application/pdf');
+    // The name is in the filename, here as well as on the pay-run route: two
+    // payslips printed for the same month must not be one file twice.
+    expect(response.headers['content-disposition']).toContain(
+      'payslip-nurul-huda-binti-ahmad-august-2026.pdf',
+    );
+    expect(response.body.startsWith('%PDF')).toBe(true);
+
+    // Assert what is ON the page, not merely that a PDF came back.
+    const text = pdfText(response.body);
+    expect(text).toContain('Nurul Huda binti Ahmad');
+    expect(text).toContain('August 2026');
+    expect(text).toContain('NET PAY');
+    expect(text).toContain('5,046.20');
+    // Both halves of SOCSO, separately — PERKESO's own statement splits them,
+    // and a combined figure could not be reconciled against it.
+    expect(text).toContain('SOCSO');
+    expect(text).toContain('SKBBK');
+    // Every deduction names the instrument it comes from, so the figure can be
+    // checked against the authority's table instead of taken on trust.
+    expect(text).toContain('Third Schedule, Part A');
+    // The employer's share is on the page and explicitly not deducted.
+    expect(text).toContain('NOT DEDUCTED FROM YOUR PAY');
+  });
+
+  it('refuses to print one without a tax profile', async () => {
+    // A document headed "net pay" that silently omitted income tax would be
+    // believed absolutely. The calculator may answer without a tax profile; a
+    // payslip may not.
+    const { tax: _omitted, ...withoutTax } = technician;
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip/pdf'),
+      body: withoutTax,
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it('requires a name — a payslip is addressed to someone', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/payslip/pdf'),
+      body: { ...technician, employee: { name: '   ' } },
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it('refuses SALES, like every other payroll route', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      url: '/v1/payroll/payslip/pdf',
+      token: salesToken,
+      tenantId: tenant.tenantId,
+      body: technician,
+    });
+    expect(response.status).toBe(403);
+  });
+});
+
+describe('the pay run over HTTP', () => {
+  const employee = {
+    fullName: 'Nurul Huda binti Ahmad',
+    employeeNo: 'SGT-004',
+    idType: 'NRIC' as const,
+    idValue: '900101145566',
+    tin: '531367080',
+    dateOfBirth: '1991-04-12',
+    citizenship: 'CITIZEN' as const,
+    taxResident: true,
+    taxCategory: 1,
+    qualifyingChildren: 0,
+    monthlyWage: '6000.00',
+    jobTitle: 'Senior Technician',
+    hiredOn: '2026-08-01',
+    paymentMethod: 'BANK_TRANSFER' as const,
+    bankName: 'Maybank',
+    bankAccountLast4: '4471',
+    ytdYear: 2026,
+    ytdGrossBefore: '42000.00',
+    ytdEpfBefore: '4620.00',
+    ytdMtdBefore: '1452.50',
+  };
+
+  /** A second person, paid in cash — the other branch of the payslip's payment line. */
+  const cashier = {
+    fullName: 'Azlan bin Musa',
+    employeeNo: 'SGT-001',
+    tin: '445566778',
+    dateOfBirth: '2002-02-02',
+    citizenship: 'CITIZEN' as const,
+    taxResident: true,
+    taxCategory: 1,
+    qualifyingChildren: 0,
+    monthlyWage: '2500.00',
+    hiredOn: '2026-08-01',
+    paymentMethod: 'CASH' as const,
+  };
+
+  let runId: string;
+  let lineId: string;
+
+  it('registers staff, computes the month, and confirms it', async () => {
+    for (const person of [employee, cashier]) {
+      const added = await call(api, {
+        method: 'POST',
+        ...asOwner('/v1/payroll/employees'),
+        body: person,
+      });
+      expect(added.status, JSON.stringify(added.body)).toBe(201);
+    }
+
+    const prepared = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/runs/prepare'),
+      body: { payMonth: '2026-08-01' },
+    });
+    expect(prepared.status, JSON.stringify(prepared.body)).toBe(201);
+    runId = prepared.body['id'] as string;
+    const lines = prepared.body['lines'] as {
+      id: string;
+      employeeNo: string;
+      pcb: string;
+      netPay: string;
+    }[];
+    // By staff number, not by position: the run orders by name, so anybody
+    // hired later could silently move which row these figures are asserted on.
+    const nurul = lines.find((l) => l.employeeNo === 'SGT-004')!;
+    lineId = nurul.id;
+
+    // The pinned figures, now arriving over HTTP with the YTD read from the
+    // employee record rather than typed into a form.
+    expect(nurul.pcb).toBe('207.5000');
+    expect(nurul.netPay).toBe('5046.2000');
+
+    const confirmed = await call(api, {
+      method: 'POST',
+      ...asOwner(`/v1/payroll/runs/${runId}/confirm`),
+    });
+    expect(confirmed.status, JSON.stringify(confirmed.body)).toBe(201);
+    expect(confirmed.body['status']).toBe('CONFIRMED');
+    expect(confirmed.body['journalEntryId']).toBeTruthy();
+  });
+
+  it('serves the payslip PDF from the confirmed snapshot', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${runId}/payslips/${lineId}/pdf`),
+    });
+    expect(response.status).toBe(200);
+    expect(response.body.startsWith('%PDF')).toBe(true);
+
+    const text = pdfText(response.body);
+    expect(text).toContain('Nurul Huda binti Ahmad');
+    expect(text).toContain('August 2026');
+    expect(text).toContain('5,046.20');
+    // How she was paid, from the snapshot.
+    expect(text).toContain('Paid by bank transfer to Maybank');
+
+    /*
+     * The employee's name is in the filename. Before this, ten staff printed
+     * one at a time produced ten files all called `payslip-august-2026.pdf`.
+     */
+    expect(response.headers['content-disposition']).toContain(
+      'payslip-nurul-huda-binti-ahmad-august-2026.pdf',
+    );
+  });
+
+  it('prints every payslip for the month as one downloadable file', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${runId}/payslips/pdf`),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toContain('application/pdf');
+    // `attachment`, not `inline`: this is the stack you print and hand out.
+    expect(response.headers['content-disposition']).toContain('attachment');
+    expect(response.headers['content-disposition']).toContain('payslips-2026-08.pdf');
+
+    const text = pdfText(response.body);
+    expect(text).toContain('Nurul Huda binti Ahmad');
+    expect(text).toContain('Azlan bin Musa');
+    // Cash and transfer print different sentences.
+    expect(text).toContain('Paid in cash');
+
+    // One page each — a book that silently ran two people together on one
+    // sheet would still contain both names.
+    const pages = response.body.match(/\/Type\s*\/Page[^s]/g) ?? [];
+    expect(pages).toHaveLength(2);
+  });
+
+  it('refuses a payslip book for a month nobody has confirmed', async () => {
+    const draft = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/runs/prepare'),
+      body: { payMonth: '2026-11-01' },
+    });
+    expect(draft.status).toBe(201);
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${draft.body['id'] as string}/payslips/pdf`),
+    });
+    expect(response.status).toBe(422);
+  });
+
+  it('issues the EA sheets and the Form E figures from the year', async () => {
+    const book = await callRaw(api, {
+      method: 'GET',
+      ...asOwner('/v1/payroll/years/2026/ea/pdf'),
+    });
+    expect(book.status).toBe(200);
+    expect(book.headers['content-disposition']).toContain('ea-sheets-2026.pdf');
+
+    const text = pdfText(book.body);
+    // Both people, one page each — and the banner that keeps it honest.
+    expect(text).toContain('Nurul Huda binti Ahmad');
+    expect(text).toContain('Azlan bin Musa');
+    expect(text).toContain('NOT THE OFFICIAL LHDN FORM');
+    const pages = book.body.match(/\/Type\s*\/Page[^s]/g) ?? [];
+    expect(pages).toHaveLength(2);
+
+    const formE = await call(api, { method: 'GET', ...asOwner('/v1/payroll/years/2026/form-e') });
+    expect(formE.status).toBe(200);
+    expect(formE.body['employeeCount']).toBe(2);
+    const totals = formE.body['totals'] as { grossRemuneration: string; pcb: string };
+    expect(totals.grossRemuneration).toBe('8500.0000'); // 6000 + 2500
+    expect(totals.pcb).toBe('207.5000'); // only Nurul pays tax
+
+    const csv = await callRaw(api, {
+      method: 'GET',
+      ...asOwner('/v1/payroll/years/2026/form-e/csv'),
+    });
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-disposition']).toContain('cp8d-rows-2026.csv');
+    expect(csv.body).toContain('Nurul Huda binti Ahmad');
+    expect(csv.body).toContain('Total PCB');
+
+    // An empty year refuses loudly rather than issuing a zero-page book.
+    const empty = await callRaw(api, {
+      method: 'GET',
+      ...asOwner('/v1/payroll/years/2024/ea/pdf'),
+    });
+    expect(empty.status).toBe(404);
+  });
+
+  it('exports the CP39 with the exhibit’s record lengths', async () => {
+    const noEmployerNo = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${runId}/cp39`),
+    });
+    // Refused until the employer number exists, naming where to set it.
+    expect(noEmployerNo.status).toBe(422);
+
+    const set = await call(api, {
+      method: 'PATCH',
+      ...asOwner('/v1/payroll/settings'),
+      body: { lhdnEmployerNo: '9012345678' },
+    });
+    expect(set.status).toBe(200);
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...asOwner(`/v1/payroll/runs/${runId}/cp39`),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers['content-disposition']).toContain('901234567808_2026.txt');
+
+    const records = response.body.split('\r\n').filter((l: string) => l.length > 0);
+    expect(records[0]).toHaveLength(57);
+    expect(records[1]).toHaveLength(136);
+    expect(records[1]).toContain('00531367080'); // the exhibit's own TIN padding
+  });
+
+  it('locks SALES out of the register — a salary is not counter information', async () => {
+    for (const url of ['/v1/payroll/employees', '/v1/payroll/runs']) {
+      const response = await call(api, {
+        method: 'GET',
+        url,
+        token: salesToken,
+        tenantId: tenant.tenantId,
+      });
+      expect(response.status, url).toBe(403);
+    }
+  });
+
+  it('needs payroll.manage to confirm, not just payroll.read', async () => {
+    // BOOKKEEPER holds payroll.read (can see) but not payroll.manage (cannot
+    // move money). The guard is the difference between a viewer and a payer.
+    const bookkeeper = await makeUser(api, { tenantId: tenant.tenantId, role: 'BOOKKEEPER' });
+    const { accessToken } = await accessTokenFor(api, bookkeeper.refreshToken, tenant.tenantId);
+
+    const read = await call(api, {
+      method: 'GET',
+      url: '/v1/payroll/runs',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(read.status).toBe(200);
+
+    const write = await call(api, {
+      method: 'POST',
+      url: '/v1/payroll/runs/prepare',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+      body: { payMonth: '2026-09-01' },
+    });
+    expect(write.status).toBe(403);
+  });
+
+  it('reverses with a reason and the month can run again', async () => {
+    const reversed = await call(api, {
+      method: 'POST',
+      ...asOwner(`/v1/payroll/runs/${runId}/reverse`),
+      body: { reason: 'wrong wages keyed' },
+    });
+    expect(reversed.status, JSON.stringify(reversed.body)).toBe(201);
+    expect(reversed.body['status']).toBe('REVERSED');
+
+    const again = await call(api, {
+      method: 'POST',
+      ...asOwner('/v1/payroll/runs/prepare'),
+      body: { payMonth: '2026-08-01' },
+    });
+    expect(again.status).toBe(201);
+  });
+});

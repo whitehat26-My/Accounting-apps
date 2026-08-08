@@ -63,10 +63,37 @@ async function tamper(fn: () => Promise<unknown>): Promise<void> {
  */
 const AUDIT_EXEMPT: Record<string, string> = {
   audit_log: 'auditing the audit log recurses without end',
+  audit_anchor:
+    'the anchors ARE evidence about the audit log, and auditing them would ' +
+    'recurse for the same reason audit_log does. They are append-only by ' +
+    'trigger and every insert is itself the record.',
+  document_fingerprint:
+    'a hash of a document whose creation the audit log already records, so ' +
+    'auditing it would store the hash of a hash. Insert-only for emil_app — ' +
+    'no UPDATE or DELETE is granted, so there is no mutation to catch.',
   financial_event_log: 'already append-only evidence, and already the high-signal log',
   outbox_event: 'delivery-mechanism state; the business fact was audited at its source',
   account_period_balance: 'a derived cache of journal_line, which is itself audited',
   number_sequence: 'an allocation counter; the number it issued is on the audited document',
+  repair_job_photo_data:
+    'image bytes only. `audit_row_change` serialises the whole row with to_jsonb, ' +
+    'so auditing this would store every photograph a second time as a hex string ' +
+    'in a log that can never be pruned. The metadata row in repair_job_photo IS ' +
+    'audited and carries the SHA-256 of these bytes, so substituting an image is ' +
+    'still detectable — which is the property worth having.',
+  // The published EPF/SOCSO/EIS schedules. Global reference data with no
+  // tenant_id, so the sweep below would skip them anyway — they are named here
+  // rather than skipped silently, because "nobody audits the statutory rates"
+  // should be a recorded decision and not an accident of the loop's shape. The
+  // rows change only by migration, and the migration file IS the audit trail:
+  // it is in git, it cites the instrument each figure came from, and the CSVs
+  // it was generated from are committed beside it under docs/research/sources/.
+  statutory_epf_band: 'global schedule; changed only by migration, which is the record',
+  statutory_epf_rule: 'global schedule; changed only by migration, which is the record',
+  statutory_socso_band: 'global schedule; changed only by migration, which is the record',
+  statutory_eis_band: 'global schedule; changed only by migration, which is the record',
+  statutory_mtd_band: 'global schedule; changed only by migration, which is the record',
+  statutory_mtd_relief: 'global schedule; changed only by migration, which is the record',
 };
 
 describe('audit coverage', () => {

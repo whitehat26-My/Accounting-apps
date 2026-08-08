@@ -54,6 +54,47 @@ export async function createApp(): Promise<NestFastifyApplication> {
   });
 
   /*
+   * BASELINE SECURITY HEADERS, ON EVERY RESPONSE THE API SENDS.
+   *
+   * ---------------------------------------------------------------------------
+   * The web app already sets a full CSP, `frame-ancestors 'none'` and HSTS in
+   * `next.config.ts`, and in the normal topology the browser only ever talks to
+   * Next — `/api/*` is a rewrite, so those headers cover the proxied responses
+   * too. That made it easy to conclude the API needed nothing.
+   *
+   * It is not true of the API's own origin. Found by asking a running server
+   * for its headers: a financial JSON response carried `content-type`,
+   * `content-length`, `date` and nothing else. Anything that reaches the API
+   * directly — a misconfigured proxy, a debugging port left open, an operator
+   * curling it, a PDF opened straight from its URL — got no protection at all.
+   *
+   *   - `nosniff` matters most here, because this API serves PDFs and CSVs.
+   *     A response sniffed as HTML is a scripting vector on the API's origin.
+   *   - The framing pair is cheap and absolute: nothing this API returns is
+   *     ever meant to be displayed inside somebody else's page.
+   *   - `no-store` keeps one tenant's books out of any intermediary cache.
+   *     A CSP `default-src 'none'` is deliberately NOT set: it would apply to
+   *     the built-in PDF viewer when a document is opened from this origin.
+   *
+   * Set only when ABSENT, so a route that has already made a considered choice
+   * — the repair photographs and the logo both send their own `Cache-Control` —
+   * keeps it.
+   * ---------------------------------------------------------------------------
+   */
+  app.getHttpAdapter().getInstance().addHook('onSend', (_request, reply, payload, done) => {
+    const setIfAbsent = (name: string, value: string) => {
+      if (reply.getHeader(name) === undefined) reply.header(name, value);
+    };
+    setIfAbsent('x-content-type-options', 'nosniff');
+    setIfAbsent('x-frame-options', 'DENY');
+    setIfAbsent('content-security-policy', "frame-ancestors 'none'");
+    setIfAbsent('referrer-policy', 'no-referrer');
+    setIfAbsent('cross-origin-resource-policy', 'same-site');
+    setIfAbsent('cache-control', 'no-store');
+    done(null, payload);
+  });
+
+  /*
    * An empty body is `{}`, not a 400.
    *
    * Fastify's built-in JSON parser rejects a zero-length body outright when the

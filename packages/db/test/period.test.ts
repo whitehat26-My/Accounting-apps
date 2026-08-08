@@ -218,20 +218,20 @@ describe('reopening a period', () => {
 describe('the chart of accounts', () => {
   it('creates an account and derives its normal balance rather than storing it', async () => {
     const account = await withTenant(sql, ctx, (tx) =>
-      createAccount(tx, ctx, { code: '6200', name: 'Travel', type: 'EXPENSE' }),
+      createAccount(tx, ctx, { code: '6700', name: 'Travel', type: 'EXPENSE' }),
     );
 
     expect(account.normalBalance).toBe('DEBIT');
     expect(account.postings).toBe(0);
 
     const listed = await withTenant(sql, ctx, (tx) => listAccounts(tx, ctx, { type: 'EXPENSE' }));
-    expect(listed.map((a) => a.code)).toContain('6200');
+    expect(listed.map((a) => a.code)).toContain('6700');
   });
 
   it('refuses a duplicate code', async () => {
     await expect(
       withTenant(sql, ctx, (tx) =>
-        createAccount(tx, ctx, { code: '6200', name: 'Travel again', type: 'EXPENSE' }),
+        createAccount(tx, ctx, { code: '6700', name: 'Travel again', type: 'EXPENSE' }),
       ),
     ).rejects.toThrow(/already in use/);
   });

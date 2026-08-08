@@ -158,6 +158,28 @@ describe('closing a fiscal year', () => {
     expect(soplAfter.lines).toEqual(soplBefore.lines);
   });
 
+  /**
+   * The half of the part-period fix that is easy to get wrong.
+   *
+   * `accountBalances` decides what is in the window by DATE now, so the
+   * closing-entry subtraction has to use the same rule. If it still asked for
+   * whole periods, a window ending mid-period could ADD a closing entry
+   * through the balance query and never SUBTRACT it here — reporting a closed
+   * year's trading as a large negative.
+   *
+   * March is a part-period for this window, so it is read from the journal;
+   * the close is dated 31 December and must stay out of it. Before the fix
+   * this reported RM 0.00, because March was excluded wholesale.
+   */
+  it('reads a mid-period window inside a CLOSED year, without the close', async () => {
+    const sopl = await withTenant(sql, ctx, (tx) =>
+      statementOfProfitOrLoss(tx, ctx, { from: '2026-01-01', to: '2026-03-20' }),
+    );
+    const revenue = sopl.lines.find((l) => l.lineId === 'sopl-revenue')!;
+    // The 15 March trade, and only that one — July is beyond the window.
+    expect(revenue.amount.toDecimalString()).toBe('100000.0000');
+  });
+
   it('leaves the rollup consistent with the journal', async () => {
     const drift = await withTenant(sql, ctx, (tx) => detectRollupDrift(tx, ctx));
     expect(drift).toEqual([]);

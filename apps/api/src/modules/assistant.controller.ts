@@ -2,7 +2,7 @@ import { Body, Controller, Get, Inject, Post, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { effectivePermissions } from '@emil/domain';
-import { withTenant, type Sql } from '@emil/db';
+import { sellerBlock, withTenant, type Sql } from '@emil/db';
 import { ASSISTANT, SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
 import { principalOf, tenantContextOf } from '../context/request-context.js';
@@ -66,15 +66,16 @@ export class AssistantController {
 
     // One read-only transaction for the snapshot; the tools open their own
     // transactions per write, so a failed tool cannot poison the context read.
-    const snapshot = await withTenant(this.sql, ctx, (tx) =>
-      buildAssistantContext(tx, ctx, permissions, today),
-    );
+    const { snapshot, seller } = await withTenant(this.sql, ctx, async (tx) => ({
+      snapshot: await buildAssistantContext(tx, ctx, permissions, today),
+      seller: await sellerBlock(tx, ctx),
+    }));
 
     const collected: Collected = { actions: [], drafts: [] };
     const tools = buildAssistantTools({ sql: this.sql, ctx, permissions, today, collected });
 
     const { message } = await this.provider.chat({
-      system: systemPrompt(snapshot, input.screen),
+      system: systemPrompt(snapshot, input.screen, seller.name),
       messages: input.messages,
       tools,
     });
@@ -137,11 +138,33 @@ THE APP'S SCREENS
 - Settings: chart of accounts, opening balances (what the shop had and owed on day one), tax codes, period lock and year-end close.
 `;
 
-function systemPrompt(snapshot: string, screen: string | undefined): string {
+/**
+ * @param organisation the tenant's own name, read from `organisation` per
+ *   request.
+ *
+ * ---------------------------------------------------------------------------
+ * IT NAMES THE ORGANISATION AND SAYS NOTHING ABOUT THE TRADE.
+ *
+ * This used to hardcode "Shah G Tech, a computer shop in Malaysia" — which was
+ * true of the first tenant and false of the second. Worse than false: an
+ * assistant told it works in a computer shop will reach for computer-shop
+ * assumptions when a bakery asks it about stock, and confident wrong advice is
+ * exactly what an accounting assistant must not produce.
+ *
+ * The industry is now simply not asserted. What the model needs is in the
+ * snapshot — the accounts, the items, the figures — and those describe the
+ * business far better than an adjective would.
+ * ---------------------------------------------------------------------------
+ */
+function systemPrompt(
+  snapshot: string,
+  screen: string | undefined,
+  organisation: string,
+): string {
   return (
-    'You are the in-app assistant for "Shah G Tech shop & books" — the point-of-sale, ' +
-    'workshop and accounting system of Shah G Tech, a computer shop in Malaysia. ' +
-    'The user is a member of that shop\'s team, talking to you from inside the app. ' +
+    `You are the in-app assistant for ${organisation}, a business in Malaysia using this ` +
+    'point-of-sale, workshop and accounting system. ' +
+    'The user is a member of that team, talking to you from inside the app. ' +
     'Reply in the language they use (English or Malay), briefly and concretely.\n\n' +
     'HARD RULES\n' +
     '- Use ONLY the figures in the business snapshot below. If it is not there, say you ' +

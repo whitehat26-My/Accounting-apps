@@ -63,6 +63,30 @@ export const isoDate = z
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD')
   .describe('A date as YYYY-MM-DD. Displayed as DD/MM/YYYY; never sent that way.');
 
+/**
+ * A point in TIME, as opposed to an accounting date.
+ *
+ * Distinct from `isoDate` on purpose. An accounting date is a fact about a
+ * transaction — the tax point, the invoice date — and carries no time of day.
+ * An instant is a fact about the LEDGER: the moment an entry was posted, or
+ * the moment a set of figures was read. The time machine compares two of them,
+ * and 5 April at 09:00 is a different set of books from 5 April at 18:00.
+ *
+ * A bare `YYYY-MM-DD` is accepted and means MIDNIGHT IN KUALA LUMPUR, not
+ * midnight UTC — an eight-hour error would silently move a whole evening's
+ * trading across the boundary. Malaysia has observed UTC+8 without daylight
+ * saving since 1982, so the fixed offset is exact rather than approximate.
+ */
+export const isoInstant = z
+  .string()
+  .refine((v) => /^\d{4}-\d{2}-\d{2}$/.test(v) || !Number.isNaN(Date.parse(v)), {
+    message: 'Must be YYYY-MM-DD or an ISO 8601 timestamp',
+  })
+  .transform((v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00+08:00` : v))
+  .describe(
+    'An instant: an ISO 8601 timestamp, or YYYY-MM-DD meaning midnight in Asia/Kuala_Lumpur.',
+  );
+
 export const uuid = z.string().uuid().describe('A UUID.');
 
 export const currencyCode = z

@@ -55,7 +55,7 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions {
-  readonly method?: 'GET' | 'POST' | 'PATCH';
+  readonly method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   readonly body?: unknown;
   /** Skip the session entirely — login, register, onboarding. */
   readonly anonymous?: boolean;
@@ -90,7 +90,10 @@ export async function api<T = Record<string, unknown>>(
       headers['authorization'] = `Bearer ${session.accessToken}`;
       headers['x-tenant-id'] = session.tenantId;
     }
-    if (options.method === 'POST' || options.method === 'PATCH') {
+    // Every mutating method, DELETE included — the API's idempotency
+    // interceptor treats POST, PUT, PATCH and DELETE alike and refuses any of
+    // them without a key.
+    if (options.method === 'POST' || options.method === 'PATCH' || options.method === 'DELETE') {
       headers['idempotency-key'] = crypto.randomUUID();
     }
 
@@ -166,8 +169,29 @@ function refreshAccessToken(): Promise<boolean> {
  * object URL. A plain <a href> cannot carry the Authorization header, so
  * "Print receipt" fetches the bytes and opens the blob — same authentication
  * path as every other request, no token in any URL.
+ *
+ * Takes an optional body, because not every document is a stored one fetched
+ * by id: a payslip is rendered from figures that must travel in a POST body,
+ * since a salary in a query string ends up in every proxy's access log between
+ * here and the shop PC.
  */
-export async function apiBlobUrl(path: string): Promise<string> {
+/**
+ * Download a document under the name the SERVER gave it.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS EXISTS AND `apiBlobUrl` IS NOT ENOUGH.
+ *
+ * A blob URL carries no filename. `apiBlobUrl` + `window.open` therefore
+ * throws away the `content-disposition` the API carefully built, and the
+ * browser invents its own — so a month of payslips saves as `download (3).pdf`
+ * and the shop cannot tell one from another. Opening in a tab is right for
+ * something you glance at; a document you keep needs its name.
+ *
+ * The object URL is revoked once the click has been dispatched. `apiBlobUrl`
+ * never revokes, which leaks one blob per print for the life of the page.
+ * ---------------------------------------------------------------------------
+ */
+export async function apiDownload(path: string, fallbackName: string): Promise<void> {
   if (DEMO) {
     const { DEMO_PDF_MESSAGE } = await import('./demo');
     throw new ApiError(501, { message: DEMO_PDF_MESSAGE });
@@ -178,6 +202,61 @@ export async function apiBlobUrl(path: string): Promise<string> {
       ? { authorization: `Bearer ${session.accessToken}`, 'x-tenant-id': session.tenantId }
       : {},
   });
+  if (!response.ok) {
+    throw new ApiError(response.status, { message: `Document failed (${response.status})` });
+  }
+
+  const url = URL.createObjectURL(await response.blob());
+  try {
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filenameFrom(response.headers.get('content-disposition')) ?? fallbackName;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } finally {
+    // A revoke in the same tick would race Safari's download; one frame is
+    // enough, and the blob is freed either way.
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+}
+
+/** `attachment; filename="payslips-2026-08.pdf"` → `payslips-2026-08.pdf`. */
+function filenameFrom(disposition: string | null): string | null {
+  const match = disposition?.match(/filename="?([^";]+)"?/);
+  return match?.[1] ?? null;
+}
+
+export async function apiBlobUrl(path: string, body?: unknown): Promise<string> {
+  if (DEMO) {
+    const { DEMO_PDF_MESSAGE } = await import('./demo');
+    throw new ApiError(501, { message: DEMO_PDF_MESSAGE });
+  }
+  const session = loadSession();
+  const headers: Record<string, string> = session
+    ? { authorization: `Bearer ${session.accessToken}`, 'x-tenant-id': session.tenantId }
+    : {};
+  if (body !== undefined) {
+    headers['content-type'] = 'application/json';
+    headers['idempotency-key'] = crypto.randomUUID();
+  }
+  const response = await fetch(`/api${path}`, {
+    method: body === undefined ? 'GET' : 'POST',
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
   if (!response.ok) throw new ApiError(response.status, { message: `Document failed (${response.status})` });
-  return URL.createObjectURL(await response.blob());
+
+  /*
+   * 204 is a SUCCESS with nothing in it, and `URL.createObjectURL` will
+   * happily mint a URL for zero bytes — which every caller then hands to an
+   * <img> or a new tab, and gets a broken image or a blank page. Caught here
+   * because no caller wants a URL to nothing: "there is no document" is a
+   * rejection, the same as any other reason there is no document.
+   */
+  const blob = await response.blob();
+  if (blob.size === 0) {
+    throw new ApiError(204, { message: 'There is nothing here yet.' });
+  }
+  return URL.createObjectURL(blob);
 }

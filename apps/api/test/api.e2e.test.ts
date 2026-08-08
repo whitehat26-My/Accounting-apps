@@ -3,8 +3,10 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   accessTokenFor,
   call,
+  callRaw,
   createTestApi,
   makeUser,
+  pdfText,
   seedTenant,
   type TestApi,
   type Tenant,
@@ -556,6 +558,82 @@ describe('a full accounting cycle over HTTP', () => {
   });
 });
 
+describe('the printed credit note', () => {
+  /*
+   * Until now a credit note could be ISSUED and never read back: it existed in
+   * the ledger and on the customer's balance, and the customer could not be
+   * shown the paper explaining why they were credited. This is that read path,
+   * end to end, plus the residue case that makes the document worth printing.
+   */
+  it('prints the reason in words, and names the invoice it corrects', async () => {
+    const tenant = await seedTenant(api.admin, 'Credit Sdn Bhd');
+    const user = await makeUser(api, { tenantId: tenant.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, user.refreshToken, tenant.tenantId);
+    const as = (url: string) => ({ url, token: accessToken, tenantId: tenant.tenantId });
+
+    const invoice = await call(api, { method: 'POST', ...as('/v1/invoices'),
+      idempotencyKey: randomUUID(), body: invoiceBody(tenant) });
+    expect(invoice.status).toBe(201);
+
+    /*
+     * Omitting `lines` credits everything not already credited — the whole
+     * RM 1,080. Every figure is read off the original, which is the point of
+     * crediting FROM an invoice rather than raising a standalone note.
+     */
+    const credited = await call(api, {
+      method: 'POST',
+      ...as(`/v1/invoices/${invoice.body['id']}/credit-note`),
+      idempotencyKey: randomUUID(),
+      body: {
+        creditDate: '2026-08-12',
+        reason: 'RETURN',
+        reasonDetail: 'Customer returned one unit, unopened, within the change-of-mind window.',
+      },
+    });
+    expect(credited.status, JSON.stringify(credited.body)).toBe(201);
+
+    const list = await call(api, { method: 'GET', ...as('/v1/credit-notes') });
+    expect(list.status).toBe(200);
+    const notes = list.body['creditNotes'] as Record<string, unknown>[];
+    expect(notes).toHaveLength(1);
+    expect(notes[0]!['againstInvoiceNo']).toBe(invoice.body['invoiceNo']);
+
+    const pdf = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/credit-notes/${notes[0]!['id']}/pdf`),
+    });
+    expect(pdf.status).toBe(200);
+    expect(pdf.headers['content-type']).toBe('application/pdf');
+
+    const text = pdfText(pdf.body);
+    expect(text).toContain('CREDIT NOTE');
+    // The REASON, in words rather than as the database's code.
+    expect(text).toContain('Goods returned');
+    expect(text).not.toContain('RETURN');
+    expect(text).toContain('change-of-mind window');
+    // It names the invoice it corrects, which is what makes it filable.
+    expect(text).toContain(String(invoice.body['invoiceNo']));
+    expect(text).toContain('1,080.00');
+    // Amounts print POSITIVE — direction lives in the journal, and a minus
+    // sign on a page headed CREDIT NOTE reads as a double negative.
+    expect(text).not.toContain('-1,080.00');
+  });
+
+  it('answers 404 for a credit note that is not this tenant’s', async () => {
+    const tenant = await seedTenant(api.admin, 'Credit Boundary Sdn Bhd');
+    const user = await makeUser(api, { tenantId: tenant.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, user.refreshToken, tenant.tenantId);
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      url: `/v1/credit-notes/${randomUUID()}/pdf`,
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(response.status).toBe(404);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Bill approval over HTTP
 // ---------------------------------------------------------------------------
@@ -738,3 +816,273 @@ function billBody(tenant: Tenant) {
     ],
   };
 }
+
+describe('proof packs over HTTP', () => {
+  it('issues, confirms, and refuses a doctored pack', async () => {
+    const owner = await makeUser(api, { tenantId: alpha.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, owner.refreshToken, alpha.tenantId);
+    const as = (url: string) => ({ url, token: accessToken, tenantId: alpha.tenantId });
+
+    const anchored = await call(api, {
+      method: 'POST',
+      ...as('/v1/audit-chain/anchors'),
+      body: {},
+    });
+    expect(anchored.status, JSON.stringify(anchored.body)).toBe(201);
+
+    const pack = await call(api, { method: 'GET', ...as('/v1/audit-chain/proof') });
+    expect(pack.status).toBe(200);
+    expect(pack.body['format']).toBe('emil-proof-pack/1');
+    // The algorithm travels WITH the pack, so a third party needs nothing else.
+    expect(String(pack.body['algorithm'])).toContain('SHA-256');
+
+    const confirmed = await call(api, {
+      method: 'POST',
+      ...as('/v1/audit-chain/proof/verify'),
+      body: pack.body,
+    });
+    expect(confirmed.status).toBe(201);
+    expect(confirmed.body['verdict']).toBe('CONFIRMED');
+
+    const doctored = {
+      ...pack.body,
+      organisation: { id: alpha.tenantId, name: 'Nicer Name Sdn Bhd' },
+    };
+    const refused = await call(api, {
+      method: 'POST',
+      ...as('/v1/audit-chain/proof/verify'),
+      body: doctored,
+    });
+    /*
+     * A successful HTTP answer carrying a damning verdict. "Your books were
+     * tampered with" IS the answer to the question asked; an error status
+     * would be indistinguishable from the endpoint being down, which is the
+     * one thing a monitor must not confuse it with.
+     */
+    expect(refused.status).toBe(201);
+    expect(refused.body['verdict']).toBe('PACK_ALTERED');
+  });
+});
+
+/**
+ * Two companies on one server, and whose name is on the paper.
+ *
+ * ---------------------------------------------------------------------------
+ * THE DEFECT THIS EXISTS TO PREVENT COMING BACK.
+ *
+ * Every row in this database has carried `tenant_id` since migration 0001, with
+ * RLS enabled and forced — two companies' books have always been genuinely
+ * separate. But the LOGO on every printed document was a PNG compiled into the
+ * API image, so the second company to sign up would have issued its invoices
+ * under the first company's mark.
+ *
+ * That is not a cosmetic complaint. An invoice is the document that says who is
+ * owed money; carrying someone else's mark makes it a document about the wrong
+ * party. Migration 0050 moved the brand from the build into the row, and this
+ * asserts the property that change exists for.
+ * ---------------------------------------------------------------------------
+ */
+describe('two companies, two letterheads', () => {
+  // Distinguishable PNGs: 1x1 and 2x2, so "which logo came back" is decidable
+  // from the bytes rather than from a hopeful eyeball.
+  const PNG_1PX =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const PNG_2PX =
+    'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAEElEQVR4nGM4IScHRAwQCgAfJgQRoo8irwAAAABJRU5ErkJggg==';
+
+  let alphaToken: string;
+  let betaToken: string;
+
+  beforeAll(async () => {
+    const a = await makeUser(api, { tenantId: alpha.tenantId, role: 'OWNER' });
+    ({ accessToken: alphaToken } = await accessTokenFor(api, a.refreshToken, alpha.tenantId));
+    const b = await makeUser(api, { tenantId: beta.tenantId, role: 'OWNER' });
+    ({ accessToken: betaToken } = await accessTokenFor(api, b.refreshToken, beta.tenantId));
+  });
+
+  const asAlpha = (url: string) => ({ url, token: alphaToken, tenantId: alpha.tenantId });
+  const asBeta = (url: string) => ({ url, token: betaToken, tenantId: beta.tenantId });
+
+  it('starts every organisation with no mark at all', async () => {
+    // 204, not 404. Most organisations have no logo and the screen wants to
+    // know that rather than to catch something.
+    const none = await callRaw(api, { method: 'GET', ...asAlpha('/v1/organisations/logo') });
+    expect(none.status).toBe(204);
+  });
+
+  it('gives each company its own mark, and never the other one’s', async () => {
+    for (const [as, png] of [[asAlpha, PNG_1PX], [asBeta, PNG_2PX]] as const) {
+      const set = await call(api, {
+        method: 'PUT',
+        ...as('/v1/organisations/brand'),
+        body: { logoBase64: png, logoContentType: 'image/png', brandColour: null },
+      });
+      expect(set.status).toBe(200);
+    }
+
+    const mine = await callRaw(api, { method: 'GET', ...asAlpha('/v1/organisations/logo') });
+    expect(mine.status).toBe(200);
+    expect(Number(mine.headers['content-length'])).toBe(Buffer.from(PNG_1PX, 'base64').length);
+    // A picture of one company's brand behind an authenticated route must not
+    // sit in a shared cache.
+    expect(mine.headers['cache-control']).toContain('no-store');
+
+    const theirs = await callRaw(api, { method: 'GET', ...asBeta('/v1/organisations/logo') });
+    expect(Number(theirs.headers['content-length'])).toBe(Buffer.from(PNG_2PX, 'base64').length);
+    expect(theirs.headers['content-length']).not.toBe(mine.headers['content-length']);
+  });
+
+  it('prints each company’s OWN name on its own invoice', async () => {
+    const invoiceFor = async (
+      as: typeof asAlpha,
+      tenant: Tenant,
+    ) => {
+      const contact = await call(api, {
+        method: 'POST', ...as('/v1/contacts'), body: { name: 'A customer', isCustomer: true },
+      });
+      const invoice = await call(api, {
+        method: 'POST',
+        ...as('/v1/invoices'),
+        body: {
+          contactId: contact.body['id'],
+          issueDate: '2026-03-14',
+          dueDate: '2026-04-13',
+          lines: [{
+            description: 'Consulting', quantity: '1', unitPrice: '100.00',
+            accountId: tenant.accounts['4000'], taxCodeId: tenant.taxCodes['NONE'],
+          }],
+        },
+      });
+      expect(invoice.status).toBe(201);
+      return callRaw(api, {
+        method: 'GET', ...as(`/v1/invoices/${invoice.body['id']}/pdf`),
+      });
+    };
+
+    const alphaPdf = pdfText((await invoiceFor(asAlpha, alpha)).body);
+    const betaPdf = pdfText((await invoiceFor(asBeta, beta)).body);
+
+    expect(alphaPdf).toContain('Alpha Trading Sdn Bhd');
+    expect(alphaPdf).not.toContain('Beta Services Sdn Bhd');
+    expect(betaPdf).toContain('Beta Services Sdn Bhd');
+    expect(betaPdf).not.toContain('Alpha Trading Sdn Bhd');
+  });
+
+  it('lets a company take its mark back off, returning to a name-only letterhead', async () => {
+    const cleared = await call(api, {
+      method: 'PUT',
+      ...asBeta('/v1/organisations/brand'),
+      body: { logoBase64: null, logoContentType: 'image/png', brandColour: null },
+    });
+    expect(cleared.status).toBe(200);
+
+    const none = await callRaw(api, { method: 'GET', ...asBeta('/v1/organisations/logo') });
+    expect(none.status).toBe(204);
+  });
+
+  it('refuses a logo too big to print on every document', async () => {
+    // The ceiling is not arbitrary: the image is embedded in every PDF this
+    // tenant prints, so its size is paid again on each one.
+    const huge = Buffer.alloc(300 * 1024, 1).toString('base64');
+    const refused = await call(api, {
+      method: 'PUT',
+      ...asAlpha('/v1/organisations/brand'),
+      body: { logoBase64: huge, logoContentType: 'image/png', brandColour: null },
+    });
+    expect(refused.status).toBe(422);
+  });
+
+  it('refuses an image it could not print, at UPLOAD rather than at print time', async () => {
+    /*
+     * A real PNG header with one corrupt CRC — the shape that started this.
+     * It passes every magic-byte and dimension check and then throws inside
+     * pdfkit, so accepting it would break this tenant's invoices weeks later
+     * with nobody near a file picker.
+     */
+    const corrupt =
+      'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEklEQVR42mP8z8BQz0AEYBxVSF+FAAhKAwGm4C6BAAAAAElFTkSuQmCC';
+    const refused = await call(api, {
+      method: 'PUT',
+      ...asAlpha('/v1/organisations/brand'),
+      body: { logoBase64: corrupt, logoContentType: 'image/png', brandColour: null },
+    });
+    expect(refused.status).toBe(422);
+    expect(refused.body['message']).toMatch(/could not be read as an image/);
+
+    // And the tenant can still print, because the bad bytes never landed.
+    const stillWorks = await callRaw(api, {
+      method: 'GET', ...asAlpha('/v1/organisations/logo'),
+    });
+    expect(stillWorks.status).toBe(200);
+  });
+
+  it('is org.manage to change and tax.read to look at', async () => {
+    const clerk = await makeUser(api, { tenantId: alpha.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, clerk.refreshToken, alpha.tenantId);
+    const asClerk = { token: accessToken, tenantId: alpha.tenantId };
+
+    const changed = await call(api, {
+      method: 'PUT',
+      url: '/v1/organisations/brand',
+      ...asClerk,
+      body: { logoBase64: PNG_1PX, logoContentType: 'image/png', brandColour: null },
+    });
+    expect(changed.status).toBe(403);
+  });
+});
+
+/**
+ * The headers the API sends on its OWN origin.
+ *
+ * The web app sets a full CSP and framing policy in `next.config.ts`, and in
+ * the normal topology every browser request goes through Next's rewrite, so
+ * those headers cover the API too. That is exactly why this was missed: asking
+ * a RUNNING server for its headers showed a financial response carrying
+ * `content-type`, `content-length`, `date` and nothing else.
+ *
+ * Anything that reaches the API directly — a misconfigured proxy, a debug port,
+ * a PDF opened from its own URL — had no protection. These assertions are on
+ * the API because the API is what is being protected.
+ */
+describe('baseline security headers', () => {
+  let asOwner: { token: string; tenantId: string };
+
+  beforeAll(async () => {
+    const owner = await makeUser(api, { tenantId: alpha.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, owner.refreshToken, alpha.tenantId);
+    asOwner = { token: accessToken, tenantId: alpha.tenantId };
+  });
+
+  it('sends them on an authenticated financial response', async () => {
+    const res = await callRaw(api, { method: 'GET', url: '/v1/invoices', ...asOwner });
+    expect(res.status).toBe(200);
+
+    // `nosniff` is the load-bearing one: this API serves PDFs and CSVs, and a
+    // response sniffed as HTML is a scripting vector on the API's origin.
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBe('DENY');
+    expect(res.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    // One tenant's books must not sit in an intermediary cache.
+    expect(String(res.headers['cache-control'])).toContain('no-store');
+  });
+
+  it('sends them on the public, unauthenticated surface too', async () => {
+    const res = await callRaw(api, { method: 'GET', url: '/openapi.json' });
+    expect(res.status).toBe(200);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBe('DENY');
+  });
+
+  it('does not clobber a route that chose its own caching', async () => {
+    /*
+     * The repair photographs and the organisation logo both send
+     * `private, no-store` deliberately. The hook sets headers only when they
+     * are ABSENT — a blanket overwrite would silently undo a considered
+     * decision, which is a worse bug than the missing header it fixes.
+     */
+    const res = await callRaw(api, { method: 'GET', url: '/v1/organisations/logo', ...asOwner });
+    expect([200, 204]).toContain(res.status);
+    expect(String(res.headers['cache-control'])).toContain('private');
+  });
+});

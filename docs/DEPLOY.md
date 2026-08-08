@@ -83,6 +83,33 @@ too low and the limiter throttles everyone as one. It is a hop count, so it is
 exactly the number of proxies you actually run — a CIDR list is also accepted
 for trusting specific proxy networks instead.
 
+### The address printed on your documents
+
+**Set `PUBLIC_BASE_URL` in `.env.prod` the moment you know your address, and
+before you print anything a customer keeps.**
+
+Every invoice, receipt, warranty card and repair report carries a QR code
+pointing at `PUBLIC_BASE_URL/verify`, where anyone holding the paper can check
+the document is genuine and unaltered. Unset, it falls back to
+`http://localhost:8080` — correct on the shop PC itself and a **dead link in a
+customer's hand**, which is the one deployment mistake that cannot be fixed by
+changing a setting: the paper is already out there.
+
+```bash
+PUBLIC_BASE_URL=https://books.shahgtech.com   # domain + Caddy, no trailing slash
+PUBLIC_BASE_URL=http://192.168.0.12:8080      # shop PC on the LAN — see below
+```
+
+A LAN address is fine while every reader is on that WiFi, and only then. A
+customer who takes the warranty card home cannot resolve it. If documents leave
+the building, the system needs an address from outside it.
+
+Nothing is lost if you get it wrong later: the digest is printed as text
+beneath the code, so a reader who cannot reach the address still holds
+everything needed to verify through any future one, and `/verify` accepts it
+typed. Documents printed after you change the value carry the new address; the
+old ones keep the old. There is no re-print step and no migration.
+
 ### Backups — non-negotiable
 
 The `backup` service runs `pg_dump` nightly into `./backups`, keeping 14.
@@ -102,14 +129,136 @@ A backup nobody has restored is a hope, not a backup.
 
 ### Upgrades
 
+**Read this before the first one, not during it.** The mechanics are two
+commands; the discipline around them is the part that matters, because
+**there is no rollback**.
+
 ```bash
-git pull
+# 1. Back up FIRST, and check the file is real before going further.
+docker compose -f docker-compose.prod.yml exec -T db \
+  pg_dump -U postgres -Fc emil > backups/pre-upgrade-$(date +%F).dump
+ls -lh backups/pre-upgrade-$(date +%F).dump      # a 0-byte dump is not a backup
+
+# 2. Take the version you CHOSE, not whatever was pushed last.
+git fetch --tags
+git checkout v1.4.0
+
+# 3. Up.
 docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
 ```
 
 `migrate` re-runs idempotently (applied migrations are recorded and skipped);
 `roles` re-runs and rotates the service passwords to whatever `.env.prod`
 holds — which is also the credential-rotation procedure.
+
+**Deploy a tag, not a branch.** `git pull` on a branch means the version
+running is "whatever was pushed most recently", which nobody can name after
+the fact and nobody can return to. Tag each release (`git tag -a v1.4.0 -m
+"…" && git push --tags`) and check that out. "Which version is on the server"
+should have an answer.
+
+**Verify, in this order:**
+
+```bash
+docker compose -f docker-compose.prod.yml ps                    # migrate/roles Exited (0)
+docker compose -f docker-compose.prod.yml logs migrate | tail   # the list it applied
+curl -s http://localhost:8080/api/openapi.json | head -c 80     # the API is serving
+docker compose -f docker-compose.prod.yml logs worker | tail    # jobs claiming cleanly
+```
+
+Then sign in and open **Reports → integrity** (`GET /v1/ledger/integrity`,
+`report.read`). It recomputes the rollup cache every report reads from the
+journal itself and returns the rows that disagree. Empty is the answer you
+want, and it is the app's own check that the books still add up after the
+change — worth more than any of the container checks above.
+
+**Rollback is a RESTORE, and it costs you everything since the backup.**
+Migrations are forward-only and the ledger is append-only by design; there is
+no down-migration and there will not be one. If an upgrade goes wrong:
+
+```bash
+git checkout v1.3.0                                              # the previous tag
+docker compose -f docker-compose.prod.yml --env-file .env.prod down
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d db
+docker compose -f docker-compose.prod.yml exec -T db \
+  psql -U postgres -c 'DROP DATABASE emil' -c 'CREATE DATABASE emil'
+docker compose -f docker-compose.prod.yml exec -T db \
+  pg_restore -U postgres -d emil < backups/pre-upgrade-<date>.dump
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+```
+
+Every sale, invoice and repair recorded between the backup and the restore is
+gone. That is why step 1 is a backup taken minutes before, and why upgrading
+on a Tuesday morning is better than a Friday evening.
+
+**Expect a few seconds of downtime.** `up -d --build` replaces containers; the
+till is unavailable while `web` and `api` restart. Migrations run before the
+API starts, so a long one extends that window — the release notes for any
+migration touching a large table should say so.
+
+### Who may open an account
+
+**Registration is invite-only by default** (`SIGNUP_MODE=invite`). Set
+`SIGNUP_MODE=open` only where the NETWORK is the gate — a shop PC on its own
+LAN, or an instance reachable solely over Tailscale. On anything with a domain
+name, leave it closed: open registration means whoever finds the URL can create
+an account and a tenant, and you would learn about it from the table sizes.
+
+**The first account on an empty installation is let through without a code.**
+You have just deployed this and are about to become its owner; making you run a
+CLI before you can use your own server protects nothing, because there is
+nothing on it yet. **Register immediately after the containers come up** — the
+window between `up -d` and your registration is the one moment a stranger who
+knew the address could take the first account.
+
+To take on anyone after that, mint a code on the server:
+
+```bash
+docker compose -f docker-compose.prod.yml exec -e DATABASE_URL="postgres://postgres:$POSTGRES_PASSWORD@db:5432/emil" \
+  api pnpm --filter @emil/db invite -- --email owner@company.com --note "Delima, agreed 12/08" --days 14
+```
+
+It prints the code **once** — only its SHA-256 is stored, so it cannot be
+reprinted. Lost it? Mint another and let the first expire. `--list` shows what
+is outstanding (without codes, for the same reason). `--email` binds the code to
+one address; omit it and the code works for whoever holds it.
+
+Minting needs the **migrating** role's connection string, not the app's. That
+is deliberate: `emil_app` has SELECT and UPDATE on `signup_invite` and no
+INSERT, so the internet-facing API cannot mint an invitation even if a route for
+it were added by mistake.
+
+### Taking on another company
+
+The system is multi-tenant: one server, one database, each company its own
+tenant, separated by RLS (`tenant_id` first in every primary key, policies
+carrying both `USING` and `WITH CHECK`, cross-tenant reads answering 404).
+Adding one takes no deployment:
+
+1. You mint them an invitation code (above) and send it.
+2. They register with it and run first-time setup — or you do it with them.
+3. **They upload their own logo** under Settings → Letterhead. Until they do,
+   their documents print their name alone, which is a fine letterhead but is
+   not their brand. Nothing prints anybody else's mark: since migration `0050`
+   the letterhead lives in the tenant's row, not in the build.
+4. They add their own team on the Team page. Staff do NOT need invitation
+   codes of their own — a code opens an ACCOUNT, and a member added on the Team
+   page already has one.
+
+Two things to understand before you take money for this:
+
+- **Your backups now hold other companies' books.** The dump in `./backups` is
+  every tenant on the server. Losing that file, or letting it reach the wrong
+  hands, is no longer only your own problem — which changes where it may be
+  copied to and who may hold the key.
+- **You can read their data.** Not through the app — RLS binds the API to one
+  tenant per request — but a superuser `psql` on your own machine bypasses RLS
+  entirely. That is inherent to hosting somebody's books and is exactly what
+  they are trusting you with. Say so plainly rather than implying otherwise.
+
+A company that wants neither of those runs its own copy of this compose file
+on its own machine. Same software, their database, their backups; they update
+themselves, by the runbook above.
 
 ### Password rotation
 
@@ -128,8 +277,12 @@ again — that is what rotating a signing key means.
 | `JWT_SECRET` | api | 32+ chars, no default by design. |
 | `WEB_PORT` | web | Published port, default 8080. |
 | `TRUST_PROXY` | api | Proxy hops in front of the API for the rate limit's client IP. Unset = trust nobody; `2` for Caddy→web→api. See HTTPS above. |
+| `PUBLIC_BASE_URL` | api | The address printed as a QR code on every document, no trailing slash. Defaults to `http://localhost:$WEB_PORT`, which is a dead link on paper a customer takes away. See above. |
+| `ANTHROPIC_API_KEY` | api | Optional. Connects the in-app assistant; empty means it reports itself unconfigured and everything else works. |
 | `ASSISTANT_RATE_LIMIT` | api | Assistant chat requests per minute, per tenant. Default 30 — its cost is a paid model call, so it is capped tighter than ordinary routes. |
 | `API_ORIGIN` | web | Set in the compose file; where Next proxies `/api/*`. |
+| `SIGNUP_MODE` | api | `invite` (default) or `open`. Invite-only unless the network is the gate. See above. |
+| `NEXT_PUBLIC_APP_NAME` | web | The PRODUCT's name — browser tab, and the small line above Sign out. Instance branding, the same for everybody on this server. A tenant's own name and logo come from their `organisation` row and are set in Settings → Letterhead. Build-time: Next inlines `NEXT_PUBLIC_*`, so changing it needs a rebuild. |
 
 ## What this deliberately does not include
 

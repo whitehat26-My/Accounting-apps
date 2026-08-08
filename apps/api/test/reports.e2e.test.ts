@@ -1,4 +1,8 @@
 import { randomUUID } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   accessTokenFor,
@@ -6,6 +10,7 @@ import {
   callRaw,
   createTestApi,
   makeUser,
+  pdfText,
   seedTenant,
   type TestApi,
   type Tenant,
@@ -289,6 +294,84 @@ describe('GET /v1/reports/general-ledger/:accountId', () => {
   });
 });
 
+describe('the owner-insight reports', () => {
+  it('serve shape and CSV under report.read, and refuse SALES', async () => {
+    for (const url of [
+      '/v1/reports/stock-ageing',
+      '/v1/reports/item-margins?from=2026-01-01&to=2026-12-31',
+      '/v1/reports/repair-profit?from=2026-01-01&to=2026-12-31',
+    ]) {
+      const ok = await call(api, { method: 'GET', ...as(url) });
+      expect(ok.status, url).toBe(200);
+    }
+
+    const csv = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/stock-ageing/csv'),
+    });
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-disposition']).toContain('stock-ageing.csv');
+    expect(csv.body).toContain('Days idle');
+
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const refused = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/stock-ageing',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(refused.status).toBe(403);
+  });
+});
+
+describe('the second pair of eyes', () => {
+  it('reports findings with their innocent explanations, and refuses SALES', async () => {
+    const response = await call(api, {
+      method: 'GET',
+      ...as('/v1/reports/fraud-watch?from=2026-01-01&to=2026-12-31'),
+    });
+    expect(response.status).toBe(200);
+    // What was CHECKED is reported even when nothing was found: a clean result
+    // must be distinguishable from a check that never ran.
+    expect((response.body['checksRun'] as string[]).length).toBeGreaterThan(0);
+    for (const finding of response.body['findings'] as { innocentExplanation: string }[]) {
+      expect(finding.innocentExplanation.length).toBeGreaterThan(0);
+    }
+
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const refused = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/fraud-watch?from=2026-01-01&to=2026-12-31',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(refused.status).toBe(403);
+  });
+});
+
+describe('free cash — what of the balance is actually the shop’s', () => {
+  it('reports the split with a verdict, and refuses SALES', async () => {
+    const response = await call(api, { method: 'GET', ...as('/v1/reports/free-cash') });
+    expect(response.status).toBe(200);
+    expect(response.body['bankBalance']).toBeDefined();
+    expect(['COMFORTABLE', 'TIGHT', 'SHORT']).toContain(response.body['verdict']);
+    // Money crosses the wire as decimal STRINGS, never JSON numbers (rule 2).
+    expect(typeof response.body['freeCash']).toBe('string');
+
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const refused = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/free-cash',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(refused.status).toBe(403);
+  });
+});
+
 describe('GET /v1/reports/journal', () => {
   it('returns both sides of every entry', async () => {
     const response = await call(api, {
@@ -420,6 +503,7 @@ describe('GET /v1/system/queues', () => {
 
     const jobs = response.body['scheduledJobs'] as { name: string }[];
     expect(jobs.map((j) => j.name).sort()).toEqual([
+      'audit-anchor',
       'einvoice-retry',
       'outbox-sweep',
       'payment-reminders',
@@ -460,6 +544,517 @@ describe('GET /v1/system/queues', () => {
       tenantId: tenant.tenantId,
     });
 
+    expect(response.status).toBe(403);
+  });
+});
+
+describe('customer statements', () => {
+  /*
+   * The books above are manual journals, which means no receivables — a
+   * statement needs actual documents. One invoice, part paid, gives the
+   * document a shape worth checking: an opening balance of nothing, a charge, a
+   * credit, and a closing balance that is neither.
+   */
+  beforeAll(async () => {
+    const issued = await call(api, {
+      method: 'POST',
+      ...as('/v1/invoices'),
+      idempotencyKey: randomUUID(),
+      body: {
+        contactId: tenant.customerId,
+        issueDate: '2026-05-05',
+        dueDate: '2026-06-04',
+        lines: [
+          {
+            description: 'Workshop labour',
+            quantity: '1',
+            unitPrice: '1500.00',
+            accountId: tenant.accounts['4000'],
+            taxCodeId: tenant.taxCodes['NONE'],
+          },
+        ],
+      },
+    });
+    expect(issued.status, JSON.stringify(issued.body)).toBe(201);
+
+    const paid = await call(api, {
+      method: 'POST',
+      ...as('/v1/receipts'),
+      idempotencyKey: randomUUID(),
+      body: {
+        contactId: tenant.customerId,
+        paymentDate: '2026-05-20',
+        amount: '600.00',
+        method: 'TRANSFER',
+        depositAccountId: tenant.accounts['1000'],
+        allocations: [{ invoiceId: issued.body['invoiceId'] ?? issued.body['id'], amount: '600.00' }],
+      },
+    });
+    expect(paid.status, JSON.stringify(paid.body)).toBe(201);
+  }, 60_000);
+
+  it('lists who owes something, then states one account', async () => {
+    const owing = await call(api, { method: 'GET', ...as('/v1/statements?asOf=2026-12-31') });
+    expect(owing.status).toBe(200);
+    const customers = owing.body['customers'] as { id: string; balance: string }[];
+    expect(customers.length).toBeGreaterThan(0);
+
+    const first = customers[0]!;
+    const statement = await call(api, {
+      method: 'GET',
+      ...as(`/v1/statements/${first.id}?from=2026-01-01&to=2026-12-31`),
+    });
+
+    expect(statement.status).toBe(200);
+    // The list and the statement are computed by different queries. They are
+    // allowed to be written separately; they are not allowed to disagree.
+    expect(statement.body['closingBalance']).toBe(first.balance);
+    expect(statement.body).toHaveProperty('openingBalance');
+    expect(Array.isArray(statement.body['entries'])).toBe(true);
+  });
+
+  it('prints one as a PDF carrying the customer and the amount due', async () => {
+    const owing = await call(api, { method: 'GET', ...as('/v1/statements?asOf=2026-12-31') });
+    const first = (owing.body['customers'] as { id: string; name: string }[])[0]!;
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/statements/${first.id}/pdf?from=2026-01-01&to=2026-12-31`),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    expect(response.body.startsWith('%PDF')).toBe(true);
+
+    const text = pdfText(response.body);
+    expect(text).toContain('STATEMENT OF ACCOUNT');
+    expect(text).toContain(first.name);
+    // The carried-forward figure is ON the page, not implied by the first row.
+    expect(text).toContain('Balance brought forward');
+    expect(text).toContain('AMOUNT NOW DUE');
+  });
+
+  it('refuses a period that ends before it starts', async () => {
+    const owing = await call(api, { method: 'GET', ...as('/v1/statements?asOf=2026-12-31') });
+    const first = (owing.body['customers'] as { id: string }[])[0]!;
+
+    const response = await call(api, {
+      method: 'GET',
+      ...as(`/v1/statements/${first.id}?from=2026-12-31&to=2026-01-01`),
+    });
+    expect(response.status).toBeGreaterThanOrEqual(400);
+  });
+
+  it('answers 404 for a contact that is not this tenant’s', async () => {
+    // Rule 9 at the edge: the same answer for "does not exist" and "is not
+    // yours", so a customer list cannot be enumerated one id at a time.
+    const response = await call(api, {
+      method: 'GET',
+      ...as('/v1/statements/00000000-0000-4000-8000-000000000000?from=2026-01-01&to=2026-12-31'),
+    });
+    expect(response.status).toBe(404);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The time machine
+// ---------------------------------------------------------------------------
+
+/*
+ * Deliberately the LAST describe in this file. It posts an entry backdated
+ * into a month the earlier suites make assertions about, and running it first
+ * would move figures under tests that have nothing to do with it — which is,
+ * with some irony, the exact defect this feature exists to surface.
+ */
+describe('the time machine', () => {
+  it('reconstructs an instant, then names what changed and who', async () => {
+    const closedAt = new Date().toISOString();
+
+    const asRead = await call(api, {
+      method: 'GET',
+      ...as(`/v1/reports/books-as-at?asAt=${closedAt}&from=2026-03-01&to=2026-03-31`),
+    });
+    expect(asRead.status).toBe(200);
+    const marchAsRead = (asRead.body['balances'] as { code: string; balance: string }[]).find(
+      (b) => b.code === '4000',
+    )!;
+    // Money crosses the wire as a decimal STRING (rule 2).
+    expect(typeof marchAsRead.balance).toBe('string');
+    expect(marchAsRead.balance).toBe('-30000.0000');
+
+    // Somebody finds an invoice in a drawer and posts it into closed March.
+    await journal('2026-03-25', 'Invoice found in the drawer', [
+      ['1100', 'DEBIT', '2500.00'],
+      ['4000', 'CREDIT', '2500.00'],
+    ]);
+
+    // The earlier instant is unmoved — that is the whole claim.
+    const stillAsRead = await call(api, {
+      method: 'GET',
+      ...as(`/v1/reports/books-as-at?asAt=${closedAt}&from=2026-03-01&to=2026-03-31`),
+    });
+    expect(
+      (stillAsRead.body['balances'] as { code: string; balance: string }[]).find(
+        (b) => b.code === '4000',
+      )!.balance,
+    ).toBe('-30000.0000');
+
+    const diff = await call(api, {
+      method: 'GET',
+      ...as(`/v1/reports/what-changed?since=${closedAt}&from=2026-03-01&to=2026-03-31`),
+    });
+    expect(diff.status).toBe(200);
+    expect(diff.body['unchanged']).toBe(false);
+
+    const revenue = (diff.body['changes'] as { code: string; delta: string }[]).find(
+      (c) => c.code === '4000',
+    )!;
+    expect(revenue.delta).toBe('-2500.0000');
+
+    const entries = diff.body['entries'] as {
+      description: string; kind: string; postedByName: string | null;
+    }[];
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.description).toBe('Invoice found in the drawer');
+    expect(entries[0]!.kind).toBe('BACKDATED');
+    // The half of the answer that matters. `makeUser` creates a real member,
+    // so `audit_actor` resolves the name rather than returning null.
+    expect(entries[0]!.postedByName).not.toBeNull();
+  });
+
+  it('says nothing changed rather than returning an empty table to interpret', async () => {
+    const now = new Date().toISOString();
+    const diff = await call(api, {
+      method: 'GET',
+      ...as(`/v1/reports/what-changed?since=${now}&until=${now}`),
+    });
+    expect(diff.status).toBe(200);
+    expect(diff.body['unchanged']).toBe(true);
+  });
+
+  it('accepts a bare date as midnight in Kuala Lumpur, and refuses nonsense', async () => {
+    const ok = await call(api, {
+      method: 'GET',
+      ...as('/v1/reports/books-as-at?asAt=2026-04-01'),
+    });
+    expect(ok.status).toBe(200);
+    // Midnight KL on 1 April, so March's entries are in and April's are not:
+    // an eight-hour slip to midnight UTC would land inside 31 March instead.
+    expect(ok.body['asAt']).toBe('2026-04-01T00:00:00+08:00');
+
+    const bad = await call(api, {
+      method: 'GET',
+      ...as('/v1/reports/books-as-at?asAt=last%20Tuesday'),
+    });
+    expect(bad.status).toBe(422);
+  });
+
+  it('offers the lock moments the screen presets itself from', async () => {
+    const response = await call(api, { method: 'GET', ...as('/v1/reports/lock-moments') });
+    expect(response.status).toBe(200);
+    expect(Array.isArray(response.body['moments'])).toBe(true);
+  });
+
+  it('exports the diff and the entries responsible in ONE file, and refuses SALES', async () => {
+    const csv = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/what-changed/csv?since=2026-01-01&from=2026-03-01&to=2026-03-31'),
+    });
+    expect(csv.status).toBe(200);
+    expect(csv.headers['content-type']).toContain('text/csv');
+    expect(csv.headers['x-content-type-options']).toBe('nosniff');
+    expect(csv.body).toContain('Change (RM)');
+    expect(csv.body).toContain('Posted by');
+    expect(csv.body).toContain('Invoice found in the drawer');
+
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    for (const url of [
+      '/v1/reports/books-as-at?asAt=2026-04-01',
+      '/v1/reports/what-changed?since=2026-01-01',
+      '/v1/reports/lock-moments',
+    ]) {
+      const refused = await call(api, {
+        method: 'GET', url, token: accessToken, tenantId: tenant.tenantId,
+      });
+      expect(refused.status, url).toBe(403);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The hundred-year archive
+// ---------------------------------------------------------------------------
+
+/**
+ * The archive is opened with `unzip`, a program that knows nothing about this
+ * codebase, and its proof pack is checked by running the verifier that
+ * travelled inside it. Asserting on the buffer with our own reader would prove
+ * only that the writer agrees with itself — the claim being made is that OTHER
+ * software, decades from now, can get the numbers out.
+ */
+describe('the hundred-year archive', () => {
+  let zipPath: string;
+  let dir: string;
+
+  it('downloads as a zip a standard tool can open', async () => {
+    const years = await call(api, { method: 'GET', ...as('/v1/fiscal-years') });
+    const year = (years.body['fiscalYears'] as { id: string; label: string }[])[0]!;
+
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/reports/archive/${year.id}`),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/zip');
+    expect(response.headers['content-disposition']).toContain('attachment');
+    expect(response.headers['x-content-type-options']).toBe('nosniff');
+
+    dir = mkdtempSync(join(tmpdir(), 'emil-archive-'));
+    zipPath = join(dir, 'books.zip');
+    writeFileSync(zipPath, response.raw);
+
+    // The reader's own CRC check over every entry.
+    expect(execFileSync('unzip', ['-t', zipPath], { encoding: 'utf8' })).toContain(
+      'No errors detected',
+    );
+
+    expect(
+      execFileSync('unzip', ['-Z1', zipPath], { encoding: 'utf8' }).trim().split('\n').sort(),
+    ).toEqual([
+      'README.txt',
+      'financial-statements.pdf',
+      'general-ledger.csv',
+      'journal.csv',
+      'proof-pack.json',
+      'trial-balance.csv',
+      'verify-proof-pack.mjs',
+    ]);
+  });
+
+  it('holds every posted entry, not the first page of them', async () => {
+    const journal = execFileSync('unzip', ['-p', zipPath, 'journal.csv'], { encoding: 'utf8' });
+
+    // One row per LINE, so count distinct entry numbers instead.
+    const entryNos = new Set(
+      journal
+        .split('\r\n')
+        .slice(1)
+        .filter((l) => l.trim() !== '')
+        .map((l) => l.split(',')[0]),
+    );
+
+    const posted = await call(api, {
+      method: 'GET',
+      ...as('/v1/reports/journal?from=2026-01-01&to=2026-12-31'),
+    });
+    const expected = (posted.body['entries'] as { entryNo: string }[]).length;
+
+    expect(entryNos.size).toBe(expected);
+    expect(entryNos.size).toBeGreaterThan(0);
+    // Both sides of every entry are in the file, and so is who posted it.
+    expect(journal).toContain('Posted by');
+    expect(journal).toContain('Capital introduced');
+  });
+
+  it('carries a README that explains the formats rather than assuming them', async () => {
+    const readme = execFileSync('unzip', ['-p', zipPath, 'README.txt'], { encoding: 'utf8' });
+
+    // The three bytes that otherwise read as corruption to somebody in 2076.
+    expect(readme).toContain('EF BB BF');
+    expect(readme).toContain('node verify-proof-pack.mjs');
+    // The honest limit, in the archive itself and not only in the register.
+    expect(readme).toContain('WHAT THIS ARCHIVE DOES NOT CONTAIN');
+  });
+
+  it('verifies its own proof pack, using the copy of the verifier inside it', async () => {
+    execFileSync('unzip', ['-q', zipPath, '-d', dir]);
+    // The whole claim of the slice in one command: nothing outside this
+    // directory is consulted.
+    const output = execFileSync(
+      'node',
+      [join(dir, 'verify-proof-pack.mjs'), join(dir, 'proof-pack.json')],
+      { encoding: 'utf8' },
+    );
+    expect(output.toLowerCase()).not.toContain('altered');
+
+    const statements = readFileSync(join(dir, 'financial-statements.pdf'));
+    expect(statements.subarray(0, 4).toString()).toBe('%PDF');
+    // The pack INSIDE the archive points at the CSVs beside it — the same
+    // renderer says something different when downloaded on its own.
+    expect(pdfText(statements.toString('latin1'))).toContain('in this archive');
+
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('answers 404 for a fiscal year that is not this tenant’s', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as(`/v1/reports/archive/${randomUUID()}`),
+    });
+    expect(response.status).toBe(404);
+  });
+
+  it('refuses SALES — a year of books is not a till-user download', async () => {
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const years = await call(api, { method: 'GET', ...as('/v1/fiscal-years') });
+    const year = (years.body['fiscalYears'] as { id: string }[])[0]!;
+
+    const response = await call(api, {
+      method: 'GET',
+      url: `/v1/reports/archive/${year.id}`,
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(response.status).toBe(403);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Printed documents
+// ---------------------------------------------------------------------------
+
+describe('the sales day book', () => {
+  it('lists every issued invoice in the period, with totals that add up', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/sales-day-book/pdf?from=2026-01-01&to=2026-12-31'),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+    expect(response.body.startsWith('%PDF')).toBe(true);
+
+    const text = pdfText(response.body);
+    expect(text).toContain('SALES DAY BOOK');
+    expect(text).toContain('Reports Sdn Bhd');
+    // The period, stated in the meta block in DD/MM/YYYY (rule 8).
+    expect(text).toContain('01/01/2026');
+    expect(text).toContain('Totals');
+  });
+
+  it('says so plainly when a period had no sales, rather than printing a blank grid', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/sales-day-book/pdf?from=2020-01-01&to=2020-01-31'),
+    });
+    expect(response.status).toBe(200);
+    expect(pdfText(response.body)).toContain('No invoices were issued in this period');
+  });
+
+  it('numbers its pages once there is more than one', async () => {
+    /*
+     * The reason `build()` buffers pages at all. A day book of a busy month
+     * runs to several sheets, and a reader has no way to know whether the copy
+     * they were handed is complete unless every sheet says which of how many
+     * it is. One page deliberately carries NO number — "Page 1 of 1" is noise.
+     */
+    const short = pdfText(
+      (await callRaw(api, {
+        method: 'GET',
+        ...as('/v1/reports/sales-day-book/pdf?from=2020-01-01&to=2020-01-31'),
+      })).body,
+    );
+    expect(short).not.toContain('Page 1 of');
+
+    // 60 invoices will not fit on one page.
+    const contact = await call(api, {
+      method: 'POST',
+      ...as('/v1/contacts'),
+      body: { name: 'Volume Buyer Sdn Bhd', isCustomer: true },
+    });
+    for (let i = 0; i < 60; i++) {
+      await call(api, {
+        method: 'POST',
+        ...as('/v1/invoices'),
+        idempotencyKey: randomUUID(),
+        body: {
+          contactId: contact.body['id'],
+          issueDate: '2026-09-10',
+          dueDate: '2026-10-10',
+          lines: [{ description: `Bulk line ${i + 1}`, quantity: '1', unitPrice: '125.00',
+                    accountId: tenant.accounts['4000'], taxCodeId: tenant.taxCodes['NONE'] }],
+        },
+      });
+    }
+
+    const long = pdfText(
+      (await callRaw(api, {
+        method: 'GET',
+        ...as('/v1/reports/sales-day-book/pdf?from=2026-09-01&to=2026-09-30'),
+      })).body,
+    );
+    expect(long).toContain('Page 1 of');
+    expect(long).toContain('Page 2 of');
+    // The column headings are redrawn on the continuation sheet — without
+    // this the second page is four unlabelled columns of money.
+    expect(long.match(/Still due/g)!.length).toBeGreaterThan(1);
+  });
+
+  it('refuses SALES — a month of every customer’s prices is not a till download', async () => {
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const response = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/sales-day-book/pdf?from=2026-01-01&to=2026-12-31',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
+    expect(response.status).toBe(403);
+  });
+});
+
+describe('the financial statements pack', () => {
+  it('prints profit or loss and the balance sheet on their own pages', async () => {
+    const response = await callRaw(api, {
+      method: 'GET',
+      ...as('/v1/reports/financial-statements/pdf?from=2026-01-01&to=2026-12-31'),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.headers['content-type']).toBe('application/pdf');
+
+    const text = pdfText(response.body);
+    expect(text).toContain('Reports Sdn Bhd');
+    // Both statements, and the fiscal year's own label rather than raw dates.
+    expect(text).toContain('FY2026');
+    expect(text).toContain('Revenue');
+    expect(text).toContain('Total assets');
+    // Each statement starts a new page, so the pack is always at least two.
+    expect(text).toContain('Page 1 of 2');
+    expect(text).toContain('Page 2 of 2');
+    /*
+     * The provenance line must be the STANDALONE one. Inside the archive the
+     * CSVs sit beside the pack; downloaded on its own there is no archive, and
+     * pointing at files that are not there sends a reader looking for them.
+     */
+    expect(text).toContain('exported from Reports');
+    expect(text).not.toContain('in this archive');
+  });
+
+  it('falls back to the dates when a window straddles no single fiscal year', async () => {
+    // A wrong year label on a filed set of accounts is worse than none.
+    const text = pdfText(
+      (await callRaw(api, {
+        method: 'GET',
+        ...as('/v1/reports/financial-statements/pdf?from=2025-06-01&to=2026-06-30'),
+      })).body,
+    );
+    expect(text).not.toContain('FY2026');
+    expect(text).toContain('2025-06-01');
+  });
+
+  it('refuses SALES', async () => {
+    const sales = await makeUser(api, { tenantId: tenant.tenantId, role: 'SALES' });
+    const { accessToken } = await accessTokenFor(api, sales.refreshToken, tenant.tenantId);
+    const response = await call(api, {
+      method: 'GET',
+      url: '/v1/reports/financial-statements/pdf?from=2026-01-01&to=2026-12-31',
+      token: accessToken,
+      tenantId: tenant.tenantId,
+    });
     expect(response.status).toBe(403);
   });
 });

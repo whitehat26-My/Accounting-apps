@@ -8,7 +8,7 @@ import {
   type Sql,
   type TenantContext,
 } from '@emil/db';
-import { runFollowUpPass, runWeeklyDigest } from '@emil/db';
+import { runFollowUpPass, runWeeklyDigest, takeAnchor } from '@emil/db';
 import type { Logger } from '../logger.js';
 
 /**
@@ -310,10 +310,51 @@ export const weeklyDigest: Job = async ({ sql, log, now }) => {
   return { tenantsChecked: tenants.length, stored, warnings };
 };
 
+/**
+ * Anchor every tenant's audit chain, nightly.
+ *
+ * An anchor pins where the chain stood at a moment in time. Its value is not
+ * in existing — an attacker with owner rights can rewrite anchors as easily
+ * as log rows — but in being EXPORTED: a proof pack handed to an accountant,
+ * a bank or a grant assessor carries anchors that a later rewrite can no
+ * longer agree with. Nightly, so the window a rewrite could hide in is one
+ * day rather than however long since somebody last thought about it.
+ *
+ * Idempotent in the sense that matters: running twice makes two anchors, which
+ * is harmless — anchors are a growing chain, not a unique daily record.
+ */
+export const auditAnchor: Job = async ({ sql, log }) => {
+  const tenants = await everyTenant(sql);
+  let anchored = 0;
+
+  for (const tenantId of tenants) {
+    const ctx: TenantContext = { tenantId };
+    try {
+      const anchor = await withTenant(sql, ctx, (tx) => takeAnchor(tx, ctx, 'SCHEDULED'));
+      anchored += 1;
+      log.info('audit-anchor: chain pinned', {
+        tenantId,
+        seq: anchor.seq,
+        entries: anchor.entryCount,
+      });
+    } catch (error) {
+      // One tenant's failure must not stop the rest being anchored — an
+      // un-anchored night is a gap in exactly the evidence this produces.
+      log.error('audit-anchor: failed', {
+        tenantId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  return { tenants: tenants.length, anchored };
+};
+
 export const jobs: Readonly<Record<string, Job>> = {
   'rollup-drift': rollupDrift,
   'einvoice-retry': einvoiceRetry,
   'outbox-sweep': outboxSweep,
   'payment-reminders': paymentReminders,
   'weekly-digest': weeklyDigest,
+  'audit-anchor': auditAnchor,
 };

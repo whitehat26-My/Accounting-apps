@@ -141,6 +141,20 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     // through a narrow SECURITY DEFINER function. Asserted below.
     app_user: 'global identity; app role has no grant, access via SECURITY DEFINER only',
     user_session: 'global session; app role has no grant, access via SECURITY DEFINER only',
+    /*
+     * An invitation to open an account PREDATES the tenant it will create, so
+     * there is no `tenant_id` to scope it to and no policy that could express
+     * the rule. Same category as `app_user` and `user_session`, and mitigated
+     * the same way: the app role holds SELECT and UPDATE (it verifies and
+     * spends invitations during registration) and NOT INSERT — minting goes
+     * through `create_signup_invite`, a SECURITY DEFINER function that can
+     * only produce a well-formed row. Asserted in the API suite.
+     *
+     * It holds an email, an operator's note and a token digest. Nothing that
+     * belongs to an organisation, and the check below that an exempt table has
+     * no `tenant_id` is what stops that changing quietly.
+     */
+    signup_invite: 'pre-tenant by nature; app role cannot INSERT, minting via SECURITY DEFINER',
     // Scheduled jobs run ACROSS tenants — the rollup-drift canary asks "has
     // any tenant's cache diverged from its journal", and a per-tenant schedule
     // would make the answer depend on whether that tenant happened to have a
@@ -152,6 +166,23 @@ describe('invariant #14 — tenant isolation is enforced by the database', () =>
     app_role: 'global role definitions, read-only',
     app_permission: 'global permission definitions, read-only',
     role_permission: 'global role/permission matrix, read-only',
+    // The published EPF, SOCSO and EIS schedules. National rates: every tenant
+    // reads the identical rows, nobody writes them except a migration, and the
+    // application role holds SELECT only. Same reasoning as the LHDN code lists
+    // above. They are effective-dated rather than tenant-scoped, because what
+    // varies is the DATE a schedule applies from, not the organisation reading it.
+    statutory_epf_band: 'global EPF Third Schedule, read-only',
+    statutory_epf_rule: 'global EPF above-ceiling rates, read-only',
+    statutory_socso_band: 'global SOCSO Act 4 schedule, read-only',
+    statutory_eis_band: 'global EIS Act 800 schedule, read-only',
+    // Same again for income tax: Table 1 and the relief limits from IRBM's MTD
+    // specification are national, published, and read identically by everyone.
+    statutory_mtd_band: 'global LHDN MTD Table 1, read-only',
+    statutory_mtd_relief: 'global LHDN MTD relief limits, read-only',
+    // National filing deadlines are as global as the rates: which deadlines
+    // exist is not a tenant opinion. The tenant-owned half (compliance_tick)
+    // carries RLS like everything else.
+    statutory_deadline_rule: 'global statutory filing deadlines, read-only',
   };
 
   it('every tenant-owned table has RLS enabled AND forced with a policy', async () => {

@@ -1,5 +1,7 @@
-import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import {
+  Body, Controller, Get, Headers, Inject, Param, Post, Query, Req, Res,
+} from '@nestjs/common';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { isoDate, positiveDecimal, uuid } from '@emil/contracts';
 import {
@@ -10,6 +12,10 @@ import {
   stockLevels,
   stockMovements,
   stockUnits,
+  fingerprintDocument,
+  warrantyCardData,
+  warrantyForSerial,
+  warrantyRegister,
   withTenant,
   type Sql,
 } from '@emil/db';
@@ -18,6 +24,8 @@ import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
+import { renderWarrantyCardPdf } from '../pdf/render.js';
+import { verifyUrl } from '../config.js';
 
 /**
  * Stock: what is on the shelf and what it is worth.
@@ -97,6 +105,68 @@ export class StockController {
   async serial(@Param('serialNo') serialNo: string, @Req() request: FastifyRequest) {
     const ctx = tenantContextOf(request);
     return { matches: await withTenant(this.sql, ctx, (tx) => findSerial(tx, ctx, serialNo)) };
+  }
+
+  /**
+   * The promises register: what this shop still owes the people it sold to.
+   *
+   * Every row is derived from a sold serialised unit — nothing is stored, so
+   * nothing can drift out of step with the sale it came from.
+   */
+  @Requires('stock.read')
+  @Get('warranties')
+  async warranties(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => warrantyRegister(tx, ctx));
+  }
+
+  /**
+   * The counter question: someone is standing there with a device, is it
+   * still covered? `promise: null` for a serial this shop never sold — "we
+   * have no record of selling this" is a real answer, so it is a 200.
+   */
+  @Requires('stock.read')
+  @Get('warranties/:serialNo')
+  async warranty(@Param('serialNo') serialNo: string, @Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => warrantyForSerial(tx, ctx, serialNo));
+  }
+
+  /**
+   * The card the customer keeps.
+   *
+   * Refuses (404) for a serial this shop has no promise on, where the JSON
+   * route above answers 200 with `promise: null`. The difference is
+   * deliberate: "we have no record of selling this" is a fine ANSWER for a
+   * screen to show, and a terrible DOCUMENT to hand somebody — a warranty
+   * card for a device nobody can show was sold here would be believed.
+   */
+  @Requires('stock.read')
+  @Get('warranties/:serialNo/card.pdf')
+  async warrantyCard(
+    @Param('serialNo') serialNo: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = tenantContextOf(request);
+    const { card, digest } = await withTenant(this.sql, ctx, async (tx) => {
+      const found = await warrantyCardData(tx, ctx, serialNo);
+      return {
+        card: found,
+        digest: (await fingerprintDocument(tx, ctx, 'WARRANTY', found.unitId)).digest,
+      };
+    });
+    const pdf = await renderWarrantyCardPdf(card, { digest, verifyUrl: verifyUrl() });
+
+    void reply
+      .header('content-type', 'application/pdf')
+      .header(
+        'content-disposition',
+        // The serial is the filename, so a folder of these is sorted by the
+        // thing they are about. Anything a filesystem dislikes becomes a dash.
+        `inline; filename="warranty-${card.serialNo.replace(/[^A-Za-z0-9._-]/g, '-')}.pdf"`,
+      )
+      .send(pdf);
   }
 
   /**

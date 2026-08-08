@@ -1,9 +1,10 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, apiBlobUrl } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
-import { Card, Skeleton } from '@/components/ui';
+import { Button, Card, Skeleton } from '@/components/ui';
+import { Money } from '@/components/money';
 import { can, useMe } from '@/lib/me';
 
 /**
@@ -13,6 +14,15 @@ import { can, useMe } from '@/lib/me';
  * count the drawer against), what was invoiced, what the sold goods cost, and
  * what the day actually made.
  */
+
+interface FreeCash {
+  bankBalance: string;
+  totalHeld: string;
+  freeCash: string;
+  verdict: 'COMFORTABLE' | 'TIGHT' | 'SHORT';
+  held: { key: string; label: string; owedTo: string; amount: string; dueDate: string | null; note?: string }[];
+  soonest: { label: string; amount: string; dueDate: string | null } | null;
+}
 
 interface Forecast {
   openingCash: string;
@@ -44,6 +54,14 @@ interface Takings {
   grossProfit: string;
 }
 
+/** Fetch with the session attached, then hand the bytes to the browser —
+    a plain window.open cannot carry the Authorization header. */
+async function openPdf(path: string) {
+  const url = await apiBlobUrl(path);
+  window.open(url, '_blank', 'noopener');
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+}
+
 export default function TodayPage() {
   const date = todayIso();
   const me = useMe();
@@ -66,6 +84,13 @@ export default function TodayPage() {
     enabled: seesMoney,
   });
 
+  const free = useQuery({
+    queryKey: ['free-cash'],
+    queryFn: () => api<FreeCash>('/v1/reports/free-cash'),
+    refetchInterval: 300_000,
+    enabled: seesMoney,
+  });
+
   const digests = useQuery({
     queryKey: ['weekly-digests'],
     queryFn: () => api<DigestList>('/v1/reports/weekly-digests?limit=1'),
@@ -75,40 +100,57 @@ export default function TodayPage() {
 
   const t = takings.data;
   const f = forecast.data;
+  const fc = free.data;
   const d = digests.data?.digests[0];
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Today — {displayDate(date)}</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Today — {displayDate(date)}</h1>
+        {/* Closing up is the counter's job, so this rides pos.sale — the same
+            permission that rang the sales it totals. */}
+        {seesTakings ? (
+          <Button
+            variant="ghost"
+            onClick={() => void openPdf(`/v1/pos/takings/pdf?date=${date}`)}
+          >
+            Print the day sheet
+          </Button>
+        ) : null}
+      </div>
 
       {seesTakings ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-          <Stat label="Takings" value={t ? rm(t.receiptsTotal) : '—'} />
-          <Stat label="Sales" value={t ? `${t.invoiceCount}` : '—'} />
-          <Stat label="Cost of goods" value={t ? rm(t.costOfGoodsSold) : '—'} />
-          <Stat label="Gross profit" value={t ? rm(t.grossProfit) : '—'} highlight />
+          {/* Raw decimal strings, not rm() — Money formats the resting frame
+              itself and counts through changes (a sale rings, Takings rolls). */}
+          <Stat label="Takings" value={t ? t.receiptsTotal : '—'} delay={0} delta />
+          <Stat label="Sales" value={t ? `${t.invoiceCount}` : '—'} plain delay={60} />
+          <Stat label="Cost of goods" value={t ? t.costOfGoodsSold : '—'} delay={120} />
+          <Stat label="Gross profit" value={t ? t.grossProfit : '—'} highlight delay={180} delta />
         </div>
       ) : null}
 
       {!seesTakings && !seesMoney && me.data ? (
         <Card>
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-ink-muted">
             Welcome. Your work lives in the sections on the left.
           </p>
         </Card>
       ) : null}
+
+      {seesMoney && fc ? <FreeCashCard position={fc} /> : null}
 
       {seesMoney ? (
       <Card title="Cash — today and ahead">
         {f ? (
           <div className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-sm text-slate-500">In the bank now</span>
-              <span className="text-lg font-bold">{rm(f.openingCash)}</span>
+              <span className="text-sm text-ink-muted">In the bank now</span>
+              <span className="text-lg font-bold"><Money value={f.openingCash} /></span>
             </div>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left text-xs text-slate-500">
+                <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-1">Horizon</th>
                   <th className="pb-1 text-right">Coming in</th>
                   <th className="pb-1 text-right">Going out</th>
@@ -117,13 +159,13 @@ export default function TodayPage() {
               </thead>
               <tbody>
                 {f.horizons.map((h) => (
-                  <tr key={h.days} className="border-t border-slate-100">
+                  <tr key={h.days} className="border-t border-line">
                     <td className="py-1.5">{h.days} days</td>
-                    <td className="py-1.5 text-right text-emerald-700">{rm(h.inflows)}</td>
-                    <td className="py-1.5 text-right text-red-600">{rm(h.outflows)}</td>
+                    <td className="py-1.5 text-right text-positive">{rm(h.inflows)}</td>
+                    <td className="py-1.5 text-right text-negative">{rm(h.outflows)}</td>
                     <td
                       className={`py-1.5 text-right font-semibold ${
-                        h.closing.startsWith('-') ? 'text-red-700' : ''
+                        h.closing.startsWith('-') ? 'text-negative' : ''
                       }`}
                     >
                       {rm(h.closing)}
@@ -133,7 +175,7 @@ export default function TodayPage() {
               </tbody>
             </table>
             {f.overdueReceivables.count > 0 ? (
-              <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p className="rounded-md bg-caution-soft px-3 py-2 text-xs text-caution">
                 {rm(f.overdueReceivables.total)} across {f.overdueReceivables.count} overdue
                 invoice{f.overdueReceivables.count > 1 ? 's' : ''} is NOT counted above —
                 late payers have unknown timing. Chase them in Collections.
@@ -151,12 +193,12 @@ export default function TodayPage() {
         {d ? (
           <div className="space-y-3">
             <div className="flex items-baseline justify-between">
-              <span className="text-sm text-slate-500">
+              <span className="text-sm text-ink-muted">
                 {displayDate(d.weekStart)} – {displayDate(d.weekEnd)}
               </span>
               <span
                 className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
-                  d.warnCount > 0 ? 'bg-amber-100 text-amber-900' : 'bg-emerald-100 text-emerald-800'
+                  d.warnCount > 0 ? 'bg-caution-soft text-caution' : 'bg-positive-soft text-positive'
                 }`}
               >
                 {d.warnCount > 0
@@ -177,8 +219,8 @@ export default function TodayPage() {
                     key={flag.code}
                     className={`rounded-md px-3 py-2 text-xs ${
                       flag.severity === 'WARN'
-                        ? 'bg-amber-50 text-amber-900'
-                        : 'bg-emerald-50 text-emerald-900'
+                        ? 'bg-caution-soft text-caution'
+                        : 'bg-positive-soft text-positive'
                     }`}
                   >
                     {flag.message}
@@ -188,7 +230,7 @@ export default function TodayPage() {
             ) : null}
           </div>
         ) : (
-          <p className="text-sm text-slate-500">
+          <p className="text-sm text-ink-muted">
             The first digest appears after a full Monday-to-Sunday week of trading.
           </p>
         )}
@@ -201,17 +243,17 @@ export default function TodayPage() {
           <table className="w-full text-sm">
             <tbody>
               {t.byMethod.map((m) => (
-                <tr key={`${m.method}-${m.depositAccount}`} className="border-t border-slate-100">
+                <tr key={`${m.method}-${m.depositAccount}`} className="border-t border-line">
                   <td className="py-2 font-medium">{m.method}</td>
-                  <td className="py-2 text-slate-500">{m.depositAccount}</td>
-                  <td className="py-2 text-right text-slate-500">{m.count}×</td>
+                  <td className="py-2 text-ink-muted">{m.depositAccount}</td>
+                  <td className="py-2 text-right text-ink-muted">{m.count}×</td>
                   <td className="py-2 text-right font-medium">{rm(m.total)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
         ) : (
-          <p className="text-sm text-slate-500">Nothing taken yet today.</p>
+          <p className="text-sm text-ink-muted">Nothing taken yet today.</p>
         )}
       </Card>
       ) : null}
@@ -221,24 +263,159 @@ export default function TodayPage() {
 
 function WeekStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md bg-slate-50 px-3 py-2">
-      <div className="text-xs text-slate-500">{label}</div>
+    <div className="rounded-md bg-surface-sunken px-3 py-2">
+      <div className="text-xs text-ink-muted">{label}</div>
       <div className="font-semibold">{value}</div>
     </div>
   );
 }
 
-function Stat({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
+function Stat({
+  label,
+  value,
+  highlight,
+  plain,
+  delay = 0,
+  delta = false,
+}: {
+  label: string;
+  value: string;
+  highlight?: boolean;
+  /** A count rather than an amount — rendered as-is, no RM, no count-up. */
+  plain?: boolean;
+  /** Entrance stagger in ms — the charts.tsx idiom, capped by the caller. */
+  delay?: number;
+  /** Flash what the figure moved by when it changes. See the note below. */
+  delta?: boolean;
+}) {
   return (
-    <div className="rounded-2xl bg-white p-4 shadow-sm ring-1 ring-slate-900/5">
-      <div className="text-xs font-medium text-slate-500">{label}</div>
+    <div
+      className="emil-rise rounded-2xl bg-surface-raised p-4 shadow-sm ring-1 ring-line"
+      style={{ animationDelay: `${delay}ms` }}
+    >
+      <div className="text-xs font-medium text-ink-muted">{label}</div>
       <div
         className={`mt-1.5 text-2xl font-semibold tracking-tight ${
-          highlight ? 'text-emerald-600' : 'text-slate-900'
+          highlight ? 'text-positive' : 'text-ink'
         }`}
       >
-        {value}
+        {/*
+          `delta` only on the tiles a sale actually moves.
+
+          Takings and gross profit change the moment somebody rings something
+          up, and the chip is what turns a dashboard that refreshes every 60s
+          into a shop keeping score. Cost of goods moves too but nobody watches
+          it land, and a count of invoices is not money at all.
+        */}
+        {plain ? value : <Money value={value} delta={delta} />}
       </div>
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+const VERDICT: Record<
+  FreeCash['verdict'],
+  { tone: string; band: string; headline: string; advice: string }
+> = {
+  COMFORTABLE: {
+    tone: 'text-positive',
+    band: 'bg-positive-soft ring-positive/30',
+    headline: 'yours to spend',
+    advice: 'Everything you are holding for other people is covered, with room left over.',
+  },
+  TIGHT: {
+    tone: 'text-caution',
+    band: 'bg-caution-soft ring-caution/30',
+    headline: 'yours to spend',
+    advice:
+      'Most of the money in the bank is not yours. It will cover what is owed — but a big purchase now would be spending other people’s money.',
+  },
+  SHORT: {
+    tone: 'text-negative',
+    band: 'bg-negative-soft ring-negative/40',
+    headline: 'short of what you are holding',
+    advice:
+      'The money you are holding for staff and the government is MORE than what is in the bank. Some of it has already been spent. The next deadline will overdraw you unless money comes in first.',
+  },
+};
+
+/**
+ * The bank balance, minus what isn't yours.
+ *
+ * Placed above the forecast deliberately: the forecast answers "will money
+ * arrive", and this answers "is the money already here even mine". A shop
+ * that reads the second number wrongly buys stock with the staff's EPF and
+ * finds out on the 15th.
+ *
+ * Every figure is a real ledger balance — EPF_PAYABLE, PCB_PAYABLE and the
+ * rest — so this cannot drift from the balance sheet.
+ */
+function FreeCashCard({ position }: { position: FreeCash }) {
+  const style = VERDICT[position.verdict];
+  const short = position.verdict === 'SHORT';
+
+  return (
+    <Card>
+      <div className={`rounded-lg p-4 ring-1 ring-inset ${style.band}`}>
+        <div className="flex flex-wrap items-baseline justify-between gap-2">
+          <div>
+            <p className="text-xs font-medium uppercase tracking-wide text-ink-muted">
+              Actually yours
+            </p>
+            <p className={`text-3xl font-bold ${style.tone}`}>
+              {rm(position.freeCash)}
+            </p>
+            <p className="text-xs text-ink-muted">{style.headline}</p>
+          </div>
+          <div className="text-right text-sm">
+            <p className="text-ink-muted">
+              In the bank <span className="font-semibold">{rm(position.bankBalance)}</span>
+            </p>
+            <p className="text-ink-muted">
+              Held for others{' '}
+              <span className="font-semibold">{rm(position.totalHeld)}</span>
+            </p>
+          </div>
+        </div>
+        <p className={`mt-2 text-sm ${short ? 'font-medium text-negative' : 'text-ink-muted'}`}>
+          {style.advice}
+        </p>
+      </div>
+
+      {position.held.length > 0 ? (
+        <table className="mt-3 w-full text-sm">
+          <thead>
+            <tr className="text-left text-xs text-ink-muted">
+              <th className="pb-1">Not yours</th>
+              <th className="pb-1 text-right">Amount</th>
+              <th className="pb-1 text-right">Leaves by</th>
+            </tr>
+          </thead>
+          <tbody>
+            {position.held.map((line) => (
+              <tr key={line.key} className="border-t border-line align-top">
+                <td className="py-1.5">
+                  <div className="font-medium text-ink">{line.label}</div>
+                  <div className="text-xs text-ink-muted">{line.owedTo}</div>
+                  {line.note ? (
+                    <div className="text-xs text-caution">{line.note}</div>
+                  ) : null}
+                </td>
+                <td className="py-1.5 text-right font-medium">{rm(line.amount)}</td>
+                <td className="py-1.5 text-right text-xs text-ink-muted">
+                  {line.dueDate === null ? 'no fixed date' : displayDate(line.dueDate)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : (
+        <p className="mt-3 text-sm text-ink-muted">
+          You are not holding anything for anyone right now — the whole balance is yours.
+        </p>
+      )}
+    </Card>
   );
 }

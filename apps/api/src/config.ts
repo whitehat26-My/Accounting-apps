@@ -7,6 +7,16 @@ import { z } from 'zod';
  * immediately rather than the first request that needs it — a service that
  * starts healthy and 500s on login is worse than one that refuses to start.
  */
+/**
+ * Where `PUBLIC_BASE_URL` points when nobody has said.
+ *
+ * Development only, and named rather than inlined so that `loadConfig` and
+ * `verifyUrl` cannot drift apart — they are two readers of one variable, and a
+ * document printed with one value and verified against the other would be a
+ * genuinely baffling bug.
+ */
+const DEFAULT_PUBLIC_BASE_URL = 'http://localhost:3000';
+
 const schema = z.object({
   databaseUrl: z.string().min(1),
   /**
@@ -28,6 +38,24 @@ const schema = z.object({
    * rather than merely slow.
    */
   publicRateLimit: z.number().int().positive(),
+  /**
+   * Who may open an account on this installation.
+   *
+   * ---------------------------------------------------------------------------
+   * DEFAULTS TO `invite`, BECAUSE THE WRONG DEFAULT HAS AN OWNER.
+   *
+   * Registration used to be open to whoever found the URL. That is right for a
+   * shop PC on a LAN or behind Tailscale, where the NETWORK is the gate, and
+   * wrong for anything with a domain name — the operator would learn about the
+   * strangers from the table sizes.
+   *
+   * A default that fails open costs somebody their instance; a default that
+   * fails closed costs a developer one environment variable. So `invite` here,
+   * and `SIGNUP_MODE=open` set explicitly by the dev harness, the e2e harness
+   * and any deployment that genuinely wants self-serve sign-up.
+   * ---------------------------------------------------------------------------
+   */
+  signupMode: z.enum(['open', 'invite']),
   /**
    * Requests per window for the assistant chat route, keyed PER TENANT.
    *
@@ -89,6 +117,17 @@ const schema = z.object({
    * a canned assistant presented as real is a lie to the person reading it.
    */
   enableFakeAssistant: z.boolean(),
+  /**
+   * Where a printed document tells the reader to go to verify it.
+   *
+   * Printed onto paper that outlives any deployment, so it is configuration
+   * rather than a constant — but it has a default, unlike the secrets above:
+   * a wrong URL on a receipt is a bad link, while a missing one would stop
+   * invoices printing at all. The document also prints the digest as text, so
+   * a reader who cannot reach this address still holds everything needed to
+   * verify through any future address.
+   */
+  publicBaseUrl: z.string().url(),
   nodeEnv: z.string(),
 })
   .refine((c) => !(c.enableFakeGateway && c.nodeEnv === 'production'), {
@@ -119,6 +158,20 @@ export type ApiConfig = z.infer<typeof schema>;
  * A bare number is a hop count; `true`/`false` are literal; anything else is
  * passed through as a CIDR / comma-separated address list.
  */
+/**
+ * An environment variable that is present but EMPTY is not a value.
+ *
+ * `docker-compose.prod.yml` interpolates from `.env.prod`, and a variable left
+ * as the bare `PUBLIC_BASE_URL=` that `.env.prod.example` ships reaches the
+ * container as `''` rather than as absent. `??` does not catch that — `'' ?? x`
+ * is `''` — so without this the URL schema would reject an empty string and the
+ * API would refuse to boot over a blank line in a config file.
+ */
+function text(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed === '' ? undefined : trimmed;
+}
+
 function parseTrustProxy(value: string | undefined): boolean | number | string {
   if (value === undefined || value === '' || value === 'false') return false;
   if (value === 'true') return true;
@@ -134,12 +187,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     rateLimit: Number(env['RATE_LIMIT'] ?? 600),
     rateLimitWindowMs: Number(env['RATE_LIMIT_WINDOW_MS'] ?? 60_000),
     publicRateLimit: Number(env['PUBLIC_RATE_LIMIT'] ?? 30),
+    signupMode: text(env['SIGNUP_MODE']) ?? 'invite',
     assistantRateLimit: Number(env['ASSISTANT_RATE_LIMIT'] ?? 30),
-    trustProxy: parseTrustProxy(env['TRUST_PROXY']),
+    trustProxy: parseTrustProxy(text(env['TRUST_PROXY'])),
     enableFakeGateway: env['EMIL_ENABLE_FAKE_GATEWAY'] === '1',
     enableSandboxValues: env['EMIL_ENABLE_SANDBOX_VALUES'] === '1',
-    ...(env['ANTHROPIC_API_KEY'] ? { anthropicApiKey: env['ANTHROPIC_API_KEY'] } : {}),
+    ...(text(env['ANTHROPIC_API_KEY']) ? { anthropicApiKey: text(env['ANTHROPIC_API_KEY']) } : {}),
     enableFakeAssistant: env['EMIL_ENABLE_FAKE_ASSISTANT'] === '1',
+    publicBaseUrl: text(env['PUBLIC_BASE_URL']) ?? DEFAULT_PUBLIC_BASE_URL,
     nodeEnv: env['NODE_ENV'] ?? 'development',
   });
 
@@ -155,4 +210,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
   }
 
   return parsed.data;
+}
+
+/**
+ * The address printed on a document's verification block.
+ *
+ * Read from the environment at call time rather than injected: the renderer is
+ * a pure function of its arguments and the controller is the only caller, so
+ * threading config through the PDF layer would buy nothing. Kept beside the
+ * schema so there is one place that knows the variable's name.
+ */
+export function verifyUrl(env: NodeJS.ProcessEnv = process.env): string {
+  return `${(text(env['PUBLIC_BASE_URL']) ?? DEFAULT_PUBLIC_BASE_URL).replace(/\/+$/, '')}/verify`;
 }

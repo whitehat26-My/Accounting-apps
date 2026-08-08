@@ -38,10 +38,12 @@ export default function ItemsPage() {
   const queryClient = useQueryClient();
   const [code, setCode] = useState('');
   const [name, setName] = useState('');
+  const [barcode, setBarcode] = useState('');
   const [price, setPrice] = useState('');
   const [kind, setKind] = useState<'GOODS' | 'SERVICE'>('GOODS');
   const [tracked, setTracked] = useState(true);
   const [serialised, setSerialised] = useState(false);
+  const [warrantyMonths, setWarrantyMonths] = useState('');
 
   const items = useQuery({
     queryKey: ['items', ''],
@@ -68,11 +70,18 @@ export default function ItemsPage() {
         body: {
           code,
           name,
+          ...(barcode.trim() !== '' ? { barcode: barcode.trim() } : {}),
           itemType: kind,
           isSold: true,
           isPurchased: kind === 'GOODS',
           isTracked: kind === 'GOODS' && tracked,
           isSerialised: kind === 'GOODS' && tracked && serialised,
+          // Only meaningful with serials: the promise is derived from the
+          // sale of a NAMED unit, so an unserialised item has nothing to
+          // hang it on. Sent as 0 rather than omitted so the intent is
+          // explicit in the request.
+          warrantyMonths:
+            kind === 'GOODS' && tracked && serialised ? Number(warrantyMonths || 0) : 0,
           sale: { unitPrice: price, accountId: revenue.id, taxCodeId: none.id },
           ...(kind === 'GOODS' && purchases
             ? { purchase: { accountId: purchases.id, taxCodeId: none.id } }
@@ -83,7 +92,9 @@ export default function ItemsPage() {
     onSuccess: () => {
       setCode('');
       setName('');
+      setBarcode('');
       setPrice('');
+      setWarrantyMonths('');
       void queryClient.invalidateQueries({ queryKey: ['items'] });
     },
   });
@@ -91,15 +102,15 @@ export default function ItemsPage() {
   return (
     <div className="grid grid-cols-2 gap-4">
       <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Items</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Items</h1>
         <Card>
           <table className="w-full text-sm">
             <tbody>
               {(items.data ?? []).map((item) => (
-                <tr key={item.id} className="border-t border-slate-100">
-                  <td className="py-2 text-xs text-slate-500">{item.code}</td>
+                <tr key={item.id} className="border-t border-line">
+                  <td className="py-2 text-xs text-ink-muted">{item.code}</td>
                   <td className="py-2">{item.name}</td>
-                  <td className="py-2 text-xs text-slate-500">
+                  <td className="py-2 text-xs text-ink-muted">
                     {item.itemType}
                     {item.isTracked ? ' · tracked' : ''}
                     {item.isSerialised ? ' · serials' : ''}
@@ -115,7 +126,7 @@ export default function ItemsPage() {
       </div>
 
       <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">&nbsp;</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">&nbsp;</h1>
         <Card title="New item">
           <form
             className="space-y-3"
@@ -129,6 +140,14 @@ export default function ItemsPage() {
             </Field>
             <Field label="Name">
               <Input value={name} onChange={(e) => setName(e.target.value)} required placeholder="1TB NVMe SSD" />
+            </Field>
+            <Field label="Barcode (optional)">
+              {/* Click here, scan the product, done — the scanner types it. */}
+              <Input
+                value={barcode}
+                onChange={(e) => setBarcode(e.target.value)}
+                placeholder="Scan or type the EAN"
+              />
             </Field>
             <Field label="Selling price (RM)">
               <Input
@@ -162,11 +181,40 @@ export default function ItemsPage() {
                     Every unit has a serial number
                   </label>
                 ) : null}
+                {tracked && serialised ? (
+                  <Field label="Warranty (months) — 0 for none">
+                    <Input
+                      type="number"
+                      min={0}
+                      max={120}
+                      inputMode="numeric"
+                      value={warrantyMonths}
+                      onChange={(e) => setWarrantyMonths(e.target.value)}
+                      placeholder="12"
+                    />
+                  </Field>
+                ) : null}
               </div>
             ) : null}
             <ErrorNote error={create.error} />
-            <Button type="submit" disabled={create.isPending} className="w-full">
-              {create.isPending ? 'Saving…' : 'Add item'}
+            {/*
+              Disabled until the chart of accounts and the tax codes have
+              arrived. The mutation refuses without them ("Chart not loaded yet
+              — try again"), which is correct but is an error message where a
+              disabled button belongs: the person did nothing wrong, the page
+              was not ready, and telling them to retry is asking them to do the
+              waiting the interface should have done.
+            */}
+            <Button
+              type="submit"
+              disabled={create.isPending || !accounts.data || !taxCodes.data}
+              className="w-full"
+            >
+              {create.isPending
+                ? 'Saving…'
+                : !accounts.data || !taxCodes.data
+                  ? 'Loading the chart…'
+                  : 'Add item'}
             </Button>
           </form>
         </Card>

@@ -178,9 +178,17 @@ export interface ChainVerification {
  * — 04-security-compliance.md:90 specifies S3 Object Lock — so a rewritten
  * chain no longer matches an anchor the attacker cannot reach.
  *
- * ⚠️ That anchor is NOT implemented. Until it is, this detects tampering by
- * anyone who did not think to re-chain, and that is a genuinely lower bar than
- * the README implies.
+ * THE ANCHOR NOW EXISTS — see `proof.ts` and migration 0045. A nightly job
+ * pins the chain (entry count + head hash) into `audit_anchor`, and the proof
+ * pack EXPORTS those anchors so a copy lives with the accountant, the bank, or
+ * whoever was given one. A re-chained log no longer agrees with a pack issued
+ * before the rewrite, and `verifyProofPack` names the anchor where the two
+ * histories part company — `proof.test.ts` performs the full owner-rights
+ * attack and watches it caught.
+ *
+ * ⚠️ Still true, and worth restating: an anchor that never LEAVES this
+ * database adds nothing. Whoever can rewrite the log can rewrite the anchors
+ * beside it. The evidence is the exported copy, not the table.
  * ---------------------------------------------------------------------------
  */
 export async function verifyAuditChain(

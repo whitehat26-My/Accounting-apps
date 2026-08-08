@@ -1,7 +1,7 @@
 import { Body, Controller, Get, Inject, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { isoDate, uuid } from '@emil/contracts';
+import { isoDate, isoInstant, uuid } from '@emil/contracts';
 import {
   toCsv,
   type CashFlowStatement,
@@ -21,16 +21,36 @@ import {
   setCashFlowClassification,
   statementOfFinancialPosition,
   statementOfProfitOrLoss,
+  customerStatement,
+  customersWithBalances,
+  sellerBlock,
   trialBalanceCsv,
   trialBalanceReport,
   withTenant,
   type Sql,
+  itemMargins,
+  repairProfitability,
+  stockAgeing,
+  freeCash,
+  fraudWatch,
+  booksAsAt,
+  whatChanged,
+  lockMoments,
+  listFiscalYears,
+  salesDayBook,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
+import {
+  renderFinancialStatementsPdf,
+  renderSalesDayBookPdf,
+  renderStatementPdf,
+} from '../pdf/render.js';
+import { buildArchive } from '../archive/build.js';
+import { NotFoundError } from '../errors.js';
 
 /**
  * Reporting.
@@ -55,6 +75,82 @@ export class ReportsController {
 
   private ctx(request: FastifyRequest) {
     return tenantContextOf(request);
+  }
+
+  // ---- Customer statements ------------------------------------------------
+
+  /**
+   * Who owes something, so a shop can run the month's statements without first
+   * working out which customers to run them for.
+   */
+  @Requires('report.read')
+  @Get('statements')
+  async statementList(@Query('asOf') asOf: string, @Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, async (tx) => ({
+      asOf: parse(isoDate, asOf),
+      customers: await customersWithBalances(tx, ctx, parse(isoDate, asOf)),
+    }));
+  }
+
+  /**
+   * One customer's account over a period.
+   *
+   * A GET with the customer in the path and the dates in the query, because
+   * unlike a payslip there is nothing confidential in the URL that is not
+   * already in the path — and a statement is the kind of thing somebody wants
+   * to bookmark and re-open.
+   */
+  /** The same statement, as the page you post or attach to an email. */
+  @Requires('report.read')
+  @Get('statements/:contactId/pdf')
+  async statementPdf(
+    @Param('contactId') contactId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const { statement, seller } = await withTenant(this.sql, ctx, async (tx) => ({
+      statement: await customerStatement(
+        tx,
+        ctx,
+        parse(uuid, contactId),
+        parse(isoDate, from),
+        parse(isoDate, to),
+      ),
+      seller: await sellerBlock(tx, ctx),
+    }));
+
+    const pdf = await renderStatementPdf(statement, seller);
+    void reply
+      .header('content-type', 'application/pdf')
+      .header(
+        'content-disposition',
+        `inline; filename="statement-${statement.to}.pdf"`,
+      )
+      .send(pdf);
+  }
+
+  @Requires('report.read')
+  @Get('statements/:contactId')
+  async statement(
+    @Param('contactId') contactId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      customerStatement(
+        tx,
+        ctx,
+        parse(uuid, contactId),
+        parse(isoDate, from),
+        parse(isoDate, to),
+      ),
+    );
   }
 
   // ---- The statements -----------------------------------------------------
@@ -84,6 +180,375 @@ export class ReportsController {
       statementOfProfitOrLoss(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
     );
     return renderReport(report);
+  }
+
+  /**
+   * The second pair of eyes — audit techniques on a five-person shop.
+   *
+   * Read-only and non-blocking by design: it never stops a payment or flags a
+   * record, because an automated control that stops work gets worked around
+   * within a fortnight. It makes a person look, and a person looking is the
+   * control. Every finding carries its innocent explanation.
+   */
+  @Requires('report.read')
+  @Get('reports/fraud-watch')
+  async fraudWatchReport(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      fraudWatch(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
+    );
+  }
+
+  /**
+   * How much of the bank balance is actually the shop's.
+   *
+   * The most misread number in a small business is the bank balance: it
+   * contains the EPF, SOCSO, PCB and SST the shop is HOLDING for other
+   * people. This subtracts them and reports what is left, with a verdict
+   * loud enough to stop a stock purchase that would spend the float.
+   */
+  @Requires('report.read')
+  @Get('reports/free-cash')
+  async freeCashReport(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    const position = await withTenant(this.sql, ctx, (tx) => freeCash(tx, ctx));
+    return {
+      ...position,
+      bankBalance: position.bankBalance.toDecimalString(),
+      totalHeld: position.totalHeld.toDecimalString(),
+      freeCash: position.freeCash.toDecimalString(),
+      held: position.held.map((h) => ({ ...h, amount: h.amount.toDecimalString() })),
+      soonest:
+        position.soonest === null
+          ? null
+          : { ...position.soonest, amount: position.soonest.amount.toDecimalString() },
+    };
+  }
+
+  /**
+   * What is sitting on the shelf and for how long — the dead-stock report.
+   * Derived entirely from the append-only movement history; no new state.
+   */
+  @Requires('report.read')
+  @Get('reports/stock-ageing')
+  async stockAgeingReport(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { rows: await withTenant(this.sql, ctx, (tx) => stockAgeing(tx, ctx)) };
+  }
+
+  @Requires('report.read')
+  @Get('reports/stock-ageing/csv')
+  async stockAgeingCsv(@Req() request: FastifyRequest, @Res() reply: FastifyReply) {
+    const ctx = this.ctx(request);
+    const rows = await withTenant(this.sql, ctx, (tx) => stockAgeing(tx, ctx));
+    send(
+      reply,
+      'stock-ageing.csv',
+      toCsv([
+        ['Code', 'Item', 'On hand', 'Value (RM)', 'Last sold', 'Last received', 'Days idle', 'Bucket'],
+        ...rows.map((r) => [
+          r.code, r.name, r.quantityOnHand, r.stockValue,
+          r.lastSoldOn === null ? 'never' : display(r.lastSoldOn),
+          r.lastReceivedOn === null ? '' : display(r.lastReceivedOn),
+          String(r.daysIdle), r.bucket,
+        ]),
+      ]),
+    );
+  }
+
+  /**
+   * Margin by item, WORST first — "what am I selling for nothing". Reads the
+   * frozen invoice lines and the perpetual-inventory reliefs those same sales
+   * posted, so it cannot disagree with the P&L.
+   */
+  @Requires('report.read')
+  @Get('reports/item-margins')
+  async itemMarginsReport(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    return {
+      rows: await withTenant(this.sql, ctx, (tx) =>
+        itemMargins(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
+      ),
+    };
+  }
+
+  @Requires('report.read')
+  @Get('reports/item-margins/csv')
+  async itemMarginsCsv(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const rows = await withTenant(this.sql, ctx, (tx) =>
+      itemMargins(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
+    );
+    send(
+      reply,
+      `item-margins-${from}-to-${to}.csv`,
+      toCsv([
+        ['Code', 'Item', 'Qty sold', 'Revenue (RM)', 'Cost (RM)', 'Margin (RM)', 'Margin %'],
+        ...rows.map((r) => [
+          r.code, r.name, r.quantitySold, r.revenue, r.cost, r.margin,
+          r.marginBp === null ? '' : (r.marginBp / 100).toFixed(2),
+        ]),
+      ]),
+    );
+  }
+
+  /** Collected repairs: billed, parts off the shelf, and what was left. */
+  @Requires('report.read')
+  @Get('reports/repair-profit')
+  async repairProfitReport(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    return withTenant(this.sql, ctx, (tx) =>
+      repairProfitability(tx, ctx, { from: parse(isoDate, from), to: parse(isoDate, to) }),
+    );
+  }
+
+  // ---- The time machine ---------------------------------------------------
+
+  /**
+   * The books as they stood at a past instant.
+   *
+   * Not a reconstruction: the ledger is append-only, so this is one predicate
+   * over rows that still exist — see `packages/domain/src/time-machine.ts`.
+   * The optional `from`/`to` restrict it to entries DATED in a window, which
+   * is how you ask "March, as March was reported".
+   */
+  @Requires('report.read')
+  @Get('reports/books-as-at')
+  async booksAsAtReport(
+    @Query('asAt') asAt: string,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    const books = await withTenant(this.sql, ctx, (tx) =>
+      booksAsAt(tx, ctx, { asAt: parse(isoInstant, asAt), ...window_(from, to) }),
+    );
+    return { ...books, balances: books.balances.map(renderBalance) };
+  }
+
+  /**
+   * What moved between two instants, and who moved it.
+   *
+   * The question this whole feature exists for: "I closed March on 5 April and
+   * the figure is different now — what changed?" No other package for a shop
+   * this size answers it, because answering it requires a ledger that was
+   * never edited.
+   */
+  @Requires('report.read')
+  @Get('reports/what-changed')
+  async whatChangedReport(
+    @Query('since') since: string,
+    @Query('until') until: string | undefined,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = this.ctx(request);
+    const diff = await withTenant(this.sql, ctx, (tx) =>
+      whatChanged(tx, ctx, {
+        since: parse(isoInstant, since),
+        // Defaulting `until` to now is the common case — "since I closed it,
+        // what has happened" — and saves the caller stamping a clock.
+        until: until === undefined ? new Date().toISOString() : parse(isoInstant, until),
+        ...window_(from, to),
+      }),
+    );
+    return {
+      ...diff,
+      changes: diff.changes.map((c) => ({
+        accountId: c.accountId,
+        code: c.code,
+        name: c.name,
+        before: c.before.toDecimalString(),
+        after: c.after.toDecimalString(),
+        delta: c.delta.toDecimalString(),
+      })),
+    };
+  }
+
+  @Requires('report.read')
+  @Get('reports/what-changed/csv')
+  async whatChangedCsv(
+    @Query('since') since: string,
+    @Query('until') until: string | undefined,
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const diff = await withTenant(this.sql, ctx, (tx) =>
+      whatChanged(tx, ctx, {
+        since: parse(isoInstant, since),
+        until: until === undefined ? new Date().toISOString() : parse(isoInstant, until),
+        ...window_(from, to),
+      }),
+    );
+    send(
+      reply,
+      `what-changed-since-${diff.since.slice(0, 10)}.csv`,
+      toCsv([
+        ['Account', 'Name', 'Before (RM)', 'After (RM)', 'Change (RM)'],
+        ...diff.changes.map((c) => [
+          c.code, c.name,
+          c.before.toDecimalString(), c.after.toDecimalString(), c.delta.toDecimalString(),
+        ]),
+        [],
+        // The entries responsible go in the SAME file. Two downloads to answer
+        // one question is how the second one gets lost.
+        ['Entry', 'Dated', 'Posted', 'Why', 'Posted by', 'Source', 'Description'],
+        ...diff.entries.map((e) => [
+          e.entryNo, display(e.entryDate), e.postedAt, e.kind,
+          e.postedByName ?? 'unknown', e.sourceModule, e.description ?? '',
+        ]),
+      ]),
+    );
+  }
+
+  /**
+   * The instants worth comparing against — when periods were locked, unlocked
+   * or closed. Without these the screen asks for a timestamp, and nobody knows
+   * theirs.
+   */
+  /**
+   * The hundred-year archive: one downloadable file per financial year.
+   *
+   * Records must be kept seven years; software does not last seven years
+   * reliably, and a business outlives several of them. Every format inside is
+   * chosen so somebody in 2076 with no access to this system can still read
+   * the books — including the proof-pack verifier, which travels INSIDE the
+   * archive because a proof that depends on downloading its own checker is
+   * not a proof.
+   */
+  /**
+   * The sales day book as paper — every invoice issued in a period.
+   *
+   * The CSV exports beside it serve a spreadsheet; this serves the folder an
+   * accountant is handed, which is still how most Malaysian SMEs close a month.
+   */
+  /**
+   * Profit or loss and the balance sheet, as one printable pack.
+   *
+   * The renderer has existed since the hundred-year archive but was reachable
+   * only from inside a year's zip — so a shop that wanted its accounts for a
+   * bank or a grant had to download an archive and open a file within it. This
+   * is the same renderer on a route.
+   */
+  @Requires('report.read')
+  @Get('reports/financial-statements/pdf')
+  async financialStatementsPdf(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const window = { from: parse(isoDate, from), to: parse(isoDate, to) };
+
+    const { sopl, sofp, seller, label } = await withTenant(this.sql, ctx, async (tx) => {
+      const years = await listFiscalYears(tx, ctx);
+      // The year the period sits in, when it sits in one — a heading of
+      // "FY2026" is what makes the pack filable. A window that straddles two
+      // years, or none, prints the dates alone rather than a wrong label.
+      const year = years.find((y) => window.from >= y.startDate && window.to <= y.endDate);
+      return {
+        sopl: await statementOfProfitOrLoss(tx, ctx, window),
+        sofp: await statementOfFinancialPosition(tx, ctx, { asOfDate: window.to }),
+        seller: await sellerBlock(tx, ctx),
+        label: year?.label ?? `${window.from} to ${window.to}`,
+      };
+    });
+
+    const pdf = await renderFinancialStatementsPdf({
+      seller,
+      label,
+      from: window.from,
+      to: window.to,
+      profitOrLoss: sopl,
+      financialPosition: sofp,
+    });
+
+    void reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition',
+        `inline; filename="financial-statements-${window.from}-to-${window.to}.pdf"`)
+      .send(pdf);
+  }
+
+  @Requires('report.read')
+  @Get('reports/sales-day-book/pdf')
+  async salesDayBookPdf(
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const window = { from: parse(isoDate, from), to: parse(isoDate, to) };
+    const { book, seller } = await withTenant(this.sql, ctx, async (tx) => ({
+      book: await salesDayBook(tx, ctx, window),
+      seller: await sellerBlock(tx, ctx),
+    }));
+
+    const pdf = await renderSalesDayBookPdf({ seller, ...book });
+    void reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="sales-day-book-${window.from}-to-${window.to}.pdf"`)
+      .send(pdf);
+  }
+
+  @Requires('report.read')
+  @Get('reports/archive/:fiscalYearId')
+  async archive(
+    @Param('fiscalYearId') fiscalYearId: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const { zip, label } = await withTenant(this.sql, ctx, async (tx) => {
+      const years = await listFiscalYears(tx, ctx);
+      const year = years.find((y) => y.id === fiscalYearId);
+      // Another tenant's year is indistinguishable from one that never
+      // existed — rule 9.
+      if (!year) throw new NotFoundError('Fiscal year');
+
+      const seller = await sellerBlock(tx, ctx);
+      return {
+        label: year.label,
+        zip: await buildArchive(tx, ctx, year, seller, new Date()),
+      };
+    });
+
+    void reply
+      .header('content-type', 'application/zip')
+      .header('content-disposition', `attachment; filename="books-${label.replace(/[^\w.-]/g, '_')}.zip"`)
+      .header('x-content-type-options', 'nosniff')
+      .send(zip);
+  }
+
+  @Requires('report.read')
+  @Get('reports/lock-moments')
+  async lockMomentsReport(@Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return { moments: await withTenant(this.sql, ctx, (tx) => lockMoments(tx, ctx)) };
   }
 
   @Requires('report.read')
@@ -473,6 +938,34 @@ function cashFlowCsv(statement: CashFlowStatement, reconciles: boolean): string 
 
 function label(activity: string): string {
   return activity.charAt(0) + activity.slice(1).toLowerCase() + ' activities';
+}
+
+/**
+ * The optional accounting-date window for the time machine.
+ *
+ * Absent means "the whole ledger". `exactOptionalPropertyTypes` is on, so an
+ * explicit `undefined` is not the same as an omitted key — the spread form is
+ * what keeps the two apart.
+ */
+function window_(from: string | undefined, to: string | undefined) {
+  return {
+    ...(from !== undefined && from !== '' ? { from: parse(isoDate, from) } : {}),
+    ...(to !== undefined && to !== '' ? { to: parse(isoDate, to) } : {}),
+  };
+}
+
+function renderBalance(balance: {
+  accountId: string;
+  code: string;
+  name: string;
+  balance: { toDecimalString(): string };
+}) {
+  return {
+    accountId: balance.accountId,
+    code: balance.code,
+    name: balance.name,
+    balance: balance.balance.toDecimalString(),
+  };
 }
 
 function display(iso: string): string {

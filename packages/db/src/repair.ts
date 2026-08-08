@@ -2,12 +2,15 @@ import {
   checkRepairTransition,
   describeRepairViolation,
   isErr,
+  promiseStatus,
+  warrantyWindow,
+  type PromiseStatus,
   type RepairStatus,
 } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { recordCashSale, type CashSaleResult } from './pos.js';
 import { issueInvoice, type IssueInvoiceLine } from './invoice.js';
-import { toIsoDate } from './internal.js';
+import { businessToday, toIsoDate } from './internal.js';
 import type { PaymentMethod } from '@emil/domain';
 
 /**
@@ -29,7 +32,11 @@ export class RepairError extends Error {
       | 'ILLEGAL_TRANSITION'
       | 'JOB_NOT_EDITABLE'
       | 'JOB_NOT_COLLECTABLE'
-      | 'QUOTE_INVALID',
+      | 'QUOTE_INVALID'
+      | 'PHOTO_NOT_FOUND'
+      | 'PHOTO_LIMIT_REACHED'
+      | 'PHOTO_TOO_LARGE'
+      | 'EVIDENCE_FROZEN',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -63,6 +70,8 @@ export interface RepairJobView {
   readonly invoiceId: string | null;
   readonly receivedOn: string;
   readonly collectedOn: string | null;
+  /** What came in with the device: charger, bag, SIM, SD card — see 0048. */
+  readonly accessories: readonly string[];
   readonly lines: readonly {
     readonly lineNo: number;
     readonly description: string;
@@ -83,6 +92,8 @@ export interface IntakeInput {
   readonly deviceSerial?: string;
   readonly reportedFault: string;
   readonly receivedOn: string;
+  /** Ticked at the counter; printed on the slip the customer takes away. */
+  readonly accessories?: readonly string[];
   readonly idempotencyKey: string;
 }
 
@@ -125,11 +136,12 @@ export async function createRepairJob(
   const [job] = await tx<{ id: string; job_no: string }[]>`
       INSERT INTO repair_job (
           tenant_id, job_no, contact_id, device_description, device_serial,
-          reported_fault, received_on, created_by, created_idempotency_key
+          reported_fault, received_on, accessories, created_by, created_idempotency_key
       ) VALUES (
           ${ctx.tenantId}, ${numbered!.allocate_document_number}, ${input.contactId},
           ${input.deviceDescription}, ${input.deviceSerial ?? null},
-          ${input.reportedFault}, ${input.receivedOn}, ${ctx.userId ?? null},
+          ${input.reportedFault}, ${input.receivedOn},
+          ${(input.accessories ?? []) as string[]}, ${ctx.userId ?? null},
           ${input.idempotencyKey}
       )
       RETURNING id, job_no
@@ -164,6 +176,7 @@ export async function quoteRepairJob(
 
   const check = checkRepairTransition(job.status, 'QUOTED', {
     quoteLineCount: input.lines.length,
+    ...(await evidenceCounts(tx, ctx, jobId)),
   });
   if (isErr(check)) {
     throw new RepairError('ILLEGAL_TRANSITION', describeRepairViolation(check.error), check.error);
@@ -266,8 +279,11 @@ export async function transitionRepairJob(
        WHERE tenant_id = ${ctx.tenantId} AND repair_job_id = ${jobId}
   `;
 
+  const evidence = await evidenceCounts(tx, ctx, jobId);
+
   const check = checkRepairTransition(job.status, input.to, {
     quoteLineCount: lineCount!.n,
+    ...evidence,
     ...(input.reason !== undefined ? { reason: input.reason } : {}),
   });
   if (isErr(check)) {
@@ -345,6 +361,7 @@ export async function collectRepairJob(
   const check = checkRepairTransition(job.status, 'COLLECTED', {
     quoteLineCount: 0,
     viaCollection: true,
+    ...(await evidenceCounts(tx, ctx, jobId)),
   });
   if (isErr(check)) {
     throw new RepairError(
@@ -486,12 +503,171 @@ export async function listRepairJobs(
   return jobs.map((j) => toView(j, []));
 }
 
+/**
+ * The board: the same open jobs, plus the three things a technician looks for
+ * before touching anything.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE QUERY, NOT ONE PER CARD.
+ *
+ * `listRepairJobs` deliberately carries no lines because 200 jobs would mean
+ * 200 sub-queries. The same argument applies here and is why the customer, the
+ * evidence counts and the warranty all arrive as lateral joins on the single
+ * statement rather than as a fetch per card. A board that costs 60 round trips
+ * to open is a board the workshop stops opening.
+ *
+ * The three additions each answer a question the flat list forced someone to
+ * go and look up:
+ *
+ *   - WHOSE is it. A job number identifies a row; a name identifies the person
+ *     standing at the counter asking about it.
+ *   - Is the EVIDENCE there. Quoting is refused without an intake photograph
+ *     (`NO_INTAKE_PHOTO`), and finding that out at the moment you try to name
+ *     a price means walking back to a device you have already put down.
+ *   - Did WE SELL IT. A device still inside its warranty is not a job to be
+ *     quoted, and discovering that after quoting is an awkward phone call.
+ * ---------------------------------------------------------------------------
+ */
+export interface RepairBoardCard {
+  readonly id: string;
+  readonly jobNo: string;
+  readonly deviceDescription: string;
+  readonly deviceSerial: string | null;
+  readonly reportedFault: string;
+  readonly status: RepairStatus;
+  readonly receivedOn: string;
+  readonly customerName: string | null;
+  /** Days on the premises, inclusive of the day it arrived. */
+  readonly ageDays: number;
+  readonly intakePhotoCount: number;
+  readonly intakeSignatureCount: number;
+  /**
+   * Set only when this shop sold this exact serial and the item carries a
+   * warranty. `null` means "not ours, or we do not know" — never "expired".
+   */
+  readonly warranty: {
+    readonly soldOn: string;
+    readonly expiresOn: string;
+    readonly status: PromiseStatus;
+  } | null;
+}
+
+interface BoardRow {
+  id: string;
+  job_no: string;
+  device_description: string;
+  device_serial: string | null;
+  reported_fault: string;
+  status: RepairStatus;
+  received_on: Date;
+  customer_name: string | null;
+  intake_photos: number;
+  intake_signatures: number;
+  sold_on: Date | null;
+  warranty_months: number | null;
+}
+
+export async function listRepairBoard(
+  tx: Tx,
+  ctx: TenantContext,
+  options: { readonly today?: string } = {},
+): Promise<readonly RepairBoardCard[]> {
+  const today = options.today ?? businessToday();
+
+  const rows = await tx<BoardRow[]>`
+      SELECT j.id, j.job_no, j.device_description, j.device_serial,
+             j.reported_fault, j.status, j.received_on,
+             c.name AS customer_name,
+             COALESCE(e.intake_photos, 0)     AS intake_photos,
+             COALESCE(e.intake_signatures, 0) AS intake_signatures,
+             w.sold_on, w.warranty_months
+        FROM repair_job j
+        LEFT JOIN contact c
+               ON c.tenant_id = j.tenant_id AND c.id = j.contact_id
+        LEFT JOIN LATERAL (
+               SELECT
+                 COUNT(*) FILTER (WHERE kind = 'PHOTO'     AND stage = 'RECEIVED')::int
+                   AS intake_photos,
+                 COUNT(*) FILTER (WHERE kind = 'SIGNATURE' AND stage = 'RECEIVED')::int
+                   AS intake_signatures
+                 FROM repair_job_photo p
+                WHERE p.tenant_id = j.tenant_id AND p.repair_job_id = j.id
+             ) e ON TRUE
+        /*
+         * Same normalisation as the promises register: a repair's serial is
+         * free text typed at a counter, and matching it raw silently misses
+         * every one a technician entered in lower case.
+         */
+        LEFT JOIN LATERAL (
+               SELECT m.moved_on AS sold_on, i.warranty_months
+                 FROM stock_unit u
+                 JOIN item i           ON i.tenant_id = u.tenant_id AND i.id = u.item_id
+                 JOIN stock_movement m ON m.tenant_id = u.tenant_id
+                                      AND m.id = u.issued_movement_id
+                WHERE u.tenant_id = j.tenant_id
+                  AND u.status = 'SOLD'
+                  AND i.warranty_months > 0
+                  AND u.serial_no =
+                      upper(regexp_replace(btrim(j.device_serial), '\\s+', ' ', 'g'))
+                ORDER BY m.moved_on DESC
+                LIMIT 1
+             ) w ON j.device_serial IS NOT NULL
+       WHERE j.tenant_id = ${ctx.tenantId}
+       ORDER BY j.received_on DESC, j.job_no DESC
+       LIMIT 200
+  `;
+
+  return rows.map((r) => {
+    const receivedOn = toIsoDate(r.received_on);
+    return {
+      id: r.id,
+      jobNo: r.job_no,
+      deviceDescription: r.device_description,
+      deviceSerial: r.device_serial,
+      reportedFault: r.reported_fault,
+      status: r.status,
+      receivedOn,
+      customerName: r.customer_name,
+      ageDays: daysBetween(receivedOn, today),
+      intakePhotoCount: r.intake_photos,
+      intakeSignatureCount: r.intake_signatures,
+      warranty:
+        r.sold_on !== null && r.warranty_months !== null
+          ? (() => {
+              const soldOn = toIsoDate(r.sold_on!);
+              const window = warrantyWindow(soldOn, r.warranty_months!);
+              return {
+                soldOn,
+                expiresOn: window.expiresOn,
+                status: promiseStatus(today, window),
+              };
+            })()
+          : null,
+    };
+  });
+}
+
+/**
+ * Whole days from one calendar date to another, inclusive of the first.
+ *
+ * Both arguments are `YYYY-MM-DD` accounting dates, never timestamps, so this
+ * parses them at UTC midnight and subtracts — no timezone can shift the answer
+ * by a day, which is exactly the bug a `new Date()` here would introduce for a
+ * shop in Kuala Lumpur reading a board written by a server in UTC.
+ */
+function daysBetween(from: string, to: string): number {
+  const a = Date.parse(`${from}T00:00:00Z`);
+  const b = Date.parse(`${to}T00:00:00Z`);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 0;
+  return Math.max(0, Math.round((b - a) / 86_400_000));
+}
+
 // ------------------------------------------------------------------ internal
 
 const JOB_COLUMNS = `
     id, job_no, contact_id, device_description, device_serial, reported_fault,
     diagnosis, status, approval_note, approved_at, closed_reason, invoice_id,
-    received_on, collected_on, collect_idempotency_key, collected_paid
+    received_on, collected_on, accessories, collect_idempotency_key, collected_paid
 `;
 
 interface JobRow {
@@ -499,7 +675,7 @@ interface JobRow {
   device_serial: string | null; reported_fault: string; diagnosis: string | null;
   status: RepairStatus; approval_note: string | null; approved_at: Date | null;
   closed_reason: string | null; invoice_id: string | null;
-  received_on: Date; collected_on: Date | null;
+  received_on: Date; collected_on: Date | null; accessories: string[];
   collect_idempotency_key: string | null; collected_paid: boolean | null;
 }
 
@@ -535,6 +711,7 @@ function toView(
     invoiceId: job.invoice_id,
     receivedOn: toIsoDate(job.received_on),
     collectedOn: job.collected_on ? toIsoDate(job.collected_on) : null,
+    accessories: job.accessories,
     lines: lines.map((l) => ({
       lineNo: l.line_no,
       description: l.description,
@@ -544,4 +721,312 @@ function toView(
       serialNumbers: l.serial_numbers,
     })),
   };
+}
+
+// ---------------------------------------------------------------------------
+// Photographs — the evidence side of a repair job
+//
+// A workshop takes a customer's machine apart and returns it days later. What
+// settles a dispute about a mark on the lid is a photograph taken at the
+// counter with the customer standing there, not anyone's memory. See migration
+// 0035 for why the bytes live in PostgreSQL rather than in a folder.
+// ---------------------------------------------------------------------------
+
+/** How many photographs one job may carry. */
+export const REPAIR_PHOTO_LIMIT = 12;
+
+/** Two megabytes, matching the CHECK in 0035. */
+export const REPAIR_PHOTO_MAX_BYTES = 2 * 1024 * 1024;
+
+export type RepairPhotoStage =
+  | 'RECEIVED' | 'DIAGNOSIS' | 'IN_PROGRESS' | 'READY' | 'COLLECTED';
+
+export type RepairPhotoKind = 'PHOTO' | 'SIGNATURE';
+
+export interface RepairPhotoView {
+  readonly id: string;
+  readonly kind: RepairPhotoKind;
+  readonly stage: RepairPhotoStage;
+  readonly caption: string | null;
+  readonly contentType: string;
+  readonly byteSize: number;
+  readonly width: number | null;
+  readonly height: number | null;
+  readonly digest: string;
+  readonly takenAt: string;
+}
+
+export interface AddRepairPhotoInput {
+  readonly repairJobId: string;
+  /** Defaults to PHOTO; SIGNATURE stores the customer's mark — see 0048. */
+  readonly kind?: RepairPhotoKind;
+  readonly stage: RepairPhotoStage;
+  readonly caption?: string;
+  readonly contentType: 'image/jpeg' | 'image/png' | 'image/webp';
+  readonly image: Buffer;
+}
+
+/**
+ * Attach a photograph.
+ *
+ * The digest is computed HERE rather than accepted from the caller: it is what
+ * makes the un-audited data table safe (0035), so a client-supplied value would
+ * defeat the point — it would be the attacker's hash of the attacker's image.
+ */
+export async function addRepairPhoto(
+  tx: Tx,
+  ctx: TenantContext,
+  input: AddRepairPhotoInput,
+): Promise<RepairPhotoView> {
+  if (input.image.byteLength === 0 || input.image.byteLength > REPAIR_PHOTO_MAX_BYTES) {
+    throw new RepairError(
+      'PHOTO_TOO_LARGE',
+      `A photograph must be between 1 byte and ${REPAIR_PHOTO_MAX_BYTES} bytes; ` +
+        `this one is ${input.image.byteLength}. The web app downscales before ` +
+        'uploading, so a file this size did not come through it.',
+    );
+  }
+
+  const [job] = await tx<{ job_no: string; status: string }[]>`
+      SELECT job_no, status FROM repair_job
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${input.repairJobId}
+  `;
+  if (!job) {
+    throw new RepairError('JOB_NOT_FOUND', `Repair job ${input.repairJobId} not found`);
+  }
+
+  // Evidence freezes when the machine goes back to the customer. After that the
+  // photographs describe a job nobody can re-examine, so adding to the record
+  // is no longer evidence — it is assertion.
+  if (job.status === 'COLLECTED' || job.status === 'CANCELLED') {
+    throw new RepairError(
+      'EVIDENCE_FROZEN',
+      `Job ${job.job_no} is ${job.status}; its photographs are the record of a ` +
+        'job that has closed and cannot be added to.',
+    );
+  }
+
+  const [tally] = await tx<{ count: string }[]>`
+      SELECT COUNT(*)::text AS count FROM repair_job_photo
+       WHERE tenant_id = ${ctx.tenantId} AND repair_job_id = ${input.repairJobId}
+  `;
+  if (Number(tally!.count) >= REPAIR_PHOTO_LIMIT) {
+    throw new RepairError(
+      'PHOTO_LIMIT_REACHED',
+      `Job ${job.job_no} already has ${REPAIR_PHOTO_LIMIT} photographs. Remove one ` +
+        'before adding another.',
+    );
+  }
+
+  const { createHash } = await import('node:crypto');
+  const digest = createHash('sha256').update(input.image).digest('hex');
+  const size = measureImage(input.image, input.contentType);
+
+  const [row] = await tx<PhotoRow[]>`
+      INSERT INTO repair_job_photo (
+          tenant_id, repair_job_id, kind, stage, caption, content_type,
+          byte_size, width, height, digest, taken_by
+      ) VALUES (
+          ${ctx.tenantId}, ${input.repairJobId}, ${input.kind ?? 'PHOTO'}, ${input.stage},
+          ${input.caption ?? null}, ${input.contentType},
+          ${input.image.byteLength}, ${size?.width ?? null}, ${size?.height ?? null},
+          ${digest}, ${ctx.userId ?? null}
+      )
+      RETURNING id, kind, stage, caption, content_type, byte_size, width, height, digest, created_at
+  `;
+
+  await tx`
+      INSERT INTO repair_job_photo_data (tenant_id, photo_id, image)
+      VALUES (${ctx.tenantId}, ${row!.id}, ${input.image})
+  `;
+
+  return toPhotoView(row!);
+}
+
+/** The photographs on a job, metadata only — never the bytes. */
+export async function listRepairPhotos(
+  tx: Tx,
+  ctx: TenantContext,
+  repairJobId: string,
+): Promise<RepairPhotoView[]> {
+  const rows = await tx<PhotoRow[]>`
+      SELECT id, kind, stage, caption, content_type, byte_size, width, height, digest, created_at
+        FROM repair_job_photo
+       WHERE tenant_id = ${ctx.tenantId} AND repair_job_id = ${repairJobId}
+       ORDER BY created_at
+  `;
+  return rows.map(toPhotoView);
+}
+
+/**
+ * What evidence this job actually holds.
+ *
+ * Counted in one round trip and handed to the PURE guard, which owns the rule.
+ * The service's job is to tell the domain what is true; deciding what that
+ * means is not a decision that belongs in a query.
+ */
+async function evidenceCounts(
+  tx: Tx,
+  ctx: TenantContext,
+  repairJobId: string,
+): Promise<{
+  intakePhotoCount: number;
+  intakeSignatureCount: number;
+  collectionSignatureCount: number;
+}> {
+  const [row] = await tx<
+    { intake_photos: number; intake_signatures: number; collection_signatures: number }[]
+  >`
+      SELECT
+        COUNT(*) FILTER (WHERE kind = 'PHOTO'     AND stage = 'RECEIVED')::int  AS intake_photos,
+        COUNT(*) FILTER (WHERE kind = 'SIGNATURE' AND stage = 'RECEIVED')::int  AS intake_signatures,
+        COUNT(*) FILTER (WHERE kind = 'SIGNATURE' AND stage = 'COLLECTED')::int AS collection_signatures
+      FROM repair_job_photo
+     WHERE tenant_id = ${ctx.tenantId} AND repair_job_id = ${repairJobId}
+  `;
+  return {
+    intakePhotoCount: row?.intake_photos ?? 0,
+    intakeSignatureCount: row?.intake_signatures ?? 0,
+    collectionSignatureCount: row?.collection_signatures ?? 0,
+  };
+}
+
+export interface RepairPhotoBytes {
+  readonly contentType: string;
+  readonly image: Buffer;
+  readonly digest: string;
+}
+
+/**
+ * One photograph's bytes, for serving.
+ *
+ * Joined back to `repair_job_photo` on the job id so a photograph cannot be
+ * fetched through the wrong job's URL — the id alone is not authority, the
+ * (job, photo) pair is.
+ */
+export async function getRepairPhoto(
+  tx: Tx,
+  ctx: TenantContext,
+  repairJobId: string,
+  photoId: string,
+): Promise<RepairPhotoBytes> {
+  const [row] = await tx<{ content_type: string; image: Buffer; digest: string }[]>`
+      SELECT p.content_type, d.image, p.digest
+        FROM repair_job_photo p
+        JOIN repair_job_photo_data d
+          ON d.tenant_id = p.tenant_id AND d.photo_id = p.id
+       WHERE p.tenant_id = ${ctx.tenantId}
+         AND p.repair_job_id = ${repairJobId}
+         AND p.id = ${photoId}
+  `;
+  if (!row) throw new RepairError('PHOTO_NOT_FOUND', `Photograph ${photoId} not found`);
+  return { contentType: row.content_type, image: row.image, digest: row.digest };
+}
+
+/**
+ * Remove a photograph — a blurred shot, or one taken against the wrong job.
+ *
+ * Permitted only while the job is open, for the same reason adding is: once the
+ * machine has gone back, the photographs are the record. The deletion itself is
+ * in the audit log with the digest of what was removed, so a photograph cannot
+ * be made to disappear without trace.
+ */
+export async function deleteRepairPhoto(
+  tx: Tx,
+  ctx: TenantContext,
+  repairJobId: string,
+  photoId: string,
+): Promise<void> {
+  const [job] = await tx<{ job_no: string; status: string }[]>`
+      SELECT job_no, status FROM repair_job
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${repairJobId}
+  `;
+  if (!job) throw new RepairError('JOB_NOT_FOUND', `Repair job ${repairJobId} not found`);
+  if (job.status === 'COLLECTED' || job.status === 'CANCELLED') {
+    throw new RepairError(
+      'EVIDENCE_FROZEN',
+      `Job ${job.job_no} is ${job.status}; its photographs are a closed record.`,
+    );
+  }
+
+  const rows = await tx<{ id: string }[]>`
+      DELETE FROM repair_job_photo
+       WHERE tenant_id = ${ctx.tenantId}
+         AND repair_job_id = ${repairJobId}
+         AND id = ${photoId}
+      RETURNING id
+  `;
+  if (rows.length === 0) {
+    throw new RepairError('PHOTO_NOT_FOUND', `Photograph ${photoId} not found`);
+  }
+  // The data row goes with it: ON DELETE CASCADE in 0035.
+}
+
+interface PhotoRow {
+  id: string;
+  stage: RepairPhotoStage;
+  caption: string | null;
+  content_type: string;
+  byte_size: number;
+  width: number | null;
+  height: number | null;
+  digest: string;
+  created_at: Date;
+  kind: RepairPhotoKind;
+}
+
+function toPhotoView(r: PhotoRow): RepairPhotoView {
+  return {
+    id: r.id,
+    kind: r.kind,
+    stage: r.stage,
+    caption: r.caption,
+    contentType: r.content_type,
+    byteSize: r.byte_size,
+    width: r.width,
+    height: r.height,
+    digest: r.digest,
+    takenAt: r.created_at.toISOString(),
+  };
+}
+
+/**
+ * Pixel dimensions, read from the file's own header.
+ *
+ * Recorded so a gallery can lay out without downloading every image, and taken
+ * from the bytes rather than from the client because a caller that lies about
+ * its dimensions would only be lying to us. Unknown shapes return undefined
+ * rather than throwing — the dimensions are a convenience, not a constraint,
+ * and refusing a valid photograph because its header is unusual would be the
+ * wrong trade.
+ */
+function measureImage(
+  buf: Buffer,
+  contentType: string,
+): { width: number; height: number } | undefined {
+  try {
+    if (contentType === 'image/png' && buf.length >= 24) {
+      // PNG: IHDR is the first chunk, width and height at bytes 16 and 20.
+      return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+    }
+    if (contentType === 'image/jpeg') {
+      // JPEG: walk the segment chain to a Start-Of-Frame marker, which carries
+      // the dimensions. Every other segment declares its own length, so this is
+      // a hop rather than a scan.
+      let i = 2;
+      while (i + 9 < buf.length) {
+        if (buf[i] !== 0xff) break;
+        const marker = buf[i + 1]!;
+        const len = buf.readUInt16BE(i + 2);
+        // SOF0..SOF15, excluding the non-frame markers DHT/JPG/DAC.
+        if (marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc) {
+          return { height: buf.readUInt16BE(i + 5), width: buf.readUInt16BE(i + 7) };
+        }
+        i += 2 + len;
+      }
+    }
+  } catch {
+    // A truncated or unusual header is not a reason to reject the photograph.
+  }
+  return undefined;
 }

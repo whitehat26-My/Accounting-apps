@@ -42,6 +42,7 @@ export class ItemsController {
   @Get()
   async list(
     @Query('search') search: string | undefined,
+    @Query('barcode') barcode: string | undefined,
     @Query('direction') direction: string | undefined,
     @Query('includeInactive') includeInactive: string | undefined,
     @Req() request: FastifyRequest,
@@ -50,6 +51,8 @@ export class ItemsController {
     return withTenant(this.sql, ctx, (tx) =>
       listItems(tx, ctx, {
         ...(search !== undefined ? { search } : {}),
+        // Exact, for the scanner lane — see ListItemsOptions.barcode.
+        ...(barcode !== undefined ? { barcode } : {}),
         ...(direction !== undefined ? { direction: parse(directionSchema, direction) } : {}),
         // A deactivated item stays visible on request, because "why can I not
         // find the item I used last year" is otherwise unanswerable.
@@ -125,6 +128,8 @@ const itemSchema = z.object({
   code: z.string().min(1).max(50),
   name: z.string().min(1).max(200),
   description: z.string().max(1000).optional(),
+  /** What the scanner reads. EAN-13 fits; so does any label the shop prints. */
+  barcode: z.string().trim().min(4).max(64).optional(),
   itemType: z.enum(['GOODS', 'SERVICE']).optional(),
   unitOfMeasure: z.string().min(1).max(50).optional(),
   uomCode: z.string().min(1).max(20).optional(),
@@ -135,6 +140,11 @@ const itemSchema = z.object({
   isTracked: z.boolean().optional(),
   /** Serial-number tracking. Requires isTracked. */
   isSerialised: z.boolean().optional(),
+  /**
+   * Months of warranty promised when a serialised unit of this item sells.
+   * Ten years is the ceiling the CHECK enforces; 0 means no promise.
+   */
+  warrantyMonths: z.number().int().min(0).max(120).optional(),
   sale: sideSchema,
   purchase: sideSchema,
 });

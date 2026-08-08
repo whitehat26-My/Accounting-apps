@@ -1,8 +1,9 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { api } from '@/lib/api';
+import { api, apiBlobUrl } from '@/lib/api';
+import { preparePhoto } from '@/lib/image';
 import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
@@ -50,21 +51,21 @@ export default function SettingsPage() {
 
   return (
     <div className="space-y-4">
-      <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Settings</h1>
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Settings</h1>
 
       <Card title="Organisation">
         {org.data ? (
           <div className="grid grid-cols-2 gap-2 text-sm lg:grid-cols-3">
             <div>
-              <div className="text-xs text-slate-500">Name</div>
+              <div className="text-xs text-ink-muted">Name</div>
               <div className="font-medium">{org.data.name}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-500">Base currency</div>
+              <div className="text-xs text-ink-muted">Base currency</div>
               <div className="font-medium">{org.data.baseCurrency}</div>
             </div>
             <div>
-              <div className="text-xs text-slate-500">Reporting framework</div>
+              <div className="text-xs text-ink-muted">Reporting framework</div>
               <div className="font-medium">{org.data.reportingFramework}</div>
             </div>
           </div>
@@ -73,11 +74,132 @@ export default function SettingsPage() {
         )}
       </Card>
 
+      <LetterheadCard canEdit={manages} />
       <ChartCard canAdd={manages} />
       {can(me.data, 'journal.post') ? <OpeningBalancesCard /> : null}
       <TaxCard canAdd={writesTax} />
       <PeriodsCard canLock={can(me.data, 'period.lock')} />
     </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+
+/**
+ * The mark that prints on this organisation's documents.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY THIS SCREEN EXISTS AT ALL.
+ *
+ * The logo used to be a file compiled into the API, so every organisation on a
+ * server printed invoices under the first one's mark. Migration 0050 moved it
+ * into the row and this is where a company puts its own there — which means
+ * the answer to "how do I hand this to another company" is now "they sign up
+ * and spend thirty seconds here", rather than "you fork the code".
+ *
+ * No logo is the normal state, not an error: the letterhead is then the
+ * organisation's name set large, which is a perfectly good letterhead.
+ * ---------------------------------------------------------------------------
+ */
+function LetterheadCard({ canEdit }: { canEdit: boolean }) {
+  const queryClient = useQueryClient();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [colour, setColour] = useState('#1875be');
+
+  const logo = useQuery({
+    queryKey: ['organisation-logo'],
+    // 204 means no mark. `apiBlobUrl` rejects on anything that is not an
+    // image, and a company without one is the ordinary case — so a rejection
+    // here resolves to "none" rather than to an error banner.
+    queryFn: () => apiBlobUrl('/v1/organisations/logo').catch(() => null),
+  });
+
+  const save = async (logoBase64: string | null, contentType: 'image/png' | 'image/jpeg') => {
+    setError(null);
+    setBusy(true);
+    try {
+      await api('/v1/organisations/brand', {
+        method: 'PUT',
+        body: { logoBase64, logoContentType: contentType, brandColour: colour },
+      });
+      void queryClient.invalidateQueries({ queryKey: ['organisation-logo'] });
+    } catch (e) {
+      setError(e);
+    } finally {
+      setBusy(false);
+      if (fileInput.current) fileInput.current.value = '';
+    }
+  };
+
+  async function onPicked(files: FileList | null) {
+    const file = files?.[0];
+    if (!file) return;
+    // The same downscale-and-re-encode the repair camera uses, so a 4MB phone
+    // photo of a signboard arrives as a letterhead-sized JPEG.
+    const prepared = await preparePhoto(file);
+    await save(prepared.base64, prepared.contentType as 'image/png' | 'image/jpeg');
+  }
+
+  return (
+    <Card title="Letterhead — what prints on your documents">
+      <div className="flex flex-wrap items-center gap-4">
+        <div className="flex h-20 w-40 items-center justify-center rounded-xl bg-surface-raised ring-1 ring-inset ring-line">
+          {logo.data ? (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={logo.data} alt="Your logo" className="max-h-16 max-w-36 object-contain" />
+          ) : (
+            <span className="px-2 text-center text-xs text-ink-faint">
+              No logo — documents print your name
+            </span>
+          )}
+        </div>
+
+        {canEdit ? (
+          <div className="space-y-2">
+            <input
+              ref={fileInput}
+              type="file"
+              accept="image/png,image/jpeg"
+              className="hidden"
+              onChange={(e) => void onPicked(e.target.files)}
+            />
+            <div className="flex gap-2">
+              <Button onClick={() => fileInput.current?.click()} disabled={busy}>
+                {busy ? 'Saving…' : logo.data ? 'Replace logo' : 'Upload a logo'}
+              </Button>
+              {logo.data ? (
+                <Button variant="ghost" disabled={busy} onClick={() => void save(null, 'image/png')}>
+                  Remove
+                </Button>
+              ) : null}
+            </div>
+            <label className="flex items-center gap-2 text-xs text-ink-muted">
+              Accent colour
+              <input
+                type="color"
+                value={colour}
+                onChange={(e) => setColour(e.target.value.toLowerCase())}
+                className="h-7 w-10 cursor-pointer rounded border border-line"
+              />
+            </label>
+          </div>
+        ) : (
+          <p className="text-sm text-ink-muted">
+            Only an owner or admin can change the letterhead.
+          </p>
+        )}
+      </div>
+
+      <ErrorNote error={error} />
+
+      <p className="mt-3 text-xs text-ink-muted">
+        Appears on every invoice, receipt, quotation, statement and repair document this
+        organisation prints. PNG or JPEG, up to 256 KB — it is embedded in each document, so
+        a photograph would make one invoice heavier than a year of ledger.
+      </p>
+    </Card>
   );
 }
 
@@ -145,7 +267,7 @@ function OpeningBalancesCard() {
     <Card title="Opening balances — where the shop stood on day one">
       {accounts.data ? (
         <div className="space-y-4">
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-ink-muted">
             Nobody starts trading the day they start an accounting system. State what the
             shop already had and owed, and the difference is recorded as accumulated worth —
             you never type the balancing figure, it is worked out.
@@ -163,7 +285,7 @@ function OpeningBalancesCard() {
           <div className="space-y-1.5">
             {accounts.data.statable.map((account) => (
               <div key={account.id} className="flex items-center gap-3">
-                <span className="w-14 shrink-0 font-mono text-xs text-slate-400">
+                <span className="w-14 shrink-0 font-mono text-xs text-ink-faint">
                   {account.code}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-sm">{account.name}</span>
@@ -181,14 +303,14 @@ function OpeningBalancesCard() {
           </div>
 
           {accounts.data.controlled.length > 0 ? (
-            <div className="space-y-2 rounded-xl bg-slate-50 p-3">
-              <p className="text-xs font-medium text-slate-600">
+            <div className="space-y-2 rounded-xl bg-surface-sunken p-3">
+              <p className="text-xs font-medium text-ink-muted">
                 These three are not entered here, on purpose:
               </p>
               {accounts.data.controlled.map((account) => (
-                <div key={account.code} className="text-xs text-slate-500">
-                  <span className="font-mono text-slate-400">{account.code}</span>{' '}
-                  <span className="font-medium text-slate-600">{account.name}</span>
+                <div key={account.code} className="text-xs text-ink-muted">
+                  <span className="font-mono text-ink-faint">{account.code}</span>{' '}
+                  <span className="font-medium text-ink-muted">{account.name}</span>
                   <span> — {account.guidance}</span>
                 </div>
               ))}
@@ -197,7 +319,7 @@ function OpeningBalancesCard() {
 
           <ErrorNote error={post.error} />
           {posted ? (
-            <p className="rounded-lg bg-emerald-50 px-3 py-2 text-sm text-emerald-800 ring-1 ring-inset ring-emerald-200">
+            <p className="rounded-lg bg-positive-soft px-3 py-2 text-sm text-positive ring-1 ring-inset ring-positive/30">
               Recorded as {posted.entryNo}. {rm(posted.figure)} was{' '}
               {posted.side === 'CREDIT' ? 'credited to' : 'debited from'} Opening Balances —
               that is what the shop was worth. If it is not roughly what you expected,
@@ -287,7 +409,7 @@ function PeriodsCard({ canLock }: { canLock: boolean }) {
         <div className="space-y-4">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-slate-500">
+              <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-1">Period</th>
                 <th className="pb-1 text-right">Entries</th>
                 <th className="pb-1 pl-4">Status</th>
@@ -296,14 +418,14 @@ function PeriodsCard({ canLock }: { canLock: boolean }) {
             </thead>
             <tbody>
               {periods.data.periods.map((period) => (
-                <tr key={period.id} className="border-t border-slate-100">
+                <tr key={period.id} className="border-t border-line">
                   <td className="py-1.5">
                     {period.label}
-                    <span className="ml-2 text-xs text-slate-400">
+                    <span className="ml-2 text-xs text-ink-faint">
                       {displayDate(period.startDate)} – {displayDate(period.endDate)}
                     </span>
                   </td>
-                  <td className="py-1.5 text-right text-slate-500">{period.entryCount}</td>
+                  <td className="py-1.5 text-right text-ink-muted">{period.entryCount}</td>
                   <td className="py-1.5 pl-4">
                     <Badge status={period.status} />
                   </td>
@@ -329,7 +451,7 @@ function PeriodsCard({ canLock }: { canLock: boolean }) {
                           </Button>
                         </span>
                       ) : (
-                        <span className="text-xs text-slate-400">Final</span>
+                        <span className="text-xs text-ink-faint">Final</span>
                       )}
                     </td>
                   ) : null}
@@ -339,12 +461,12 @@ function PeriodsCard({ canLock }: { canLock: boolean }) {
           </table>
           <ErrorNote error={setStatus.error} />
 
-          <div className="space-y-2 border-t border-slate-100 pt-3">
+          <div className="space-y-2 border-t border-line pt-3">
             {years.data.fiscalYears.map((year) => (
               <div key={year.id} className="flex flex-wrap items-center justify-between gap-2 text-sm">
                 <span>
                   <span className="font-medium">{year.label}</span>
-                  <span className="ml-2 text-xs text-slate-400">
+                  <span className="ml-2 text-xs text-ink-faint">
                     {displayDate(year.startDate)} – {displayDate(year.endDate)} · {year.openPeriods} period(s) still open
                   </span>
                 </span>
@@ -381,7 +503,7 @@ function PeriodsCard({ canLock }: { canLock: boolean }) {
               </div>
             ))}
             {confirmYear ? (
-              <p className="rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-900">
+              <p className="rounded-md bg-caution-soft px-3 py-2 text-xs text-caution">
                 Closing the year posts this year&apos;s profit to retained earnings and locks every
                 period. It can be reopened later, with a reason.
               </p>
@@ -431,13 +553,13 @@ function ChartCard({ canAdd }: { canAdd: boolean }) {
         <div className="space-y-3">
           {grouped.map((group) => (
             <div key={group.type}>
-              <div className="mb-1 text-xs font-semibold uppercase text-slate-400">
+              <div className="mb-1 text-xs font-semibold uppercase text-ink-faint">
                 {group.type}
               </div>
               <div className="grid grid-cols-1 gap-x-6 lg:grid-cols-2">
                 {group.accounts.map((a) => (
-                  <div key={a.id} className="flex justify-between border-t border-slate-100 py-1 text-sm">
-                    <span className="font-mono text-xs text-slate-500">{a.code}</span>
+                  <div key={a.id} className="flex justify-between border-t border-line py-1 text-sm">
+                    <span className="font-mono text-xs text-ink-muted">{a.code}</span>
                     <span className="flex-1 px-3">{a.name}</span>
                   </div>
                 ))}
@@ -446,7 +568,7 @@ function ChartCard({ canAdd }: { canAdd: boolean }) {
           ))}
 
           {canAdd ? (
-            <div className="flex flex-wrap items-end gap-2 border-t border-slate-100 pt-3">
+            <div className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
               <Field label="Code">
                 <Input value={code} onChange={(e) => setCode(e.target.value)} className="w-24" placeholder="6300" />
               </Field>
@@ -455,7 +577,7 @@ function ChartCard({ canAdd }: { canAdd: boolean }) {
               </Field>
               <Field label="Type">
                 <select
-                  className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
+                  className="rounded-lg border-0 bg-surface-raised shadow-sm ring-1 ring-inset ring-line-strong px-2 py-2 text-sm"
                   value={type}
                   onChange={(e) => setType(e.target.value)}
                 >
@@ -529,7 +651,7 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
         <div className="space-y-3">
           <table className="w-full text-sm">
             <thead>
-              <tr className="text-left text-xs text-slate-500">
+              <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-1">Code</th>
                 <th className="pb-1">Name</th>
                 <th className="pb-1 text-right">Rate</th>
@@ -540,12 +662,12 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
             <tbody>
               {taxCodes.data.taxCodes.flatMap((t) =>
                 t.rates.map((r, i) => (
-                  <tr key={`${t.id}-${i}`} className="border-t border-slate-100">
+                  <tr key={`${t.id}-${i}`} className="border-t border-line">
                     <td className="py-1.5 font-mono text-xs">{t.code}</td>
                     <td className="py-1.5">{t.name}</td>
                     <td className="py-1.5 text-right">{r.rateBasisPoints / 100}%</td>
-                    <td className="py-1.5 text-xs text-slate-500">{displayDate(r.validFrom)}</td>
-                    <td className="py-1.5 text-xs text-slate-500">{r.legislationRef ?? '—'}</td>
+                    <td className="py-1.5 text-xs text-ink-muted">{displayDate(r.validFrom)}</td>
+                    <td className="py-1.5 text-xs text-ink-muted">{r.legislationRef ?? '—'}</td>
                   </tr>
                 )),
               )}
@@ -553,8 +675,8 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
           </table>
 
           {canAdd ? (
-            <div className="space-y-2 border-t border-slate-100 pt-3">
-              <p className="text-xs text-slate-500">
+            <div className="space-y-2 border-t border-line pt-3">
+              <p className="text-xs text-ink-muted">
                 A new rate must cite the legal instrument it came from (e.g. a gazette
                 order). If you are unsure of a rate, ask your tax agent — do not guess.
               </p>
@@ -567,7 +689,7 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
                 </Field>
                 <Field label="Regime">
                   <select
-                    className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
+                    className="rounded-lg border-0 bg-surface-raised shadow-sm ring-1 ring-inset ring-line-strong px-2 py-2 text-sm"
                     value={regime}
                     onChange={(e) => setRegime(e.target.value)}
                   >
@@ -577,7 +699,7 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
                 </Field>
                 <Field label="Rate %">
                   <select
-                    className="rounded-lg border-0 bg-white shadow-sm ring-1 ring-inset ring-slate-300 px-2 py-2 text-sm"
+                    className="rounded-lg border-0 bg-surface-raised shadow-sm ring-1 ring-inset ring-line-strong px-2 py-2 text-sm"
                     value={ratePercent}
                     onChange={(e) => setRatePercent(e.target.value)}
                   >

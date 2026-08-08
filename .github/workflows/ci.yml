@@ -31,9 +31,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # No version here: pnpm/action-setup reads `packageManager` from
+      # package.json, and naming a second version is exactly the mismatch it
+      # errors on — "Multiple versions of pnpm specified", before install.
+      # pages.yml was fixed for this and ci.yml was not, so every CI run on
+      # every branch has died in the setup step since the action tightened.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 10
 
       - uses: actions/setup-node@v4
         with:

@@ -69,6 +69,7 @@ interface DemoJob {
   invoiceId: string | null;
   receivedOn: string;
   collectedOn: string | null;
+  accessories: string[];
   lines: { lineNo: number; description: string; quantity: string; unitPrice: string; itemId: string | null; serialNumbers: string[] | null }[];
 }
 
@@ -309,7 +310,8 @@ function seed(): DemoStore {
         deviceDescription: 'Acer Aspire 5, silver', deviceSerial: 'NXHS8SM00123',
         reportedFault: 'Does not boot; clicking noise from the drive bay',
         diagnosis: null, status: 'RECEIVED', approvalNote: null, closedReason: null,
-        invoiceId: null, receivedOn: today(), collectedOn: null, lines: [],
+        invoiceId: null, receivedOn: today(), collectedOn: null,
+        accessories: ['Charger', 'Bag / sleeve'], lines: [],
       },
     ],
     invoiceSeq: 3,
@@ -1188,6 +1190,13 @@ export function demoApi(
     return { updated: true };
   }
 
+  /*
+   * Credit notes. The demo store issues none, so the honest answer is an empty
+   * list — and the card hides itself on an empty list rather than inventing a
+   * credit against an invoice the demo never credited.
+   */
+  if (p === '/v1/credit-notes' && method === 'GET') return { creditNotes: [] };
+
   // ---- stock ---------------------------------------------------------------
   if (p === '/v1/stock') {
     return {
@@ -1205,17 +1214,53 @@ export function demoApi(
   if (movementMatch) {
     return { movements: store.movements.filter((m) => m.itemId === movementMatch[1]) };
   }
+  /*
+   * The promises register. The demo store has no serialised sales, so the
+   * honest answer is an empty register — the card hides itself on an empty
+   * list rather than showing a fabricated warranty, and a lookup answers
+   * "no record", which is what the real route says for an unknown serial.
+   */
+  if (p === '/v1/stock/warranties') {
+    return {
+      today: new Date().toISOString().slice(0, 10),
+      promises: [], active: 0, expiringSoon: 0, expiringSoonDays: 30,
+    };
+  }
+  const warrantyMatch = /^\/v1\/stock\/warranties\/([^/]+)$/.exec(p);
+  if (warrantyMatch) {
+    return { serialNo: decodeURIComponent(warrantyMatch[1]!).toUpperCase(), promise: null };
+  }
+
+  // Invitations are an account-level act the static demo has no accounts for.
+  if (p === '/v1/auth/invites') {
+    throw demoError(501, 'Invitations are issued by the real server.');
+  }
+
+  // ---- the letterhead ------------------------------------------------------
+  // The static demo stores no image bytes (see the repair photos above), so it
+  // answers "no logo" honestly rather than 404ing the Settings card.
+  if (p === '/v1/organisations/logo' && method === 'GET') {
+    throw demoError(204, 'This organisation has no logo.');
+  }
+  if (p === '/v1/organisations/brand') {
+    throw demoError(
+      501,
+      'Logos are stored by the real server; the static demo keeps nothing but the text ' +
+        'you can see.',
+    );
+  }
 
   // ---- repairs -------------------------------------------------------------
   if (p === '/v1/repairs' && method === 'GET') return { jobs: store.jobs };
   if (p === '/v1/repairs' && method === 'POST') {
-    const input = b as { deviceDescription: string; deviceSerial?: string; reportedFault: string; receivedOn: string; contactId: string };
+    const input = b as { deviceDescription: string; deviceSerial?: string; reportedFault: string; receivedOn: string; contactId: string; accessories?: string[] };
     const job: DemoJob = {
       id: uid(), jobNo: `JOB-${String(store.jobSeq++).padStart(5, '0')}`,
       contactId: input.contactId, deviceDescription: input.deviceDescription,
       deviceSerial: input.deviceSerial ?? null, reportedFault: input.reportedFault,
       diagnosis: null, status: 'RECEIVED', approvalNote: null, closedReason: null,
-      invoiceId: null, receivedOn: input.receivedOn, collectedOn: null, lines: [],
+      invoiceId: null, receivedOn: input.receivedOn, collectedOn: null,
+      accessories: input.accessories ?? [], lines: [],
     };
     store.jobs.unshift(job);
     save(store);
@@ -1229,6 +1274,23 @@ export function demoApi(
     const action = jobMatch[2] ?? '';
 
     if (action === '' && method === 'GET') return job as unknown as Record<string, unknown>;
+
+    // Photographs are answered as an empty set rather than a 404. The static
+    // demo has no way to store image bytes, and an error banner on a tour is
+    // worse than a card that honestly shows nothing — the card's own empty
+    // state already explains what the feature is for.
+    if (action === '/photos' && method === 'GET') return { photos: [] };
+
+    // A signature, like a photograph, is image bytes — and for the same reason
+    // the static demo cannot hold one. Said plainly rather than by 404, because
+    // the person tapping the pad has just drawn their name on it.
+    if (action === '/photos' && method === 'POST') {
+      throw demoError(
+        501,
+        'Photographs and signatures are stored by the real server; the static demo ' +
+          'keeps nothing but the text you can see.',
+      );
+    }
 
     if (action === '/quote') {
       const input = b as { diagnosis: string; lines: { description: string; quantity: string; unitPrice: string }[] };

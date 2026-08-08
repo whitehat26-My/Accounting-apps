@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Param, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, Inject, Param, Post, Query, Req } from '@nestjs/common';
 import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
@@ -7,11 +7,16 @@ import {
   verifyAuditChain,
   withTenant,
   type Sql,
+  listAnchors,
+  proofPack,
+  takeAnchor,
+  verifyProofPack,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
+import { Doc } from '../openapi/doc.decorator.js';
 
 /**
  * Reading the audit trail.
@@ -80,7 +85,68 @@ export class AuditController {
     const ctx = tenantContextOf(request);
     return withTenant(this.sql, ctx, (tx) => verifyAuditChain(tx, ctx));
   }
+
+  /**
+   * The proof pack: a trial balance plus the whole anchor chain, in a form
+   * somebody outside this system can hold and later hand back for checking.
+   *
+   * The point is the COPY. A pack that never leaves this database proves
+   * nothing extra — whoever could rewrite the audit log could rewrite the
+   * anchors beside it. Emailed to the accountant, attached to a loan
+   * application or printed and filed, it becomes the thing a re-chained
+   * history can no longer agree with.
+   */
+  @Requires('audit.read')
+  @Get('audit-chain/proof')
+  async proof(
+    @Query('from') from: string | undefined,
+    @Query('to') to: string | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const ctx = tenantContextOf(request);
+    const window = parse(proofWindowSchema, { from, to });
+    return withTenant(this.sql, ctx, (tx) =>
+      proofPack(tx, ctx, { from: window.from ?? null, to: window.to }),
+    );
+  }
+
+  /**
+   * Hand a previously-issued pack back. Answers 200 whatever the verdict —
+   * "your books were tampered with" is a successful answer to the question,
+   * and an error status would be indistinguishable from the endpoint failing.
+   */
+  @Requires('audit.read')
+  @Doc({ request: () => z.object({}).passthrough() })
+  @Post('audit-chain/proof/verify')
+  async verifyProof(@Body() body: unknown, @Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => verifyProofPack(tx, ctx, body));
+  }
+
+  @Requires('audit.read')
+  @Get('audit-chain/anchors')
+  async anchors(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return { anchors: await withTenant(this.sql, ctx, (tx) => listAnchors(tx, ctx)) };
+  }
+
+  /**
+   * Take an anchor now. The worker does this nightly; this is the button for
+   * "I am about to send this to the bank, pin the chain first".
+   */
+  @Requires('audit.read')
+  @Doc({ request: () => z.object({}).passthrough() })
+  @Post('audit-chain/anchors')
+  async anchor(@Req() request: FastifyRequest) {
+    const ctx = tenantContextOf(request);
+    return withTenant(this.sql, ctx, (tx) => takeAnchor(tx, ctx, 'MANUAL'));
+  }
 }
+
+const proofWindowSchema = z.object({
+  from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default(() => new Date().toISOString().slice(0, 10)),
+});
 
 const auditQuerySchema = z.object({
   entityType: z.string().min(1).max(63).optional(),

@@ -65,7 +65,7 @@ export default function SetupPage() {
 
   return (
     <main className="mx-auto mt-24 max-w-md space-y-4">
-      <h1 className="text-center text-2xl font-bold text-emerald-800">Set up your shop</h1>
+      <h1 className="text-center text-2xl font-bold text-positive">Set up your shop</h1>
       <Card>
         <form
           className="space-y-3"
@@ -93,7 +93,7 @@ export default function SetupPage() {
               required
             />
           </Field>
-          <p className="text-xs text-slate-500">
+          <p className="text-xs text-ink-muted">
             This creates your chart of accounts, twelve monthly periods and document numbering.
             Tax codes are added afterwards, each citing the regulation its rate comes from.
           </p>

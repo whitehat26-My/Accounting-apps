@@ -12,7 +12,7 @@ import {
   type SessionPolicy,
   type SessionRecord,
 } from '@emil/domain';
-import type { Sql, TenantContext, Tx } from './client.js';
+import { withUser, type Sql, type TenantContext, type Tx } from './client.js';
 
 /**
  * IdentityService — M0.
@@ -155,14 +155,41 @@ export interface AuthenticatedUser {
  *
  * So an unknown email still burns a verification against a dummy hash.
  * ---------------------------------------------------------------------------
+ *
+ * ---------------------------------------------------------------------------
+ * IT TAKES THE POOL, NOT A TRANSACTION, AND THAT IS THE WHOLE POINT.
+ *
+ * This used to take a `Tx` and be called as
+ * `withUser(sql, null, (tx) => authenticate(tx, ...))`. It recorded the failed
+ * attempt with `record_login_outcome` and THEN threw `INVALID_CREDENTIALS` —
+ * and the throw propagated out of `sql.begin`, which rolled the transaction
+ * back and discarded the increment along with it.
+ *
+ * So `failed_logins` never left zero, `locked_until` was never set, and the
+ * account lockout that migration 0034 exists to provide was inert. Confirmed
+ * against a running server: twelve wrong passwords, counter still 0, correct
+ * password accepted immediately. An attacker could grind at network speed
+ * forever.
+ *
+ * The unit test PASSED throughout, and the reason it passed is the lesson:
+ * it wrote `authenticate(tx, email, 'wrong').catch(() => {})` — swallowing the
+ * rejection INSIDE the callback, so `sql.begin` saw success and committed.
+ * Production did not swallow it. The test was green because of where a
+ * `.catch` sat, which is not a property of the system under test.
+ *
+ * Taking the pool makes the recording transaction the function's own, so it
+ * commits before the throw and no caller can undo it by handling the error.
+ * The signature change is deliberate: there is no way to call this wrongly any
+ * more, which is worth more than the smaller diff.
+ * ---------------------------------------------------------------------------
  */
 export async function authenticate(
-  tx: Tx,
+  sql: Sql,
   email: string,
   password: string,
   now: string = new Date().toISOString(),
 ): Promise<AuthenticatedUser> {
-  const [user] = await tx<
+  const [user] = await withUser(sql, null, (tx) => tx<
     {
       id: string;
       email: string;
@@ -174,7 +201,7 @@ export async function authenticate(
     }[]
   >`
       SELECT * FROM find_user_for_authentication(${email})
-  `;
+  `);
 
   if (!user || user.password_hash === null) {
     await burnVerification(password);
@@ -193,7 +220,17 @@ export async function authenticate(
   }
 
   const ok = await verifyPassword(user.password_hash, password);
-  await tx`SELECT record_login_outcome(${user.id}::uuid, ${ok})`;
+
+  /*
+   * Its OWN transaction, and it commits before the throw below.
+   *
+   * This is the fix for the dead lockout described in the header. The outcome
+   * of a login attempt is a fact about the world whether the attempt succeeded
+   * or not, so it must not be conditional on the caller's error handling.
+   */
+  await withUser(sql, null, (tx) => tx`
+      SELECT record_login_outcome(${user.id}::uuid, ${ok})
+  `);
 
   if (!ok) {
     throw new IdentityError('INVALID_CREDENTIALS', 'Email or password is incorrect');

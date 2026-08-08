@@ -75,6 +75,26 @@ export type RepairTransitionViolation =
   | {
       /** Collection happens through `collectRepairJob`, never by hand. */
       readonly code: 'COLLECT_IS_NOT_A_STATUS_CHANGE';
+    }
+  | {
+      /**
+       * No photograph of the device as it arrived.
+       *
+       * This is the one piece of evidence that cannot be recreated later: once
+       * the device is on the bench, nobody can prove what it looked like at
+       * the counter. "That scratch was not there when I gave it to you" is the
+       * single most common repair dispute, and a shop that photographed
+       * nothing has only its word.
+       */
+      readonly code: 'NO_INTAKE_PHOTO';
+    }
+  | {
+      /** The customer never signed for the condition recorded at intake. */
+      readonly code: 'NO_INTAKE_SIGNATURE';
+    }
+  | {
+      /** Nobody signed for the device on the way out. */
+      readonly code: 'NO_COLLECTION_SIGNATURE';
     };
 
 export interface RepairTransitionContext {
@@ -82,6 +102,11 @@ export interface RepairTransitionContext {
   readonly reason?: string;
   /** True only when `collectRepairJob` itself is driving the transition. */
   readonly viaCollection?: boolean;
+  /** Photographs stored at stage RECEIVED — the device as it arrived. */
+  readonly intakePhotoCount?: number;
+  /** Customer signatures at stage RECEIVED and at stage COLLECTED. */
+  readonly intakeSignatureCount?: number;
+  readonly collectionSignatureCount?: number;
 }
 
 export function checkRepairTransition(
@@ -102,11 +127,43 @@ export function checkRepairTransition(
     return err({ code: 'REASON_REQUIRED', transition: to });
   }
 
+  /*
+   * EVIDENCE GATES.
+   *
+   * Placed on the TRANSITIONS rather than on intake itself, and the placement
+   * is the whole design:
+   *
+   *   - A device can be taken in with nothing but a description, because the
+   *     counter is sometimes a courier handing over a box. Refusing the job at
+   *     that moment would mean the shop keeps no record at all.
+   *   - It cannot be QUOTED until it has been photographed. Naming a price is
+   *     the first commercial act, and by then somebody has had the device in
+   *     their hands with a camera in their pocket.
+   *   - It cannot be handed back until the customer has signed for BOTH the
+   *     condition recorded at intake and the device leaving. At collection the
+   *     customer is definitely present, so a signature missed at drop-off is
+   *     caught here rather than lost.
+   */
+  if (to === 'QUOTED' && (context.intakePhotoCount ?? 0) === 0) {
+    return err({ code: 'NO_INTAKE_PHOTO' });
+  }
+
   if (to === 'COLLECTED' && context.viaCollection !== true) {
     // Marking a job collected without invoicing it would hand the device back
     // with the work unbilled — the leak a workshop never notices until
     // year-end. The invoice IS the collection.
+    //
+    // Checked BEFORE the signatures: "you are using the wrong route" is the
+    // more useful answer, and telling someone to collect a signature on a
+    // path that will refuse them anyway wastes the customer's time.
     return err({ code: 'COLLECT_IS_NOT_A_STATUS_CHANGE' });
+  }
+
+  if (to === 'COLLECTED') {
+    if ((context.intakeSignatureCount ?? 0) === 0) return err({ code: 'NO_INTAKE_SIGNATURE' });
+    if ((context.collectionSignatureCount ?? 0) === 0) {
+      return err({ code: 'NO_COLLECTION_SIGNATURE' });
+    }
   }
 
   return ok(true);
@@ -125,5 +182,18 @@ export function describeRepairViolation(v: RepairTransitionViolation): string {
       return `${v.transition} requires a reason`;
     case 'COLLECT_IS_NOT_A_STATUS_CHANGE':
       return 'A job is collected by invoicing it (POST /repairs/:id/collect), not by setting the status';
+    case 'NO_INTAKE_PHOTO':
+      return (
+        'Photograph the device before quoting it. The picture of how it arrived is the ' +
+        'one piece of evidence nobody can recreate later, and it is what answers ' +
+        '“that damage was not there when I brought it in”'
+      );
+    case 'NO_INTAKE_SIGNATURE':
+      return (
+        'The customer has not signed for the condition recorded when the device came in. ' +
+        'Capture it now — they are standing in front of you'
+      );
+    case 'NO_COLLECTION_SIGNATURE':
+      return 'The customer must sign for the device before it leaves the shop';
   }
 }

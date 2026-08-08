@@ -1,10 +1,11 @@
 'use client';
 
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, apiBlobUrl } from '@/lib/api';
 import { qty, rm, todayIso } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { useNotice } from '@/components/notice';
 
 /**
  * The till.
@@ -47,6 +48,8 @@ interface SaleResult {
 }
 
 export default function PosPage() {
+  const notice = useNotice();
+  const queryClient = useQueryClient();
   const [search, setSearch] = useState('');
   const [cart, setCart] = useState<CartLine[]>([]);
   const [method, setMethod] = useState<'CASH' | 'CARD' | 'DUITNOW'>('CASH');
@@ -54,6 +57,8 @@ export default function PosPage() {
   const [result, setResult] = useState<SaleResult | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [scan, setScan] = useState('');
+  const [scanMiss, setScanMiss] = useState<string | null>(null);
 
   const items = useQuery({
     queryKey: ['items', search],
@@ -72,6 +77,37 @@ export default function PosPage() {
     if (method === 'CASH') return all.find((a) => a.code === '1000')?.id ?? all[0]?.id;
     return (all.find((a) => a.code === '1200') ?? all.find((a) => a.code === '1000'))?.id;
   })();
+
+  /*
+   * The scanner lane. A keyboard-wedge scanner is a keyboard: it types the
+   * barcode and presses Enter. So this is just an input that answers Enter
+   * with an EXACT lookup — barcode first, then item code — adds the hit to
+   * the sale, and keeps focus so the next beep lands here too. Sale-to-sale,
+   * no mouse.
+   */
+  async function scanEnter() {
+    const code = scan.trim();
+    if (code === '') return;
+    setScanMiss(null);
+    try {
+      const byBarcode = await api<Item[]>(
+        `/v1/items?direction=SALE&barcode=${encodeURIComponent(code)}`,
+      );
+      const hit =
+        byBarcode[0] ??
+        (
+          await api<Item[]>(`/v1/items?direction=SALE&search=${encodeURIComponent(code)}`)
+        ).find((i) => i.code.toUpperCase() === code.toUpperCase());
+      if (hit) {
+        add(hit);
+      } else {
+        setScanMiss(code);
+      }
+    } catch {
+      setScanMiss(code);
+    }
+    setScan('');
+  }
 
   function add(item: Item) {
     setResult(null);
@@ -125,6 +161,21 @@ export default function PosPage() {
       setResult(sale);
       setCart([]);
       setTendered('');
+      /*
+       * Short and factual, with the number on it. The screen already shows the
+       * sale, so this is not news to somebody looking at it — it is for the
+       * cashier whose eyes are on the drawer, and for anyone reading the
+       * screen aloud, since it is announced.
+       */
+      notice.ok(`Sale rung — ${sale.invoiceNo}`);
+      /*
+       * The sale just changed the day's takings and the shelf. Say so to the
+       * cache, or a cashier who rings and flips straight to Today sees the
+       * PRE-sale numbers for up to a minute (staleTime + refetchInterval) —
+       * which reads as "the sale didn't record", which reads as ring it again.
+       */
+      void queryClient.invalidateQueries({ queryKey: ['takings'] });
+      void queryClient.invalidateQueries({ queryKey: ['stock'] });
     } catch (e) {
       setError(e);
     } finally {
@@ -135,23 +186,45 @@ export default function PosPage() {
   return (
     <div className="grid grid-cols-2 gap-4">
       <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Point of sale</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-ink">Point of sale</h1>
+        <Input
+          placeholder="Scan barcode or type code, then Enter"
+          value={scan}
+          onChange={(e) => {
+            setScan(e.target.value);
+            if (scanMiss !== null) setScanMiss(null);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              void scanEnter();
+            }
+          }}
+          aria-label="Scan barcode"
+          autoFocus
+          className={scanMiss !== null ? 'ring-2 ring-negative' : ''}
+        />
+        {scanMiss !== null ? (
+          <p className="text-sm text-negative" role="alert">
+            Nothing on the shelf answers to “{scanMiss}”. Check the item has its barcode
+            saved under Items.
+          </p>
+        ) : null}
         <Input
           placeholder="Search items…"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          autoFocus
         />
         <div className="grid grid-cols-2 gap-2">
           {(items.data ?? []).map((item) => (
             <button
               key={item.id}
               onClick={() => add(item)}
-              className="rounded-lg border border-slate-200 bg-white p-3 text-left shadow-sm hover:border-emerald-500"
+              className="rounded-lg border border-line bg-surface-raised p-3 text-left shadow-sm hover:border-positive"
             >
-              <div className="text-xs text-slate-500">{item.code}</div>
+              <div className="text-xs text-ink-muted">{item.code}</div>
               <div className="text-sm font-medium">{item.name}</div>
-              <div className="mt-1 text-sm font-semibold text-emerald-700">
+              <div className="mt-1 text-sm font-semibold text-positive">
                 {item.sale.unitPrice ? rm(item.sale.unitPrice) : 'price at till'}
               </div>
             </button>
@@ -162,12 +235,12 @@ export default function PosPage() {
       <div className="space-y-3">
         <Card title="Sale">
           {cart.length === 0 && !result ? (
-            <p className="text-sm text-slate-500">Tap an item to start.</p>
+            <p className="text-sm text-ink-muted">Tap an item to start.</p>
           ) : null}
 
           <div className="space-y-2">
             {cart.map((line, index) => (
-              <div key={line.item.id} className="rounded-md border border-slate-100 p-2">
+              <div key={line.item.id} className="rounded-md border border-line p-2">
                 <div className="flex items-center justify-between text-sm">
                   <span className="font-medium">{line.item.name}</span>
                   <span>
@@ -175,7 +248,7 @@ export default function PosPage() {
                     {line.item.sale.unitPrice ? rm(line.item.sale.unitPrice) : '—'}
                   </span>
                   <button
-                    className="text-xs text-red-600 hover:underline"
+                    className="text-xs text-negative hover:underline"
                     onClick={() => setCart(cart.filter((_, i) => i !== index))}
                   >
                     remove
@@ -210,9 +283,9 @@ export default function PosPage() {
           </div>
 
           {cart.length > 0 ? (
-            <div className="mt-4 space-y-3 border-t border-slate-200 pt-3">
+            <div className="mt-4 space-y-3 border-t border-line pt-3">
               <div className="flex justify-between text-sm">
-                <span className="text-slate-500">Estimated total (before tax)</span>
+                <span className="text-ink-muted">Estimated total (before tax)</span>
                 <span className="font-semibold">{rm(estimate)}</span>
               </div>
 
@@ -250,23 +323,50 @@ export default function PosPage() {
         {result ? (
           <Card title={`Done — ${result.invoiceNo}`}>
             <div className="space-y-2 text-sm">
+              {/*
+                CHANGE DUE COMES FIRST, AND IT IS THE BIGGEST THING ON THE
+                SCREEN.
+
+                It used to be `text-lg` on the second row of a small card,
+                below the total. It is the highest-stakes glance in the shop:
+                a cashier is about to hand over real money to somebody
+                standing in front of them, and getting it wrong costs the till
+                or costs the customer. Reading order should match that, and it
+                did not.
+              */}
+              {result.changeDue ? (
+                <div
+                  // The FIRST aria-live in the app. A till is driven looking at
+                  // the drawer and the customer, not at the screen, so the
+                  // figure has to be announceable rather than only visible.
+                  role="status"
+                  aria-live="polite"
+                  className="rounded-xl bg-positive-soft px-4 py-3 text-center"
+                >
+                  <div className="text-xs font-semibold uppercase tracking-wider text-positive">
+                    Change due
+                  </div>
+                  <div
+                    data-testid="change-due"
+                    className="mt-0.5 text-4xl font-bold tabular-nums text-positive"
+                  >
+                    {rm(result.changeDue)}
+                  </div>
+                </div>
+              ) : null}
               <div className="flex justify-between">
                 <span>Total</span>
                 <span className="font-bold">{rm(result.total)}</span>
               </div>
-              {result.changeDue ? (
-                <div className="flex justify-between text-lg font-bold text-emerald-700">
-                  <span>Change due</span>
-                  <span data-testid="change-due">{rm(result.changeDue)}</span>
-                </div>
-              ) : null}
               <Button
                 variant="ghost"
                 className="w-full"
                 onClick={() =>
-                  void apiBlobUrl(`/v1/receipts/${result.receiptId}/pdf`)
+                  void apiBlobUrl(`/v1/receipts/${result.receiptId}/pdf?format=thermal`)
                     .then((url) => window.open(url, '_blank'))
-                    .catch((e: Error) => window.alert(e.message))
+                    // Was a native alert: a modal browser box at a counter with
+                    // a customer waiting, over a receipt that did not open.
+                    .catch((e: Error) => notice.error(e, 'Could not open the receipt'))
                 }
               >
                 Print receipt

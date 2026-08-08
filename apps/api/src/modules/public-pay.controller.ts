@@ -21,6 +21,7 @@ import {
   recordGatewayEvent,
   resolvePaymentLink,
   resolvePaymentLinkForWebhook,
+  verifyDocumentDigest,
   withTenant,
   type Sql,
 } from '@emil/db';
@@ -319,6 +320,34 @@ export class PublicPayController {
 
     return link;
   }
+
+  // ---- Document verification ----------------------------------------------
+
+  /**
+   * "Is this piece of paper genuine?"
+   *
+   * Lives beside the pay routes because it is part of the same surface — the
+   * unauthenticated one — and the four rules above govern it too. Rule 3 is
+   * the load-bearing one here: the answer is the document KIND and its DATE,
+   * and nothing else. Not the tenant, not the customer, not the amount, not
+   * the document number. Everything withheld is already printed on the paper
+   * the asker is holding; everything withheld would also be a gift to
+   * somebody who is not holding it.
+   *
+   * A digest is a capability. Possessing one means possessing the document
+   * (or its QR), and 256 bits is not a space anybody enumerates — which is
+   * why an unknown digest can answer plainly rather than evasively. It is
+   * still a 200 either way, so the two answers cannot be told apart by
+   * status code, timing at the proxy, or a response-length heuristic.
+   */
+  @Public()
+  @NoIdempotencyKey()
+  @Doc({ request: () => verifySchema })
+  @Post('public/verify')
+  async verify(@Body() body: unknown) {
+    const { digest } = parse(verifySchema, body);
+    return verifyDocumentDigest(this.sql, digest.toLowerCase());
+  }
 }
 
 function headersOf(request: FastifyRequest): Record<string, string> {
@@ -329,6 +358,15 @@ function headersOf(request: FastifyRequest): Record<string, string> {
   }
   return out;
 }
+
+const verifySchema = z.object({
+  /**
+   * 64 lowercase hex characters. Accepted case-insensitively because a person
+   * typing it off a printed receipt should not have to care, and normalised by
+   * the caller before it reaches the database.
+   */
+  digest: z.string().regex(/^[0-9a-fA-F]{64}$/, 'A document reference is 64 hex characters'),
+});
 
 const initiateSchema = z.object({
   provider: z.string().min(1),

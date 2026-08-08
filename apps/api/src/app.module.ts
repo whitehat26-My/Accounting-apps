@@ -14,6 +14,8 @@ import { ContactsController } from './modules/contacts.controller.js';
 import { AuditController } from './modules/audit.controller.js';
 import { LedgerController } from './modules/ledger.controller.js';
 import { BankingController } from './modules/banking.controller.js';
+import { FeedsController } from './modules/feeds.controller.js';
+import { ComplianceController } from './modules/compliance.controller.js';
 import { ConfigurationController } from './modules/configuration.controller.js';
 import { EInvoiceController } from './modules/einvoice.controller.js';
 import { ReportsController } from './modules/reports.controller.js';
@@ -22,6 +24,8 @@ import { ItemsController } from './modules/items.controller.js';
 import { StockController } from './modules/stock.controller.js';
 import { PosController } from './modules/pos.controller.js';
 import { RepairsController } from './modules/repairs.controller.js';
+import { QuotesController } from './modules/quotes.controller.js';
+import { PayrollController } from './modules/payroll.controller.js';
 import { OnboardingController } from './modules/onboarding.controller.js';
 import { DocumentsController } from './modules/documents.controller.js';
 import { PublicPayController } from './modules/public-pay.controller.js';
@@ -54,6 +58,8 @@ export const API_CONTROLLERS = [
   AuditController,
   LedgerController,
   BankingController,
+  FeedsController,
+  ComplianceController,
   ConfigurationController,
   EInvoiceController,
   ReportsController,
@@ -62,6 +68,8 @@ export const API_CONTROLLERS = [
   StockController,
   PosController,
   RepairsController,
+  QuotesController,
+  PayrollController,
   OnboardingController,
   DocumentsController,
   PublicPayController,

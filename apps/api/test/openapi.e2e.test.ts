@@ -141,6 +141,11 @@ describe('the specification describes the application, not an intention about it
       'get /public/pay/:token',
       'post /public/gateways/:provider/webhook',
       'post /public/pay/:token/initiate',
+      // Document verification. Public because the whole point is that somebody
+      // holding a printed invoice — a customer, an auditor, a bank — can check
+      // it without an account. It reads no tenant data beyond the document's
+      // kind and date, and the digest they must already hold IS the capability.
+      'post /public/verify',
       'post /v1/auth/login',
       // Logout is public because it authenticates with the refresh token in its
       // body rather than with an access token — a session must be revocable

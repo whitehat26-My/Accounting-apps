@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { call, callRaw, createTestApi, type TestApi } from './helpers.js';
+import { call, callRaw, createTestApi, pdfText, type TestApi } from './helpers.js';
 
 /**
  * The first run, end to end, with NOTHING seeded.
@@ -120,14 +120,6 @@ const as = (url: string) => ({ url, token: accessToken, tenantId });
  * what lets these tests assert the CONTENT of a page, not just its magic
  * bytes.
  */
-function pdfText(body: string): string {
-  // Joined with NOTHING: pdfkit splits a single phrase into several hex runs
-  // at kerning adjustments ("INV", "OICE (P", "AID)"), so any separator would
-  // break substring assertions on ordinary words.
-  return [...body.matchAll(/<([0-9a-fA-F]+)>/g)]
-    .map((m) => Buffer.from(m[1]!, 'hex').toString('latin1'))
-    .join('');
-}
 
 describe('first trading day', () => {
   let itemId: string;
@@ -286,4 +278,116 @@ describe('first trading day', () => {
     });
     expect(response.status).toBe(404);
   });
+  /**
+   * The printed invoice proving itself to somebody with no account.
+   *
+   * This is the whole claim end to end: print an invoice, read the reference off
+   * the page exactly as a person would, and hand it to a route that has never
+   * seen a login. The digest is not taken from an internal call — it is scraped
+   * out of the PDF text, because a test that shortcuts that step would pass with
+   * a QR nobody could act on.
+   */
+  describe('a document that proves itself', () => {
+    let digest: string;
+
+    it('prints a verification reference on the invoice', async () => {
+      const response = await callRaw(api, {
+        method: 'GET',
+        ...as(`/v1/invoices/${saleInvoiceId}/pdf`),
+      });
+      expect(response.status).toBe(200);
+
+      const text = pdfText(response.body);
+      expect(text).toContain('Check this document is genuine');
+      // The URL is printed as readable text, not only inside the QR: a code
+      // nobody can scan in 2076 must still leave a way in.
+      expect(text).toMatch(/\/verify/);
+
+      // 64 hex characters, printed in groups of 16 so a person can read it out.
+      const groups = /([0-9a-f]{16}) ?([0-9a-f]{16}) ?([0-9a-f]{16}) ?([0-9a-f]{16})/.exec(text);
+      expect(groups, 'no digest found in the printed page').not.toBeNull();
+      digest = groups!.slice(1, 5).join('');
+      expect(digest).toHaveLength(64);
+    });
+
+    it('is confirmed by a caller with no account, no token and no tenant header', async () => {
+      const response = await call(api, {
+        method: 'POST',
+        url: '/public/verify',
+        body: { digest },
+      });
+
+      expect(response.status).toBe(201);
+      expect(response.body['verdict']).toBe('GENUINE');
+      expect(response.body['documentType']).toBe('INVOICE');
+      expect(response.body['issuedOn']).toBe('2026-08-04');
+
+      // Rule 3 of the public surface: the answer carries the MINIMUM. Anything
+      // else here would be a gift to somebody who is not holding the paper.
+      expect(Object.keys(response.body).sort()).toEqual([
+        'documentType',
+        'issuedOn',
+        'verdict',
+      ]);
+    });
+
+    it('ignores X-Tenant-Id, as every public route must', async () => {
+      // Rule 1: honouring a header here would be the cross-tenant read the whole
+      // public surface is designed to make impossible.
+      const response = await call(api, {
+        method: 'POST',
+        url: '/public/verify',
+        tenantId: randomUUID(),
+        body: { digest },
+      });
+      expect(response.status).toBe(201);
+      expect(response.body['verdict']).toBe('GENUINE');
+    });
+
+    it('says UNKNOWN for a digest it has never seen, with the same shape', async () => {
+      const response = await call(api, {
+        method: 'POST',
+        url: '/public/verify',
+        body: { digest: 'f'.repeat(64) },
+      });
+      expect(response.status).toBe(201);
+      expect(response.body['verdict']).toBe('UNKNOWN');
+      // Same status and same keys as GENUINE, so the two cannot be told apart
+      // by anything cheaper than reading the verdict.
+      expect(Object.keys(response.body).sort()).toEqual([
+        'documentType',
+        'issuedOn',
+        'verdict',
+      ]);
+    });
+
+    it('rejects a reference that is not a digest at all', async () => {
+      const response = await call(api, {
+        method: 'POST',
+        url: '/public/verify',
+        body: { digest: 'not-a-digest' },
+      });
+      expect(response.status).toBe(422);
+    });
+
+    it('gives the same digest on every print, and a different one per document', async () => {
+      // Stability matters more than it looks: the customer's copy was printed
+      // once, and it has to keep verifying after a redeploy, a pdfkit upgrade,
+      // or the invoice being paid.
+      const again = await callRaw(api, {
+        method: 'GET',
+        ...as(`/v1/invoices/${saleInvoiceId}/pdf`),
+      });
+      expect(pdfText(again.body)).toContain(digest.replace(/(.{16})/g, '$1 ').trim());
+
+      const receipt = await callRaw(api, {
+        method: 'GET',
+        ...as(`/v1/receipts/${saleReceiptId}/pdf`),
+      });
+      const receiptText = pdfText(receipt.body);
+      expect(receiptText).toContain('Check this document is genuine');
+      expect(receiptText).not.toContain(digest.replace(/(.{16})/g, '$1 ').trim());
+    });
+  });
+
 });

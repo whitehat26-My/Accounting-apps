@@ -4,8 +4,10 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useState } from 'react';
 import { api } from '@/lib/api';
-import { displayDate, todayIso } from '@/lib/display';
+import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { RepairBoard } from '@/components/repair-board';
+import { useNotice } from '@/components/notice';
 
 /**
  * The workshop queue, plus intake.
@@ -25,6 +27,7 @@ interface Job {
 }
 
 export default function RepairsPage() {
+  const notice = useNotice();
   const queryClient = useQueryClient();
   const jobs = useQuery({
     queryKey: ['repairs'],
@@ -36,6 +39,8 @@ export default function RepairsPage() {
   const [device, setDevice] = useState('');
   const [serial, setSerial] = useState('');
   const [fault, setFault] = useState('');
+  const [accessories, setAccessories] = useState<string[]>([]);
+  const [otherAccessory, setOtherAccessory] = useState('');
 
   const intake = useMutation({
     mutationFn: async () => {
@@ -43,7 +48,7 @@ export default function RepairsPage() {
         method: 'POST',
         body: { name: customer, isCustomer: true, ...(phone ? { phone } : {}) },
       });
-      return api('/v1/repairs', {
+      return api<{ jobNo: string }>('/v1/repairs', {
         method: 'POST',
         body: {
           contactId: contact.id,
@@ -51,15 +56,20 @@ export default function RepairsPage() {
           ...(serial ? { deviceSerial: serial } : {}),
           reportedFault: fault,
           receivedOn: todayIso(),
+          ...(accessories.length > 0 ? { accessories } : {}),
         },
       });
     },
-    onSuccess: () => {
+    onSuccess: (job) => {
+      // The job number is the thing the counter writes on the device's bag.
+      notice.ok(`Taken in — ${job.jobNo}`);
       setCustomer('');
       setPhone('');
       setDevice('');
       setSerial('');
       setFault('');
+      setAccessories([]);
+      setOtherAccessory('');
       void queryClient.invalidateQueries({ queryKey: ['repairs'] });
     },
   });
@@ -72,19 +82,47 @@ export default function RepairsPage() {
   );
 
   return (
-    <div className="grid grid-cols-2 gap-4">
-      <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">Repairs</h1>
-        <Card title="On the bench">
+    <div className="space-y-4">
+      {/*
+        THE BOARD LEADS, AND IT SPANS THE FULL WIDTH.
+
+        A workshop queue is spatial — "what is on the bench" is a question
+        about a place, not a list — so it gets the width and sits above
+        everything. Intake drops below it because taking a device in happens
+        once per device, while looking at the queue happens all day.
+      */}
+      <h1 className="text-2xl font-semibold tracking-tight text-ink">Repairs</h1>
+      <RepairBoard />
+
+      {/*
+        Intake FIRST below the board, in a fixed column.
+
+        With the board taking the full width, the two things under it are the
+        intake form and whatever history exists. Putting the lists first left a
+        hole where they were empty — a new shop has no finished jobs and no
+        bench profit, so the form appeared marooned on the right of a blank
+        row. Leading with the form makes an empty right column read as ordinary
+        whitespace instead.
+      */}
+      <div className="grid gap-4 lg:grid-cols-[24rem_1fr]">
+      <div className="space-y-3 lg:order-last">
+        {/*
+          The same open jobs as a plain list. NOT redundant: this is what the
+          counter phone gets, because five columns on a 390px screen is a maze
+          rather than a board. `lg:hidden` here pairs with `hidden lg:flex` on
+          the board itself, so exactly one of them is ever on screen.
+        */}
+        <div className="lg:hidden">
+          <Card title="On the bench">
           {open.length === 0 ? (
-            <p className="text-sm text-slate-500">Nothing in the workshop.</p>
+            <p className="text-sm text-ink-muted">Nothing in the workshop.</p>
           ) : (
             <div className="space-y-2">
               {open.map((job) => (
                 <Link
                   key={job.id}
                   href={`/repairs/job?id=${job.id}`}
-                  className="block rounded-md border border-slate-100 p-3 hover:border-emerald-500"
+                  className="block rounded-md border border-line p-3 hover:border-positive"
                 >
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-medium">
@@ -92,14 +130,15 @@ export default function RepairsPage() {
                     </span>
                     <Badge status={job.status} />
                   </div>
-                  <div className="mt-1 text-xs text-slate-500">
+                  <div className="mt-1 text-xs text-ink-muted">
                     {displayDate(job.receivedOn)} · {job.reportedFault}
                   </div>
                 </Link>
               ))}
             </div>
           )}
-        </Card>
+          </Card>
+        </div>
         {closed.length > 0 ? (
           <Card title="Finished">
             <div className="space-y-1">
@@ -107,9 +146,9 @@ export default function RepairsPage() {
                 <Link
                   key={job.id}
                   href={`/repairs/job?id=${job.id}`}
-                  className="flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-slate-50"
+                  className="flex items-center justify-between rounded px-2 py-1 text-sm hover:bg-surface-sunken"
                 >
-                  <span className="text-slate-600">
+                  <span className="text-ink-muted">
                     {job.jobNo} — {job.deviceDescription}
                   </span>
                   <Badge status={job.status} />
@@ -118,10 +157,10 @@ export default function RepairsPage() {
             </div>
           </Card>
         ) : null}
+        <BenchProfitCard />
       </div>
 
-      <div className="space-y-3">
-        <h1 className="text-2xl font-semibold tracking-tight text-slate-900">&nbsp;</h1>
+      <div className="space-y-3 lg:order-first">
         <Card title="Take a device in">
           <form
             className="space-y-3"
@@ -155,6 +194,13 @@ export default function RepairsPage() {
                 placeholder="Does not boot; clicking noise"
               />
             </Field>
+            <AccessoryPicker
+              chosen={accessories}
+              onChange={setAccessories}
+              other={otherAccessory}
+              onOther={setOtherAccessory}
+            />
+
             <ErrorNote error={intake.error} />
             <Button type="submit" disabled={intake.isPending} className="w-full">
               {intake.isPending ? 'Saving…' : 'Take in'}
@@ -162,6 +208,192 @@ export default function RepairsPage() {
           </form>
         </Card>
       </div>
+      </div>
     </div>
+  );
+}
+
+/**
+ * What came in with the device.
+ *
+ * ---------------------------------------------------------------------------
+ * TICKED, NOT TYPED — AND THAT IS THE WHOLE DESIGN.
+ *
+ * "I gave you the charger" is the second most common repair dispute after
+ * "that scratch was not there", and unlike the scratch a photograph of the
+ * laptop does not answer it. It is only ever answered by a list agreed at the
+ * counter while both people are standing there.
+ *
+ * A free-text box would not get filled in, because typing "Charger" while a
+ * customer waits is friction and the counter will skip it. Six taps that cover
+ * nine intakes out of ten will not be skipped. The tenth gets the box.
+ * ---------------------------------------------------------------------------
+ */
+const COMMON_ACCESSORIES = [
+  'Charger',
+  'Battery',
+  'Bag / sleeve',
+  'SIM card',
+  'Memory card',
+  'Cable',
+] as const;
+
+function AccessoryPicker({
+  chosen, onChange, other, onOther,
+}: {
+  chosen: string[];
+  onChange: (next: string[]) => void;
+  other: string;
+  onOther: (value: string) => void;
+}) {
+  const toggle = (item: string) =>
+    onChange(chosen.includes(item) ? chosen.filter((c) => c !== item) : [...chosen, item]);
+
+  const addOther = () => {
+    const trimmed = other.trim();
+    // Twenty is the CHECK on the column; stopping here means the counter finds
+    // out now rather than losing the whole intake form to a 422.
+    if (!trimmed || chosen.includes(trimmed) || chosen.length >= 20) return;
+    onChange([...chosen, trimmed]);
+    onOther('');
+  };
+
+  const custom = chosen.filter((c) => !COMMON_ACCESSORIES.includes(c as never));
+
+  return (
+    <div>
+      <div className="text-xs font-medium text-ink-muted">Came in with it</div>
+      <div className="mt-1.5 flex flex-wrap gap-1.5">
+        {COMMON_ACCESSORIES.map((item) => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => toggle(item)}
+            aria-pressed={chosen.includes(item)}
+            className={`rounded-full px-3 py-1 text-xs font-medium transition-colors ${
+              chosen.includes(item)
+                ? 'bg-ink text-surface'
+                : 'bg-surface-sunken text-ink-muted hover:bg-line'
+            }`}
+          >
+            {item}
+          </button>
+        ))}
+        {custom.map((item) => (
+          <button
+            key={item}
+            type="button"
+            onClick={() => toggle(item)}
+            aria-pressed
+            className="rounded-full bg-ink px-3 py-1 text-xs font-medium text-surface"
+          >
+            {item} ✕
+          </button>
+        ))}
+      </div>
+      <div className="mt-2 flex gap-2">
+        <Input
+          value={other}
+          onChange={(e) => onOther(e.target.value)}
+          placeholder="Anything else"
+          maxLength={60}
+          // Enter would otherwise submit the intake form and take the device
+          // in with the accessory still sitting unadded in this box.
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              addOther();
+            }
+          }}
+        />
+        <Button variant="ghost" onClick={addOther} disabled={!other.trim()}>
+          Add
+        </Button>
+      </div>
+      <p className="mt-1 text-xs text-ink-muted">
+        Printed on the receipt the customer takes away — it is what settles “I gave you the
+        charger”.
+      </p>
+    </div>
+  );
+}
+
+interface RepairProfit {
+  jobs: {
+    jobNo: string;
+    device: string;
+    customerName: string;
+    collectedOn: string;
+    revenue: string;
+    partsCost: string;
+    margin: string;
+    marginBp: number | null;
+  }[];
+  totals: { revenue: string; partsCost: string; margin: string };
+}
+
+/**
+ * Is the bench earning its space? Collected jobs for the last 30 days: what
+ * each billed ex-tax, what the parts cost off the shelf, and the
+ * contribution left for labour. Labour itself is deliberately not costed —
+ * the wage is payroll's fixed cost, and per-job spreading would manufacture
+ * precision the data does not hold.
+ */
+function BenchProfitCard() {
+  const to = todayIso();
+  const from = (() => {
+    const d = new Date(`${to}T00:00:00Z`);
+    d.setUTCDate(d.getUTCDate() - 30);
+    return d.toISOString().slice(0, 10);
+  })();
+
+  const profit = useQuery({
+    queryKey: ['repair-profit', from, to],
+    queryFn: () => api<RepairProfit>(`/v1/reports/repair-profit?from=${from}&to=${to}`),
+  });
+  const data = profit.data;
+  if (!data || data.jobs.length === 0) return null;
+
+  return (
+    <Card title="The bench, last 30 days">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-left text-xs text-ink-muted">
+            <th className="pb-2">Job</th>
+            <th className="pb-2 text-right">Billed</th>
+            <th className="pb-2 text-right">Parts</th>
+            <th className="pb-2 text-right">Left over</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.jobs.slice(0, 8).map((job) => (
+            <tr key={job.jobNo} className="border-t border-line">
+              <td className="py-2">
+                <span className="text-xs text-ink-muted">{job.jobNo}</span> {job.device}
+              </td>
+              <td className="py-2 text-right">{rm(job.revenue)}</td>
+              <td className="py-2 text-right">{rm(job.partsCost)}</td>
+              <td
+                className={`py-2 text-right font-medium ${
+                  job.margin.startsWith('-') ? 'text-negative' : ''
+                }`}
+              >
+                {rm(job.margin)}
+              </td>
+            </tr>
+          ))}
+          <tr className="border-t-2 border-line font-medium">
+            <td className="py-2">All collected jobs</td>
+            <td className="py-2 text-right">{rm(data.totals.revenue)}</td>
+            <td className="py-2 text-right">{rm(data.totals.partsCost)}</td>
+            <td className="py-2 text-right">{rm(data.totals.margin)}</td>
+          </tr>
+        </tbody>
+      </table>
+      <p className="mt-2 text-xs text-ink-muted">
+        Ex-tax billing minus parts at their real weighted-average cost. What is left pays
+        for the technician's time — the wage itself lives in Payroll.
+      </p>
+    </Card>
   );
 }

@@ -1,7 +1,9 @@
-import { Body, Controller, Get, Headers, Inject, Param, Post, Query, Req } from '@nestjs/common';
-import type { FastifyRequest } from 'fastify';
+import {
+  Body, Controller, Get, Headers, Inject, Param, Post, Query, Req, Res,
+} from '@nestjs/common';
+import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
-import { decimal, isoDate, quantity } from '@emil/contracts';
+import { decimal, isoDate, quantity, uuid } from '@emil/contracts';
 import type { AgeingReport } from '@emil/domain';
 import {
   approvalFor,
@@ -27,12 +29,15 @@ import {
   suggestForAccount,
   withTenant,
   type Sql,
+  creditNoteDocumentData,
+  listCreditNotes,
 } from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
 import { principalOf, tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
+import { renderCreditNotePdf } from '../pdf/render.js';
 import { NotFoundError } from '../errors.js';
 
 /**
@@ -159,6 +164,45 @@ export class AccountingController {
     return withTenant(this.sql, ctx, (tx) =>
       issueCreditNote(tx, ctx, { ...input, idempotencyKey }),
     );
+  }
+
+  /**
+   * The credit notes, so one can be found before it is printed.
+   *
+   * `invoice.read` rather than `creditnote.create`: reading what was credited
+   * is the same act as reading what was invoiced, and gating the list behind
+   * the permission to CREATE one would hide it from everybody who only ever
+   * needs to look.
+   */
+  @Requires('invoice.read')
+  @Get('credit-notes')
+  async listCreditNotes(@Query('limit') limit: string | undefined, @Req() request: FastifyRequest) {
+    const ctx = this.ctx(request);
+    return {
+      creditNotes: await withTenant(this.sql, ctx, (tx) =>
+        listCreditNotes(tx, ctx, limit === undefined ? {} : { limit: Number(limit) }),
+      ),
+    };
+  }
+
+  /** The credit note as paper — the copy the customer files. */
+  @Requires('invoice.read')
+  @Get('credit-notes/:id/pdf')
+  async creditNotePdf(
+    @Param('id') id: string,
+    @Req() request: FastifyRequest,
+    @Res() reply: FastifyReply,
+  ) {
+    const ctx = this.ctx(request);
+    const doc = await withTenant(this.sql, ctx, (tx) =>
+      creditNoteDocumentData(tx, ctx, parse(uuid, id)),
+    );
+
+    const pdf = await renderCreditNotePdf(doc);
+    void reply
+      .header('content-type', 'application/pdf')
+      .header('content-disposition', `inline; filename="${doc.creditNoteNo}.pdf"`)
+      .send(pdf);
   }
 
   // ---- Purchases ----------------------------------------------------------

@@ -111,7 +111,7 @@ describe('the cash pool', () => {
 
   it('excludes a credit card, because a card is a liability and not cash', async () => {
     const t = await seedTenant(admin, 'Card Sdn Bhd');
-    const card = await newAccount(t, '2300', 'Corporate card', 'LIABILITY');
+    const card = await newAccount(t, '2600', 'Corporate card', 'LIABILITY');
 
     await admin`
         INSERT INTO bank_account (tenant_id, name, bank_name, currency, gl_account_id, account_type)

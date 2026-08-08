@@ -51,3 +51,34 @@ export function decimalToScaled(value: string, scale: bigint): bigint {
   const units = BigInt(whole) * 10n ** scale + BigInt(padded || '0');
   return negative ? -units : units;
 }
+
+/**
+ * The shop's today, in Asia/Kuala_Lumpur — CLAUDE.md rule 8.
+ *
+ * ---------------------------------------------------------------------------
+ * `new Date().toISOString().slice(0, 10)` IS A BUG, NOT A SHORTCUT.
+ *
+ * It gives the UTC date, and Malaysia is UTC+8 with no daylight saving. From
+ * midnight to eight in the morning Kuala Lumpur time, the UTC date is still
+ * YESTERDAY — so a till that posts a sale with the shop's date and a dashboard
+ * that asks for "today" in UTC disagree about which day it is, every night,
+ * for eight hours.
+ *
+ * The browser has always computed its dates this way (`apps/web/src/lib/display.ts`).
+ * The server did it in four different places, two of them correctly and two of
+ * them in UTC, which is exactly the shape of a divergence nobody notices until
+ * it is dark outside.
+ *
+ * There is no argument for UTC here: this is a business date, on documents a
+ * Malaysian shop issues, and rule 8 already settled it.
+ * ---------------------------------------------------------------------------
+ */
+export function businessToday(): string {
+  // 'en-CA' formats as YYYY-MM-DD, which is the wire format already.
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kuala_Lumpur',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(new Date());
+}

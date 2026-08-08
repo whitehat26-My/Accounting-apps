@@ -3,6 +3,7 @@ import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { decimal } from '@emil/contracts';
 import {
+  businessToday,
   cancelReminder,
   collectionsOverview,
   createPaymentLink,
@@ -125,7 +126,7 @@ export class CollectionsController {
     const ctx = this.ctx(request);
     return {
       overdue: await withTenant(this.sql, ctx, (tx) =>
-        collectionsOverview(tx, ctx, kualaLumpurToday()),
+        collectionsOverview(tx, ctx, businessToday()),
       ),
     };
   }
@@ -138,7 +139,7 @@ export class CollectionsController {
   @Post('collections/run')
   async run(@Req() request: FastifyRequest) {
     const ctx = this.ctx(request);
-    return withTenant(this.sql, ctx, (tx) => runFollowUpPass(tx, ctx, kualaLumpurToday()));
+    return withTenant(this.sql, ctx, (tx) => runFollowUpPass(tx, ctx, businessToday()));
   }
 
   @Requires('invoice.read')
@@ -149,7 +150,7 @@ export class CollectionsController {
     return {
       reminders: await withTenant(this.sql, ctx, (tx) =>
         listReminders(tx, ctx, {
-          today: kualaLumpurToday(),
+          today: businessToday(),
           ...(parsed !== undefined ? { status: parsed } : {}),
         }),
       ),
@@ -175,13 +176,6 @@ export class CollectionsController {
     await withTenant(this.sql, ctx, (tx) => cancelReminder(tx, ctx, id, input.reason));
     return { id, status: 'CANCELLED' };
   }
-}
-
-/** The shop's "today", Asia/Kuala_Lumpur — rule 8. */
-function kualaLumpurToday(): string {
-  return new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kuala_Lumpur', year: 'numeric', month: '2-digit', day: '2-digit',
-  }).format(new Date());
 }
 
 const reminderStatusSchema = z.enum(['QUEUED', 'SENT', 'CANCELLED']);

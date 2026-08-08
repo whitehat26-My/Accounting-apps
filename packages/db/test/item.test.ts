@@ -85,6 +85,26 @@ describe('creating an item', () => {
     await expect(makeItem({ code: code.toUpperCase() })).rejects.toThrow(/already exists/);
   });
 
+  it('one barcode, one item — the second claim is refused and names the first', async () => {
+    const first = await makeItem({ barcode: '9556001234567' });
+    expect(first.barcode).toBe('9556001234567');
+
+    await expect(makeItem({ barcode: '9556001234567' })).rejects.toMatchObject({
+      code: 'DUPLICATE_BARCODE',
+    });
+
+    // The exact lookup the scanner lane uses: one hit, and only the one.
+    const found = await withTenant(sql, ctx(), (tx) =>
+      listItems(tx, ctx(), { barcode: '9556001234567' }),
+    );
+    expect(found).toHaveLength(1);
+    expect(found[0]!.id).toBe(first.id);
+    const none = await withTenant(sql, ctx(), (tx) =>
+      listItems(tx, ctx(), { barcode: '955600123456' }), // one digit short: no substring match
+    );
+    expect(none).toHaveLength(0);
+  });
+
   it('refuses a sold item with no revenue account', async () => {
     await expect(
       makeItem({ isSold: true, sale: { unitPrice: '10.00' } }),

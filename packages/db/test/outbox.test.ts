@@ -250,6 +250,7 @@ describe('scheduledJobs', () => {
     const rows = await withTenant(sql, { tenantId }, (tx) => scheduledJobs(tx));
 
     expect(rows.map((r) => r.name).sort()).toEqual([
+      'audit-anchor',
       'einvoice-retry',
       'outbox-sweep',
       'payment-reminders',
