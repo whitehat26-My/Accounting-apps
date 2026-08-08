@@ -15,6 +15,7 @@
  * instead. Display formatting is `display.ts`; arithmetic happens on the
  * server, in Money.
  */
+import { uuid } from './uuid';
 
 export interface Session {
   readonly refreshToken: string;
@@ -94,7 +95,7 @@ export async function api<T = Record<string, unknown>>(
     // interceptor treats POST, PUT, PATCH and DELETE alike and refuses any of
     // them without a key.
     if (options.method === 'POST' || options.method === 'PATCH' || options.method === 'DELETE') {
-      headers['idempotency-key'] = crypto.randomUUID();
+      headers['idempotency-key'] = uuid();
     }
 
     return fetch(`/api${path}`, {
@@ -238,7 +239,7 @@ export async function apiBlobUrl(path: string, body?: unknown): Promise<string> 
     : {};
   if (body !== undefined) {
     headers['content-type'] = 'application/json';
-    headers['idempotency-key'] = crypto.randomUUID();
+    headers['idempotency-key'] = uuid();
   }
   const response = await fetch(`/api${path}`, {
     method: body === undefined ? 'GET' : 'POST',

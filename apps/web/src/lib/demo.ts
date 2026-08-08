@@ -19,6 +19,7 @@
  * Money. Nothing in this file ships in the production build.
  * ---------------------------------------------------------------------------
  */
+import { uuid } from './uuid';
 
 interface DemoItem {
   id: string;
@@ -334,7 +335,7 @@ function save(store: DemoStore): void {
 }
 
 function uid(): string {
-  return crypto.randomUUID();
+  return uuid();
 }
 
 const ACCOUNTS = [
