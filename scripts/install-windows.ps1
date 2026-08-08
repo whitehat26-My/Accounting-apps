@@ -97,17 +97,35 @@ if (Test-Path $envFile) {
     # several addresses (WiFi, cable, Docker's own virtual ones) and only the
     # person standing in the shop knows which network the phones are on.
     # -----------------------------------------------------------------------
-    $candidates = @(
-        Get-NetIPAddress -AddressFamily IPv4 |
-            Where-Object {
-                $_.IPAddress -notlike '127.*' -and
-                $_.IPAddress -notlike '169.254.*' -and
-                $_.InterfaceAlias -notlike '*WSL*' -and
-                $_.InterfaceAlias -notlike '*Loopback*' -and
-                $_.InterfaceAlias -notlike '*Docker*'
-            } |
-            Select-Object -ExpandProperty IPAddress
+    #
+    # Prefer the adapter that has a DEFAULT GATEWAY.
+    #
+    # Name-based filtering is not enough and the first run proved it: this PC
+    # offered 192.168.56.1 — a VirtualBox host-only adapter, reachable by
+    # nothing — ahead of the real 192.168.68.109, because it happened to be
+    # listed first. Virtual adapters come in too many names to blacklist
+    # reliably, but they share one property: no route off the machine.
+    #
+    # An adapter with a gateway is one that talks to the router, which is the
+    # same router the staff phones are on. That is the definition we actually
+    # want, rather than a guess at what a virtual adapter is called.
+    #
+    $usable = Get-NetIPAddress -AddressFamily IPv4 | Where-Object {
+        $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*'
+    }
+
+    $routed = @(
+        Get-NetIPConfiguration |
+            Where-Object { $_.IPv4DefaultGateway } |
+            ForEach-Object { $_.IPv4Address.IPAddress }
     )
+
+    # Routed ones first, then anything else, so the suggestion is the likely
+    # answer while the others remain visible to somebody who knows better.
+    $candidates = @(
+        @($usable | Where-Object { $routed -contains $_.IPAddress }) +
+        @($usable | Where-Object { $routed -notcontains $_.IPAddress })
+    ) | Select-Object -ExpandProperty IPAddress -Unique
 
     $suggested = if ($candidates.Count -gt 0) { $candidates[0] } else { '' }
 
@@ -117,11 +135,40 @@ if (Test-Path $envFile) {
     if ($candidates.Count -gt 1) {
         Say "     Addresses found on this PC: $($candidates -join ', ')"
     }
-    Say ''
-    $addr = Read-Host "     Address [$suggested]"
-    if ([string]::IsNullOrWhiteSpace($addr)) { $addr = $suggested }
+    #
+    # Ask until it IS an address.
+    #
+    # The first person to run this typed their shop's name here, which is an
+    # entirely reasonable thing to do when a script is about to ask for the
+    # shop's name — and it sailed through, wrote
+    # `PUBLIC_BASE_URL=http://Shah G Tech - sales & repairs:8080`, and the API
+    # refused to start twenty minutes of building later. A prompt that accepts
+    # anything is a prompt that will be answered with anything.
+    #
+    $addr = ''
+    foreach ($attempt in 1..5) {
+        Say ''
+        $entered = Read-Host "     Address [$suggested]"
+        if ([string]::IsNullOrWhiteSpace($entered)) { $entered = $suggested }
+        $entered = $entered.Trim()
+
+        if ([string]::IsNullOrWhiteSpace($entered)) {
+            Warn 'Nothing entered, and none could be detected. Run ipconfig in another window.'
+            continue
+        }
+        # An IPv4 address, or a hostname. Not a sentence: no spaces, and
+        # nothing a URL cannot carry.
+        if ($entered -notmatch '^[A-Za-z0-9][A-Za-z0-9.\-]*$') {
+            Warn "'$entered' is not an address."
+            Warn 'It should look like 192.168.1.50, or a computer name - digits, letters,'
+            Warn 'dots and dashes, and no spaces. Your business name comes next, not here.'
+            continue
+        }
+        $addr = $entered
+        break
+    }
     if ([string]::IsNullOrWhiteSpace($addr)) {
-        Die 'No address given, and none could be detected. Run ipconfig, note the IPv4 Address, and run this again.'
+        Die 'No usable address after five tries. Run ipconfig, note the IPv4 Address, and start again.'
     }
 
     # -----------------------------------------------------------------------
@@ -135,6 +182,14 @@ if (Test-Path $envFile) {
 
     $port = 8080
     $baseUrl = "http://${addr}:${port}"
+
+    # Last line of defence. The address is validated above, but this is the
+    # value the API refuses to start on and the one printed as a QR code onto
+    # paper — so it is checked as a URL, once, here, rather than discovered to
+    # be malformed after a twenty-minute build.
+    if (-not [Uri]::IsWellFormedUriString($baseUrl, [UriKind]::Absolute)) {
+        Die "Refusing to write a broken address: $baseUrl`n`nStart again and give only the address, such as 192.168.1.50."
+    }
 
     @"
 # Written by scripts\install-windows.ps1. Keep this file, and keep it private:
