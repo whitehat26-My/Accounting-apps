@@ -83,6 +83,33 @@ too low and the limiter throttles everyone as one. It is a hop count, so it is
 exactly the number of proxies you actually run — a CIDR list is also accepted
 for trusting specific proxy networks instead.
 
+### The address printed on your documents
+
+**Set `PUBLIC_BASE_URL` in `.env.prod` the moment you know your address, and
+before you print anything a customer keeps.**
+
+Every invoice, receipt, warranty card and repair report carries a QR code
+pointing at `PUBLIC_BASE_URL/verify`, where anyone holding the paper can check
+the document is genuine and unaltered. Unset, it falls back to
+`http://localhost:8080` — correct on the shop PC itself and a **dead link in a
+customer's hand**, which is the one deployment mistake that cannot be fixed by
+changing a setting: the paper is already out there.
+
+```bash
+PUBLIC_BASE_URL=https://books.shahgtech.com   # domain + Caddy, no trailing slash
+PUBLIC_BASE_URL=http://192.168.0.12:8080      # shop PC on the LAN — see below
+```
+
+A LAN address is fine while every reader is on that WiFi, and only then. A
+customer who takes the warranty card home cannot resolve it. If documents leave
+the building, the system needs an address from outside it.
+
+Nothing is lost if you get it wrong later: the digest is printed as text
+beneath the code, so a reader who cannot reach the address still holds
+everything needed to verify through any future one, and `/verify` accepts it
+typed. Documents printed after you change the value carry the new address; the
+old ones keep the old. There is no re-print step and no migration.
+
 ### Backups — non-negotiable
 
 The `backup` service runs `pg_dump` nightly into `./backups`, keeping 14.
@@ -250,6 +277,8 @@ again — that is what rotating a signing key means.
 | `JWT_SECRET` | api | 32+ chars, no default by design. |
 | `WEB_PORT` | web | Published port, default 8080. |
 | `TRUST_PROXY` | api | Proxy hops in front of the API for the rate limit's client IP. Unset = trust nobody; `2` for Caddy→web→api. See HTTPS above. |
+| `PUBLIC_BASE_URL` | api | The address printed as a QR code on every document, no trailing slash. Defaults to `http://localhost:$WEB_PORT`, which is a dead link on paper a customer takes away. See above. |
+| `ANTHROPIC_API_KEY` | api | Optional. Connects the in-app assistant; empty means it reports itself unconfigured and everything else works. |
 | `ASSISTANT_RATE_LIMIT` | api | Assistant chat requests per minute, per tenant. Default 30 — its cost is a paid model call, so it is capped tighter than ordinary routes. |
 | `API_ORIGIN` | web | Set in the compose file; where Next proxies `/api/*`. |
 | `SIGNUP_MODE` | api | `invite` (default) or `open`. Invite-only unless the network is the gate. See above. |

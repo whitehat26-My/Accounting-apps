@@ -63,9 +63,22 @@ services:
       # trust nothing (client IP = the socket peer) — correct until a proxy is
       # in front. See .env.prod.example for the value this topology needs.
       TRUST_PROXY: ${TRUST_PROXY:-}
+      # The address printed as a QR code on every invoice, receipt, warranty
+      # card and repair report, for a customer to check the document is real.
+      # It must be the address THEY can reach — paper outlives the deployment
+      # that printed it, and the localhost fallback below is a dead link in a
+      # customer's hand. Set it in .env.prod before printing anything real.
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:${WEB_PORT:-8080}}
+      # `invite` (default) or `open`. Passed through explicitly: compose gives
+      # a container ONLY the variables named here, so a SIGNUP_MODE sitting in
+      # .env.prod without this line would be silently ignored.
+      SIGNUP_MODE: ${SIGNUP_MODE:-invite}
       # Optional: connects the in-app assistant. Empty means the assistant
       # honestly reports itself unconfigured; everything else still works.
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      # Assistant questions per minute, per tenant. Capped tighter than other
+      # routes because each one is a paid model call against the key above.
+      ASSISTANT_RATE_LIMIT: ${ASSISTANT_RATE_LIMIT:-30}
       NODE_ENV: production
     depends_on:
       roles: { condition: service_completed_successfully }

@@ -7,6 +7,16 @@ import { z } from 'zod';
  * immediately rather than the first request that needs it — a service that
  * starts healthy and 500s on login is worse than one that refuses to start.
  */
+/**
+ * Where `PUBLIC_BASE_URL` points when nobody has said.
+ *
+ * Development only, and named rather than inlined so that `loadConfig` and
+ * `verifyUrl` cannot drift apart — they are two readers of one variable, and a
+ * document printed with one value and verified against the other would be a
+ * genuinely baffling bug.
+ */
+const DEFAULT_PUBLIC_BASE_URL = 'http://localhost:3000';
+
 const schema = z.object({
   databaseUrl: z.string().min(1),
   /**
@@ -148,6 +158,20 @@ export type ApiConfig = z.infer<typeof schema>;
  * A bare number is a hop count; `true`/`false` are literal; anything else is
  * passed through as a CIDR / comma-separated address list.
  */
+/**
+ * An environment variable that is present but EMPTY is not a value.
+ *
+ * `docker-compose.prod.yml` interpolates from `.env.prod`, and a variable left
+ * as the bare `PUBLIC_BASE_URL=` that `.env.prod.example` ships reaches the
+ * container as `''` rather than as absent. `??` does not catch that — `'' ?? x`
+ * is `''` — so without this the URL schema would reject an empty string and the
+ * API would refuse to boot over a blank line in a config file.
+ */
+function text(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed === undefined || trimmed === '' ? undefined : trimmed;
+}
+
 function parseTrustProxy(value: string | undefined): boolean | number | string {
   if (value === undefined || value === '' || value === 'false') return false;
   if (value === 'true') return true;
@@ -163,14 +187,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     rateLimit: Number(env['RATE_LIMIT'] ?? 600),
     rateLimitWindowMs: Number(env['RATE_LIMIT_WINDOW_MS'] ?? 60_000),
     publicRateLimit: Number(env['PUBLIC_RATE_LIMIT'] ?? 30),
-    signupMode: env['SIGNUP_MODE'] ?? 'invite',
+    signupMode: text(env['SIGNUP_MODE']) ?? 'invite',
     assistantRateLimit: Number(env['ASSISTANT_RATE_LIMIT'] ?? 30),
-    trustProxy: parseTrustProxy(env['TRUST_PROXY']),
+    trustProxy: parseTrustProxy(text(env['TRUST_PROXY'])),
     enableFakeGateway: env['EMIL_ENABLE_FAKE_GATEWAY'] === '1',
     enableSandboxValues: env['EMIL_ENABLE_SANDBOX_VALUES'] === '1',
-    ...(env['ANTHROPIC_API_KEY'] ? { anthropicApiKey: env['ANTHROPIC_API_KEY'] } : {}),
+    ...(text(env['ANTHROPIC_API_KEY']) ? { anthropicApiKey: text(env['ANTHROPIC_API_KEY']) } : {}),
     enableFakeAssistant: env['EMIL_ENABLE_FAKE_ASSISTANT'] === '1',
-    publicBaseUrl: env['PUBLIC_BASE_URL'] ?? 'http://localhost:3000',
+    publicBaseUrl: text(env['PUBLIC_BASE_URL']) ?? DEFAULT_PUBLIC_BASE_URL,
     nodeEnv: env['NODE_ENV'] ?? 'development',
   });
 
@@ -197,5 +221,5 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
  * schema so there is one place that knows the variable's name.
  */
 export function verifyUrl(env: NodeJS.ProcessEnv = process.env): string {
-  return `${(env['PUBLIC_BASE_URL'] ?? 'http://localhost:3000').replace(/\/+$/, '')}/verify`;
+  return `${(text(env['PUBLIC_BASE_URL']) ?? DEFAULT_PUBLIC_BASE_URL).replace(/\/+$/, '')}/verify`;
 }

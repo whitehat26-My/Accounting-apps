@@ -399,6 +399,34 @@ callout('Fix the address so it never changes',
   + 'Every home and shop router has this; it is usually under LAN or DHCP settings. Do this now, not '
   + 'after the bookmarks break.', WARN);
 
+h2('Now tell the app its own address');
+
+body('Every invoice, receipt, warranty card and repair report you print carries a small square QR '
+  + 'code. A customer scans it and sees the document checked against your records — proof that the '
+  + 'paper in their hand is genuine and has not been altered. The app has to be told what address to '
+  + 'print in that code, because it cannot know it by itself.');
+
+body('Open C:\\shahgtech\\.env.prod in Notepad, find the line beginning PUBLIC_BASE_URL, and put the '
+  + 'address from this step after the equals sign:');
+
+code(['PUBLIC_BASE_URL=http://192.168.1.50:8080']);
+
+body('Save the file, then apply it:');
+
+code([
+  'cd C:\\shahgtech',
+  'docker compose -f docker-compose.prod.yml --env-file .env.prod up -d',
+]);
+
+callout('A local address only works for people standing in your shop',
+  'A phone on the shop WiFi can open 192.168.1.50. A customer who takes the warranty card home '
+  + 'cannot — their phone will simply say the page is not available. That is fine if your paperwork '
+  + 'stays in the shop, and not fine if it goes out of the door. The fix is Section 6 (Tailscale) or '
+  + 'a proper domain name, and until then the document also prints the code as text underneath, so '
+  + 'you can always look it up yourself. Get this line right BEFORE you print anything a customer '
+  + 'keeps: you can change it whenever you like, but paper already handed over keeps the old address.',
+  WARN);
+
 // ---------------------------------------------------------------------------
 h1('STEP 7', 'Let the phones through the firewall');
 
@@ -576,6 +604,12 @@ body('Inside the shop nothing changes — phones keep using the local address, w
   + 'things worth knowing: the shop PC must still be switched on and have working internet, because '
   + 'it is still the only machine holding your books; and everyone using it from outside needs the '
   + 'Tailscale app installed and signed in.');
+
+body('If you set PUBLIC_BASE_URL in Step 6, consider changing it to the Tailscale address now — that '
+  + 'one reaches the shop from outside the building, so the QR code on a document works for anyone '
+  + 'you have added to your Tailscale network. It still will not work for an ordinary customer, who '
+  + 'has no Tailscale account; only a real domain name does that. Apply the change the same way: edit '
+  + '.env.prod, then run the up -d command again.');
 
 callout('When to consider moving off the shop PC entirely',
   'If you reach the point where the shop cannot work for an afternoon because the PC is down, or you '
