@@ -129,9 +129,11 @@ export class AuthController {
   async login(@Body() body: unknown, @Req() request: FastifyRequest) {
     const input = parse(credentials, body);
 
-    const user = await withUser(this.sql, null, (tx) =>
-      authenticate(tx, input.email, input.password),
-    );
+    // `authenticate` takes the POOL, not a transaction, and owns the one that
+    // records the attempt — see the note on the function. Wrapping it in
+    // `withUser` here is what silently disabled the account lockout: the throw
+    // rolled back the failed-login increment that had just been written.
+    const user = await authenticate(this.sql, input.email, input.password);
 
     const session = await withUser(this.sql, user.id, (tx) =>
       createSession(tx, user.id, sessionContext(request)),

@@ -1030,3 +1030,59 @@ describe('two companies, two letterheads', () => {
     expect(changed.status).toBe(403);
   });
 });
+
+/**
+ * The headers the API sends on its OWN origin.
+ *
+ * The web app sets a full CSP and framing policy in `next.config.ts`, and in
+ * the normal topology every browser request goes through Next's rewrite, so
+ * those headers cover the API too. That is exactly why this was missed: asking
+ * a RUNNING server for its headers showed a financial response carrying
+ * `content-type`, `content-length`, `date` and nothing else.
+ *
+ * Anything that reaches the API directly — a misconfigured proxy, a debug port,
+ * a PDF opened from its own URL — had no protection. These assertions are on
+ * the API because the API is what is being protected.
+ */
+describe('baseline security headers', () => {
+  let asOwner: { token: string; tenantId: string };
+
+  beforeAll(async () => {
+    const owner = await makeUser(api, { tenantId: alpha.tenantId, role: 'OWNER' });
+    const { accessToken } = await accessTokenFor(api, owner.refreshToken, alpha.tenantId);
+    asOwner = { token: accessToken, tenantId: alpha.tenantId };
+  });
+
+  it('sends them on an authenticated financial response', async () => {
+    const res = await callRaw(api, { method: 'GET', url: '/v1/invoices', ...asOwner });
+    expect(res.status).toBe(200);
+
+    // `nosniff` is the load-bearing one: this API serves PDFs and CSVs, and a
+    // response sniffed as HTML is a scripting vector on the API's origin.
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBe('DENY');
+    expect(res.headers['content-security-policy']).toContain("frame-ancestors 'none'");
+    expect(res.headers['referrer-policy']).toBe('no-referrer');
+    // One tenant's books must not sit in an intermediary cache.
+    expect(String(res.headers['cache-control'])).toContain('no-store');
+  });
+
+  it('sends them on the public, unauthenticated surface too', async () => {
+    const res = await callRaw(api, { method: 'GET', url: '/openapi.json' });
+    expect(res.status).toBe(200);
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBe('DENY');
+  });
+
+  it('does not clobber a route that chose its own caching', async () => {
+    /*
+     * The repair photographs and the organisation logo both send
+     * `private, no-store` deliberately. The hook sets headers only when they
+     * are ABSENT — a blanket overwrite would silently undo a considered
+     * decision, which is a worse bug than the missing header it fixes.
+     */
+    const res = await callRaw(api, { method: 'GET', url: '/v1/organisations/logo', ...asOwner });
+    expect([200, 204]).toContain(res.status);
+    expect(String(res.headers['cache-control'])).toContain('private');
+  });
+});

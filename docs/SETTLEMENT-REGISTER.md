@@ -57,6 +57,7 @@ The ledger core and everything that posts to it.
 | Collections: payment links, gateway events, settlement batches, DuitNow QR envelope | `0014`, `0015` |
 | Identity: sessions with rotation, RBAC, API keys | `0012` |
 | Audit: trigger-based coverage, hash chain, tamper detection | `0016` |
+| **Penetration test suite** — 109 checks over HTTP against a running API: tenancy, tokens, privilege, injection, the 11 public routes, assistant prompt injection, ledger immutability | `security/pentest/` |
 | Period close, chart of accounts, manual journals | `0017` |
 | **Year-end close and reopen** | `0025`, `packages/db/src/year-end.ts` |
 | Reporting: SOFP, SOPL, trial balance, cash flow, changes in equity, general ledger, CSV | `0009`, `0020` |

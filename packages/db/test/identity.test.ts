@@ -70,18 +70,14 @@ describe('registration and authentication', () => {
     const email = `owner-${randomUUID().slice(0, 8)}@example.com`;
     const { id } = await register(email);
 
-    const user = await withUser(sql, null, (tx) =>
-      authenticate(tx, email, 'correct horse battery staple'),
-    );
+    const user = await authenticate(sql, email, 'correct horse battery staple');
     expect(user.id).toBe(id);
   });
 
   it('is case-insensitive on email', async () => {
     const email = `Mixed-${randomUUID().slice(0, 8)}@Example.com`;
     await register(email);
-    const user = await withUser(sql, null, (tx) =>
-      authenticate(tx, email.toLowerCase(), 'correct horse battery staple'),
-    );
+    const user = await authenticate(sql, email.toLowerCase(), 'correct horse battery staple');
     expect(user.email.toLowerCase()).toBe(email.toLowerCase());
   });
 
@@ -95,12 +91,8 @@ describe('registration and authentication', () => {
     const email = `known-${randomUUID().slice(0, 8)}@example.com`;
     await register(email);
 
-    const wrongPassword = await withUser(sql, null, (tx) =>
-      authenticate(tx, email, 'wrong').catch((e: IdentityError) => e),
-    );
-    const unknownEmail = await withUser(sql, null, (tx) =>
-      authenticate(tx, 'nobody@example.com', 'wrong').catch((e: IdentityError) => e),
-    );
+    const wrongPassword = await authenticate(sql, email, 'wrong').catch((e: IdentityError) => e);
+    const unknownEmail = await authenticate(sql, 'nobody@example.com', 'wrong').catch((e: IdentityError) => e);
 
     expect((wrongPassword as IdentityError).code).toBe('INVALID_CREDENTIALS');
     expect((unknownEmail as IdentityError).code).toBe('INVALID_CREDENTIALS');
@@ -121,10 +113,10 @@ describe('registration and authentication', () => {
     };
 
     const wrongPassword = await time(() =>
-      withUser(sql, null, (tx) => authenticate(tx, email, 'wrong')),
+      authenticate(sql, email, 'wrong'),
     );
     const unknownEmail = await time(() =>
-      withUser(sql, null, (tx) => authenticate(tx, 'ghost@example.com', 'wrong')),
+      authenticate(sql, 'ghost@example.com', 'wrong'),
     );
 
     // Generous bound: this asserts the dummy verification actually happens,
@@ -138,11 +130,54 @@ describe('registration and authentication', () => {
     await register(email);
 
     for (let i = 0; i < 10; i++) {
-      await withUser(sql, null, (tx) => authenticate(tx, email, 'wrong').catch(() => {}));
+      await authenticate(sql, email, 'wrong').catch(() => {});
     }
 
     await expect(
-      withUser(sql, null, (tx) => authenticate(tx, email, 'correct horse battery staple')),
+      authenticate(sql, email, 'correct horse battery staple'),
+    ).rejects.toThrow(/too many failed attempts/i);
+  });
+
+  /**
+   * The regression test for a lockout that was INERT IN PRODUCTION while the
+   * test above passed.
+   *
+   * `authenticate` recorded the failed attempt and then threw. The API called
+   * it inside `withUser(...)`, the throw escaped `sql.begin`, and PostgreSQL
+   * rolled the increment back with everything else — so `failed_logins` never
+   * left zero and the account was never locked. Twelve wrong passwords against
+   * a running server, then the correct one, accepted immediately.
+   *
+   * The test above did not catch it because it wrote `.catch(() => {})` INSIDE
+   * the transaction callback, which made `sql.begin` commit. This one lets the
+   * rejection escape the way the application does, and then reads the counter
+   * out of the database rather than inferring it from behaviour.
+   */
+  it('records the failure even when the caller lets the rejection propagate', async () => {
+    const email = `propagate-${randomUUID().slice(0, 8)}@example.com`;
+    await register(email);
+
+    // No `.catch` inside anything — the rejection travels all the way out.
+    await expect(authenticate(sql, email, 'wrong')).rejects.toThrow();
+
+    const [row] = await admin<{ failed_logins: number }[]>`
+        SELECT failed_logins FROM app_user WHERE lower(email) = lower(${email})
+    `;
+    expect(row!.failed_logins).toBe(1);
+  });
+
+  it('locks the account after ten failures a caller never handled inside a transaction', async () => {
+    const email = `grind-${randomUUID().slice(0, 8)}@example.com`;
+    await register(email);
+
+    for (let i = 0; i < 10; i++) {
+      await expect(authenticate(sql, email, `wrong-${i}`)).rejects.toThrow();
+    }
+
+    // The correct password, during the lock window. This is the assertion an
+    // attacker's brute force runs into, and the one that was failing silently.
+    await expect(
+      authenticate(sql, email, 'correct horse battery staple'),
     ).rejects.toThrow(/too many failed attempts/i);
   });
 
@@ -151,9 +186,9 @@ describe('registration and authentication', () => {
     await register(email);
 
     for (let i = 0; i < 3; i++) {
-      await withUser(sql, null, (tx) => authenticate(tx, email, 'wrong').catch(() => {}));
+      await authenticate(sql, email, 'wrong').catch(() => {});
     }
-    await withUser(sql, null, (tx) => authenticate(tx, email, 'correct horse battery staple'));
+    await authenticate(sql, email, 'correct horse battery staple');
 
     const [row] = await admin<{ failed_logins: number }[]>`
         SELECT failed_logins FROM app_user WHERE lower(email) = lower(${email})
