@@ -34,6 +34,13 @@ const read = (p: string) => readFileSync(join(root, p), 'utf8');
  * that is the entire point of making it explicit.
  */
 const NOT_PLUMBED: Record<string, string> = {
+  HOST:
+    'exists for the NATIVE Windows install, which sets 127.0.0.1 so the books are '
+    + 'not offered to every network the PC ever joins. In Docker the only correct '
+    + 'value is the 0.0.0.0 default: the health check arrives from outside the '
+    + 'container and `web` reaches the API across the compose network, so anything '
+    + 'narrower breaks both. Making it settable here would only let an operator '
+    + 'break their own deployment.',
   NODE_ENV: 'set literally to `production` in the compose file, not interpolated.',
   PORT: 'the container port is fixed; the host mapping is WEB_PORT on `web`.',
   RATE_LIMIT: 'default 600/min is right for a shop; no operator has needed to move it.',

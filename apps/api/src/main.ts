@@ -146,10 +146,12 @@ async function main(): Promise<void> {
   const config = loadConfig();
   const app = await createApp();
 
-  // 0.0.0.0 because the process runs in a container and the health check comes
-  // from outside it.
-  await app.listen({ port: config.port, host: '0.0.0.0' });
-  new Logger('Bootstrap').log(`Emil API listening on ${config.port}`);
+  // Every interface by default, because the process usually runs in a container
+  // and the health check comes from outside it. A native single-PC install sets
+  // HOST=127.0.0.1 instead; see the `host` entry in config.ts for why that is a
+  // security decision rather than a preference.
+  await app.listen({ port: config.port, host: config.host });
+  new Logger('Bootstrap').log(`Emil API listening on ${config.host}:${config.port}`);
 }
 
 // Only when executed directly, so importing `createApp` in a test does not

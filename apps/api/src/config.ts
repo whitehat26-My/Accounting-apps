@@ -26,6 +26,26 @@ const schema = z.object({
    */
   jwtSecret: z.string().min(32),
   port: z.number().int().positive(),
+  /**
+   * Which addresses the API answers on — a security decision, not a detail.
+   *
+   * `0.0.0.0` (the default) is every network the machine is attached to. That
+   * is correct in a container, where the health check arrives from outside it
+   * and the network is private to the compose project, and correct behind a
+   * reverse proxy.
+   *
+   * It is wrong for a native install on somebody's own PC: it would offer an
+   * accounting system to every network that machine ever joins, including a
+   * café's WiFi, without anybody having chosen that. Such an install sets
+   * `127.0.0.1`, which the kernel will not route off the machine at all — a
+   * stronger statement of "this PC only" than a firewall rule, because there
+   * is no rule for anyone to later delete.
+   *
+   * Not validated beyond being non-empty: a specific interface address is
+   * equally legitimate, and deciding what a host may bind to is the operating
+   * system's job rather than a schema's.
+   */
+  host: z.string().min(1),
   /** Requests per window, per principal. */
   rateLimit: z.number().int().positive(),
   rateLimitWindowMs: z.number().int().positive(),
@@ -184,6 +204,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     databaseUrl: env['DATABASE_URL'],
     jwtSecret: env['JWT_SECRET'],
     port: Number(env['PORT'] ?? 3000),
+    host: text(env['HOST']) ?? '0.0.0.0',
     rateLimit: Number(env['RATE_LIMIT'] ?? 600),
     rateLimitWindowMs: Number(env['RATE_LIMIT_WINDOW_MS'] ?? 60_000),
     publicRateLimit: Number(env['PUBLIC_RATE_LIMIT'] ?? 30),
