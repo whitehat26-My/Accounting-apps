@@ -1,6 +1,4 @@
-import {
-  Body, Controller, Delete, Get, Headers, Inject, Param, Post, Query, Req, Res,
-} from '@nestjs/common';
+import { Body, Controller, Delete, Get, Headers, Inject, Logger, Param, Post, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { isoDate, positiveDecimal, uuid } from '@emil/contracts';
@@ -30,6 +28,7 @@ import { tenantContextOf } from '../context/request-context.js';
 import { parse } from '../validation.js';
 import { renderRepairIntakeSlipPdf, renderRepairReportPdf } from '../pdf/render.js';
 import { verifyUrl } from '../config.js';
+import { verificationFor } from '../documents/attest.js';
 
 /** Every printed repair document leaves by the same door. */
 function send(reply: FastifyReply, pdf: Buffer, filename: string): void {
@@ -49,6 +48,8 @@ function send(reply: FastifyReply, pdf: Buffer, filename: string): void {
  */
 @Controller('v1/repairs')
 export class RepairsController {
+  private readonly log = new Logger(RepairsController.name);
+
   constructor(@Inject(SQL) private readonly sql: Sql) {}
 
   @Requires('repair.read')
@@ -200,7 +201,17 @@ export class RepairsController {
     @Res() reply: FastifyReply,
   ) {
     const { doc, digest } = await this.printable(request, parse(uuid, id));
-    const pdf = await renderRepairIntakeSlipPdf(doc, { digest, verifyUrl: verifyUrl() });
+    const pdf = await renderRepairIntakeSlipPdf(
+      doc,
+      await verificationFor(digest, verifyUrl(), {
+        documentType: 'REPAIR_JOB',
+        documentNo: doc.jobNo,
+        issuedOn: doc.receivedOn,
+        total: doc.total,
+        currency: doc.currency,
+        tenantId: tenantContextOf(request).tenantId,
+      }, (error) => this.log.error({ error }, 'slip attestation failed; printed digest QR')),
+    );
     send(reply, pdf, `${doc.jobNo}-received.pdf`);
   }
 
@@ -212,7 +223,17 @@ export class RepairsController {
     @Res() reply: FastifyReply,
   ) {
     const { doc, digest } = await this.printable(request, parse(uuid, id));
-    const pdf = await renderRepairReportPdf(doc, { digest, verifyUrl: verifyUrl() });
+    const pdf = await renderRepairReportPdf(
+      doc,
+      await verificationFor(digest, verifyUrl(), {
+        documentType: 'REPAIR_JOB',
+        documentNo: doc.jobNo,
+        issuedOn: doc.receivedOn,
+        total: doc.total,
+        currency: doc.currency,
+        tenantId: tenantContextOf(request).tenantId,
+      }, (error) => this.log.error({ error }, 'report attestation failed; printed digest QR')),
+    );
     send(reply, pdf, `${doc.jobNo}-report.pdf`);
   }
 

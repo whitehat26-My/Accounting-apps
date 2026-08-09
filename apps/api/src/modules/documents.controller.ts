@@ -1,4 +1,4 @@
-import { Controller, Get, Inject, Param, Query, Req, Res } from '@nestjs/common';
+import { Controller, Get, Inject, Logger, Param, Query, Req, Res } from '@nestjs/common';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import {
   fingerprintDocument,
@@ -12,6 +12,7 @@ import { Requires } from '../guards/decorators.js';
 import { tenantContextOf } from '../context/request-context.js';
 import { renderInvoicePdf, renderReceiptPdf, renderThermalReceiptPdf } from '../pdf/render.js';
 import { verifyUrl } from '../config.js';
+import { verificationFor } from '../documents/attest.js';
 
 /**
  * Printed documents.
@@ -29,6 +30,8 @@ import { verifyUrl } from '../config.js';
  */
 @Controller('v1')
 export class DocumentsController {
+  private readonly log = new Logger(DocumentsController.name);
+
   constructor(@Inject(SQL) private readonly sql: Sql) {}
 
   @Requires('invoice.read')
@@ -43,7 +46,19 @@ export class DocumentsController {
       data: await invoiceDocumentData(tx, ctx, id),
       digest: (await fingerprintDocument(tx, ctx, 'INVOICE', id)).digest,
     }));
-    const pdf = await renderInvoicePdf(data, { digest, verifyUrl: verifyUrl() });
+    const pdf = await renderInvoicePdf(
+      data,
+      await verificationFor(digest, verifyUrl(), {
+        documentType: 'INVOICE',
+        documentNo: data.invoiceNo,
+        issuedOn: data.issueDate,
+        // `total`, not `amountDue`: the attestation is what the document SAID
+        // when it was issued, and the balance moves as it is paid.
+        total: data.total,
+        currency: data.currency,
+        tenantId: ctx.tenantId,
+      }, (error) => this.log.error({ error }, 'invoice attestation failed; printed digest QR')),
+    );
 
     void reply
       .header('content-type', 'application/pdf')
@@ -76,7 +91,17 @@ export class DocumentsController {
     const pdf =
       format === 'thermal'
         ? await renderThermalReceiptPdf(data)
-        : await renderReceiptPdf(data, { digest, verifyUrl: verifyUrl() });
+        : await renderReceiptPdf(
+            data,
+            await verificationFor(digest, verifyUrl(), {
+              documentType: 'RECEIPT',
+              documentNo: data.paymentNo,
+              issuedOn: data.paymentDate,
+              total: data.amount,
+              currency: data.currency,
+              tenantId: ctx.tenantId,
+            }, (error) => this.log.error({ error }, 'receipt attestation failed; printed digest QR')),
+          );
 
     void reply
       .header('content-type', 'application/pdf')

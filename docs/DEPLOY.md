@@ -150,6 +150,46 @@ everything needed to verify through any future one, and `/verify` accepts it
 typed. Documents printed after you change the value carry the new address; the
 old ones keep the old. There is no re-print step and no migration.
 
+### Documents that verify with this server switched off
+
+Set `DOCUMENT_SIGNING_KEY` and the QR stops being a pointer.
+
+Without it, scanning a receipt makes the customer's phone **ask this server**
+whether the document is real. That holds while the server is running and
+reachable — which, for books on a shop PC, means during shop hours, on that
+WiFi, until the PC is replaced. A warranty card outlives all three, and the
+customer standing there in five years gets a dead link. No amount of hosting
+fixes a URL printed today.
+
+With it, the figures travel *inside* the code, signed, and the reader's own
+browser checks them against a published public key. Nothing has to still be
+running.
+
+```bash
+node scripts/new-signing-key.mjs     # prints both halves; paste into .env.prod
+docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+```
+
+`--build` matters: the public half is compiled into the pages, not read at
+runtime.
+
+**Back the private half up with the database.** Every document already printed
+was signed by it. Replace it and every receipt, invoice and warranty card in
+every customer's drawer stops verifying — the paper is unchanged and the checker
+no longer recognises it. There is no re-print step and no migration that can
+reach paper. Rotate only if it leaks; then the cost above is the price of having
+leaked it, because otherwise somebody else can sign documents in your name.
+
+**What it proves, exactly:** that the holder of this key issued a document with
+these figures on this date. It **cannot** say the document was not later
+cancelled or credited — a signature is a statement about a moment. `/verify`
+therefore still asks the live system when it can reach it, and says which answer
+it used. Offline gives certainty about the paper; online adds current status.
+
+Warranty cards keep the pointer QR for now: the format carries a monetary total
+and a warranty card has none, so signing one would attest a zero. Invoices,
+receipts and repair jobs are signed. See `docs/SETTLEMENT-REGISTER.md` §4.12.
+
 ### Which address to OPEN the app at — not the same question
 
 `PUBLIC_BASE_URL` is the address *printed on paper for other people*. The
@@ -434,6 +474,8 @@ again — that is what rotating a signing key means.
 | `ANTHROPIC_API_KEY` | api | Optional. Connects the in-app assistant; empty means it reports itself unconfigured and everything else works. |
 | `ASSISTANT_RATE_LIMIT` | api | Assistant chat requests per minute, per tenant. Default 30 — its cost is a paid model call, so it is capped tighter than ordinary routes. |
 | `API_ORIGIN` | web | Where `/api/*` is proxied. On the compose path it is fixed at `http://api:3000` — not a knob — and passed as a **build arg**, because `rewrites()` is evaluated during `next build` and frozen into the route manifest, so a runtime value arrives too late and the image keeps the development fallback. **On Netlify it is the Railway API's public https address**, and it is required: `scripts/netlify-redirects.mjs` fails the build without it rather than deploy a site whose every login 404s. |
+| `DOCUMENT_SIGNING_KEY` | api | Optional. Signs printed documents so their QR codes verify **with this server switched off** — see below. Absent, documents keep the older QR that points back here, exactly as before. `node scripts/new-signing-key.mjs` emits it with its public half. |
+| `NEXT_PUBLIC_VERIFY_KEY` | web | The public half of the key above, compiled into the verify page. Not a secret — it is published so anybody can check a document. A **build arg**: changing it needs `up -d --build`. |
 | `EMIL_STATIC` | web (Netlify only) | `1` selects the static export — a directory of files with no server. Set in `netlify.toml`; it must NEVER be set for the compose build, which would produce a web image that starts, serves every screen, and has no route to the API at all. The deployment-config guard enforces that it is absent from `docker-compose.prod.yml`. |
 | `SIGNUP_MODE` | api | `invite` (default) or `open`. Invite-only unless the network is the gate. See above. |
 | `NEXT_PUBLIC_APP_NAME` | web | This INSTALLATION's name — sign-in page, browser tab, and the small line above Sign out. Instance branding, the same for everybody who reaches this address. A tenant's own name and logo come from their `organisation` row and are set in Settings → Letterhead. Passed as a **build arg**, because Next inlines `NEXT_PUBLIC_*` at build time: changing it needs `up -d --build`, and setting it under `environment:` would do nothing at all. Default `Emil Books`. |

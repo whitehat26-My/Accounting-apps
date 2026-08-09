@@ -89,6 +89,33 @@ const schema = z.object({
    */
   assistantRateLimit: z.number().int().positive(),
   /**
+   * The key that signs documents, so their QR codes verify with this server
+   * switched off. PKCS#8, base64. `scripts/new-signing-key.mjs` emits one.
+   *
+   * ---------------------------------------------------------------------------
+   * OPTIONAL, WHICH IS THE OPPOSITE OF THE CALL MADE FOR `jwtSecret` ABOVE —
+   * AND THE DIFFERENCE IS REAL, NOT AN INCONSISTENCY.
+   *
+   * A missing `JWT_SECRET` cannot be defaulted because any default is a
+   * predictable signing key and therefore a total authentication bypass:
+   * absence is DANGEROUS. A missing document key is merely ABSENT. Documents
+   * keep the older QR form — a digest pointing back at this server — which is
+   * exactly what every document printed before this feature existed carries,
+   * and which still verifies while the server is reachable.
+   *
+   * So an upgrade does not break a running shop, and the only cost of not
+   * setting it is the thing you did not have yesterday. `main.ts` says so at
+   * boot rather than leaving it to be discovered from a customer complaint in
+   * two years.
+   *
+   * NOT per tenant: one key per deployment, with the tenant identified inside
+   * the signed payload. Per-tenant keys would mean the verify page needed every
+   * tenant's public key to check anything, which is a directory the page cannot
+   * have while staying a static file on free hosting.
+   * ---------------------------------------------------------------------------
+   */
+  documentSigningKey: z.string().min(1).optional(),
+  /**
    * What to trust `X-Forwarded-For` from.
    *
    * ---------------------------------------------------------------------------
@@ -210,6 +237,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): ApiConfig {
     publicRateLimit: Number(env['PUBLIC_RATE_LIMIT'] ?? 30),
     signupMode: text(env['SIGNUP_MODE']) ?? 'invite',
     assistantRateLimit: Number(env['ASSISTANT_RATE_LIMIT'] ?? 30),
+    ...(text(env['DOCUMENT_SIGNING_KEY'])
+      ? { documentSigningKey: text(env['DOCUMENT_SIGNING_KEY']) }
+      : {}),
     trustProxy: parseTrustProxy(text(env['TRUST_PROXY'])),
     enableFakeGateway: env['EMIL_ENABLE_FAKE_GATEWAY'] === '1',
     enableSandboxValues: env['EMIL_ENABLE_SANDBOX_VALUES'] === '1',

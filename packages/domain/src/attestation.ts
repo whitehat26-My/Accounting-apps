@@ -150,7 +150,7 @@ function isoFromDays(days: number): string {
  *   byte  13     document number length
  *   bytes 14..   document number, one byte per character
  */
-export function packAttestation(attestation: DocumentAttestation): Uint8Array {
+export function packAttestation(attestation: DocumentAttestation): Uint8Array<ArrayBuffer> {
   const { documentType, issuedOn, total, tenantTag: tag, documentNo } = attestation;
 
   const typeIndex = ATTESTED_TYPES.indexOf(documentType);
@@ -200,7 +200,10 @@ export function packAttestation(attestation: DocumentAttestation): Uint8Array {
  * person deciding whether a piece of paper is real, and "probably" is not an
  * answer that helps them.
  */
-export function unpackAttestation(bytes: Uint8Array, currency: Currency): DocumentAttestation {
+export function unpackAttestation(
+  bytes: Uint8Array<ArrayBufferLike>,
+  currency: Currency,
+): DocumentAttestation {
   if (bytes.length < PREFIX_BYTES) {
     throw new RangeError(`Attestation truncated: ${bytes.length} bytes`);
   }
@@ -253,7 +256,7 @@ export function unpackAttestation(bytes: Uint8Array, currency: Currency): Docume
 
 const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
-export function toBase64Url(bytes: Uint8Array): string {
+export function toBase64Url(bytes: Uint8Array<ArrayBufferLike>): string {
   let out = '';
   for (let i = 0; i < bytes.length; i += 3) {
     const a = bytes[i]!;
@@ -269,7 +272,7 @@ export function toBase64Url(bytes: Uint8Array): string {
   return out;
 }
 
-export function fromBase64Url(text: string): Uint8Array {
+export function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
   const clean = text.trim();
   if (clean === '') return new Uint8Array(0);
   if (!/^[A-Za-z0-9_-]+$/.test(clean)) {

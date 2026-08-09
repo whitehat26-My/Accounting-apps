@@ -151,7 +151,24 @@ async function main(): Promise<void> {
   // HOST=127.0.0.1 instead; see the `host` entry in config.ts for why that is a
   // security decision rather than a preference.
   await app.listen({ port: config.port, host: config.host });
-  new Logger('Bootstrap').log(`Emil API listening on ${config.host}:${config.port}`);
+  const boot = new Logger('Bootstrap');
+  boot.log(`Emil API listening on ${config.host}:${config.port}`);
+
+  /*
+   * Say which kind of QR the documents will carry.
+   *
+   * Unset is a legitimate choice and not an error, so this is not a warning —
+   * but it IS the difference between a warranty card that can be checked in
+   * five years and one that cannot, and that is not a difference anybody should
+   * discover from a customer. One line at boot, in the log the operator already
+   * reads when something looks wrong.
+   */
+  boot.log(
+    config.documentSigningKey
+      ? 'Documents are signed: printed QR codes verify without reaching this server.'
+      : 'DOCUMENT_SIGNING_KEY is unset — printed QR codes point back at this server, '
+        + 'so they stop working once it is unreachable. See docs/DEPLOY.md.',
+  );
 }
 
 // Only when executed directly, so importing `createApp` in a test does not

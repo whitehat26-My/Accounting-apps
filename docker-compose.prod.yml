@@ -79,6 +79,14 @@ services:
       # Assistant questions per minute, per tenant. Capped tighter than other
       # routes because each one is a paid model call against the key above.
       ASSISTANT_RATE_LIMIT: ${ASSISTANT_RATE_LIMIT:-30}
+      # Signs printed documents so their QR codes verify with this server
+      # switched off — which is the only way a warranty card scanned years from
+      # now can still be checked. Optional: without it, documents print the
+      # older QR that points back here, exactly as they did before.
+      # `node scripts/new-signing-key.mjs` emits this and its public half.
+      # BACK IT UP WITH THE DATABASE. Changing it stops every document ALREADY
+      # PRINTED from verifying, and no migration can reach paper.
+      DOCUMENT_SIGNING_KEY: ${DOCUMENT_SIGNING_KEY:-}
       NODE_ENV: production
     depends_on:
       roles: { condition: service_completed_successfully }

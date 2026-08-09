@@ -22,6 +22,28 @@ import type {
 export interface DocumentVerification {
   readonly digest: string;
   readonly verifyUrl: string;
+  /**
+   * The signed fragment (`v=<payload>.<signature>`) that lets the QR be checked
+   * with this server switched off. Absent when no `DOCUMENT_SIGNING_KEY` is
+   * configured, in which case the code falls back to `#d=<digest>` — a pointer
+   * back here, which is what every document printed before this feature carried
+   * and which still verifies while this server is reachable.
+   */
+  readonly attestation?: string;
+}
+
+/**
+ * What the QR encodes: the signed form when there is one, the pointer otherwise.
+ *
+ * One function rather than two call sites building the same string, because
+ * there ARE two call sites — the invoice/receipt block and the repair/warranty
+ * foot — and a fix applied to one of them is the kind of thing nobody notices
+ * until a warranty card behaves differently from the receipt beside it.
+ */
+function qrTarget(verification: DocumentVerification): string {
+  return verification.attestation
+    ? `${verification.verifyUrl}#${verification.attestation}`
+    : `${verification.verifyUrl}#d=${verification.digest}`;
 }
 
 /**
@@ -882,7 +904,7 @@ function verificationBlock(
   pdf: PDFKit.PDFDocument,
   verification: DocumentVerification,
 ): void {
-  const matrix = encodeQr(`${verification.verifyUrl}#d=${verification.digest}`);
+  const matrix = encodeQr(qrTarget(verification));
   const MODULE = 3;
 
   /*
@@ -1865,9 +1887,7 @@ function documentFoot(
   right: { caption: string; signature?: RepairEvidencePhoto },
   verification?: DocumentVerification,
 ): void {
-  const matrix = verification
-    ? encodeQr(`${verification.verifyUrl}#d=${verification.digest}`)
-    : null;
+  const matrix = verification ? encodeQr(qrTarget(verification)) : null;
   const qrHeight = matrix ? matrix.length * 3 + 14 : 0;
   const needed = 40 + 40 + qrHeight;
   const floor = 750;
