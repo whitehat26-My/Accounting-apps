@@ -141,25 +141,50 @@ services:
     security_opt: ['no-new-privileges:true']
     restart: unless-stopped
 
-  # Nightly pg_dump into ./backups, keeping the newest 14. An accounting
-  # system without backups is a liability — copy this directory OFFSITE too
-  # (rclone to any object storage); the machine that burns takes its own
-  # backups with it.
+  # Nightly pg_dump, keeping the newest 14.
+  #
+  # SET `BACKUP_DIR` TO A ONEDRIVE OR GOOGLE DRIVE FOLDER. Left at the default
+  # the dumps land next to the database, on the same disk, inside the same PC —
+  # which protects against somebody deleting data in the app and against
+  # nothing else. Not the disk failing, not the machine being stolen, not
+  # ransomware. Both of those sync folders ship with Windows, cost nothing, and
+  # need no extra tool, which turns "copy the backups off the machine" from
+  # advice nobody follows into one line of configuration.
   backup:
     image: postgres:16
     entrypoint: ['sh', '-c']
     command:
       - |
         while true; do
-          pg_dump "postgres://postgres:$${POSTGRES_PASSWORD}@db:5432/emil" \
-            -Fc -f "/backups/emil-$$(date +%Y%m%d-%H%M%S).dump" \
-            && ls -1t /backups/emil-*.dump | tail -n +15 | xargs -r rm --
+          NEW="/backups/emil-$$(date +%Y%m%d-%H%M%S).dump"
+          if pg_dump "postgres://postgres:$${POSTGRES_PASSWORD}@db:5432/emil" -Fc -f "$$NEW"; then
+            # PROVE THE NEW DUMP IS READABLE BEFORE DELETING ANY OLD ONE.
+            #
+            # `pg_dump` exiting zero does not mean the archive can be restored:
+            # a full disk, a killed container or a bad block can leave a file
+            # that exists, looks plausible, and is refused by pg_restore. The
+            # pruning used to run on pg_dump's exit code alone, so the one
+            # night the dump was corrupt was also the night the last good
+            # backups were deleted to make room for it.
+            #
+            # `pg_restore --list` reads the archive's table of contents without
+            # writing anything anywhere. If it cannot, KEEP EVERYTHING: an
+            # extra unreadable file costs a few megabytes, and the old dumps
+            # are the entire point of having them.
+            if pg_restore --list "$$NEW" > /dev/null 2>&1; then
+              ls -1t /backups/emil-*.dump | tail -n +15 | xargs -r rm --
+            else
+              echo "BACKUP UNREADABLE: $$NEW failed pg_restore --list. Keeping all older dumps." >&2
+            fi
+          else
+            echo "BACKUP FAILED: pg_dump did not complete. Keeping all older dumps." >&2
+          fi
           sleep 86400
         done
     environment:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     volumes:
-      - ./backups:/backups
+      - ${BACKUP_DIR:-./backups}:/backups
     depends_on:
       db: { condition: service_healthy }
     restart: unless-stopped

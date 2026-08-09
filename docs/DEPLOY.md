@@ -257,20 +257,58 @@ A plain `up -d` will keep the old name with no error and no warning.
 
 ### Backups — non-negotiable
 
-The `backup` service runs `pg_dump` nightly into `./backups`, keeping 14.
-Two rules:
+The `backup` service runs `pg_dump` nightly, keeping the newest 14.
 
-1. **Copy them off the machine.** `rclone` to any object storage (Backblaze
-   B2 is effectively free at this size). The server that dies takes its local
-   backups with it.
-2. **Rehearse a restore once**, before it matters:
+**1. Send them somewhere else, and it is one line.** The default `./backups`
+sits beside the database, on the same disk, inside the same machine. That
+protects against somebody deleting data in the app and against nothing else —
+not the disk failing, not the machine being stolen, not ransomware. Set
+`BACKUP_DIR` in `.env.prod`:
 
 ```bash
-docker compose -f docker-compose.prod.yml exec -T db \
-  pg_restore -U postgres -d emil_restore_test --create --clean < backups/emil-<newest>.dump
+BACKUP_DIR=C:/Users/YourName/OneDrive/Emil-Backups   # Windows: forward slashes
+BACKUP_DIR=/mnt/backup-volume                        # Linux: a different disk
 ```
 
-A backup nobody has restored is a hope, not a backup.
+On Windows, OneDrive or Google Drive is the whole answer — both ship with the
+machine, cost nothing, and need no extra tool, so every dump leaves the PC by
+itself. Create the folder first; Docker will otherwise make it as a root-owned
+directory. On a VPS, `rclone` to object storage still works and is still right.
+
+**2. The nightly job proves each dump before it deletes any older one.**
+`pg_dump` exiting zero does not mean the archive can be restored — a full disk
+or a killed container leaves a file that exists, looks plausible, and is refused
+by `pg_restore`. Pruning used to run on the exit code alone, so the one night
+the dump was corrupt was also the night the last good backups were deleted to
+make room for it. Now `pg_restore --list` reads the new archive first, and if it
+cannot, **everything is kept** and the reason goes to the log.
+
+**3. Rehearse a restore once, before it matters.**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\restore-drill.ps1
+```
+
+It restores the newest dump into a scratch database, counts what came back, and
+drops it. It never touches the live database. Compare the numbers with
+`scripts\check-data.ps1`: if they match, that backup would give you your books
+back. A backup nobody has restored is a hope, not a backup.
+
+### Running it on a PC rather than a server
+
+A desktop is a perfectly good home for this, but it is configured for a person,
+not for a service. Three settings, all in Windows:
+
+- **Sleep and hibernate off.** *Settings → System → Power → Screen and sleep →
+  Never.* A sleeping PC is a till that stopped answering mid-afternoon.
+- **Windows Update active hours** covering shop hours, so it does not choose a
+  Saturday lunchtime to reboot.
+- **Docker Desktop starts on login**, and the account logs in automatically
+  after a restart. Otherwise the machine reboots overnight, nobody signs in, and
+  the first sale of the morning has nowhere to go.
+
+Check it survived with `scripts\check-data.ps1` after the first reboot — the
+counts should be exactly what they were before.
 
 ### Upgrades
 
