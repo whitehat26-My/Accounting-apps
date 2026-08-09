@@ -150,6 +150,42 @@ everything needed to verify through any future one, and `/verify` accepts it
 typed. Documents printed after you change the value carry the new address; the
 old ones keep the old. There is no re-print step and no migration.
 
+### Which address to OPEN the app at — not the same question
+
+`PUBLIC_BASE_URL` is the address *printed on paper for other people*. The
+address *you* type on the machine running the system is a separate decision, and
+getting it wrong costs real features:
+
+| You open | Browser calls it | Consequence |
+| --- | --- | --- |
+| `http://localhost:8080` | **secure** | Install-as-an-app offered, `crypto.randomUUID` present, service workers allowed |
+| `http://127.0.0.1:8080` | **secure** | same |
+| `http://192.168.0.12:8080` | **not secure** | no install prompt, `crypto.randomUUID` **missing**, service workers blocked |
+
+**Browsers treat `localhost` as a trustworthy origin even over plain HTTP**, and
+treat a bare LAN number as untrustworthy no matter what is running behind it.
+That is a rule in the browser, not a property of your setup — so it cannot be
+configured away, only avoided.
+
+Measured against this app, plain HTTP on both, to be sure rather than to assume:
+
+```
+http://localhost:4020   isSecureContext=true    crypto.randomUUID=true    serviceWorker=true
+http://127.0.0.1:4020   isSecureContext=true    crypto.randomUUID=true    serviceWorker=true
+http://192.0.2.2:4020   isSecureContext=false   crypto.randomUUID=false   serviceWorker=false
+```
+
+So: **on the machine itself, always `localhost`.** `scripts/create-desktop-app.ps1`
+already builds the desktop shortcut against it.
+
+**Staff phones cannot use `localhost`** — to a phone that means the phone. They
+need the LAN number, which is not a secure origin, so the app falls back where it
+must and the install prompt does not appear. The free fix is
+[Tailscale Serve](https://tailscale.com/kb/1312/serve): it puts a real HTTPS
+certificate in front of the app for devices on your tailnet, without exposing
+anything to the internet and without a domain. Phones then get a secure origin,
+the install prompt, and encrypted traffic on shop WiFi.
+
 ### Whose name is on the sign-in page
 
 **`NEXT_PUBLIC_APP_NAME` is this installation's own name**, and it is the one

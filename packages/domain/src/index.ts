@@ -47,3 +47,4 @@ export * from './payment.js';
 export * from './credit-note.js';
 export * from './einvoice.js';
 export * from './opening-balance.js';
+export * from './attestation.js';
