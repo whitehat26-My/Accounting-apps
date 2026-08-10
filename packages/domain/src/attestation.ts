@@ -1,6 +1,15 @@
 import { Money } from './money.js';
 import type { Currency } from './money.js';
 
+/*
+ * Re-exported because `unpackAttestation` RETURNS a Money, and this module is
+ * consumed through the `@emil/domain/attestation` subpath by `apps/web` — which
+ * has no other route to the class. A caller that can read an attestation but
+ * cannot render the amount inside it has been handed half a tool.
+ */
+export { Money };
+export type { Currency };
+
 /**
  * A document that proves itself, to a phone with no signal and a shop with no
  * server.

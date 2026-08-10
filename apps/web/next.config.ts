@@ -32,8 +32,63 @@ import type { NextConfig } from 'next';
 const demo = process.env['NEXT_PUBLIC_DEMO'] === '1';
 const staticExport = demo || process.env['EMIL_STATIC'] === '1';
 
+/**
+ * True of every mode, so it is written once rather than in both branches.
+ *
+ * ---------------------------------------------------------------------------
+ * THE ONE WORKSPACE PACKAGE THIS APP IMPORTS, AND WHY IT EARNS THE EXCEPTION.
+ *
+ * `apps/web` deliberately depends on nothing from this repository: CLAUDE.md's
+ * rule is that amounts are strings end to end and the moment a screen needs to
+ * CALCULATE, the calculation belongs on the server.
+ *
+ * `/verify` is the one screen where that is impossible. It checks a signed QR
+ * code against a public key so a customer can confirm a receipt is genuine
+ * WITH NO SERVER REACHABLE — that is the entire feature. It therefore has to
+ * decode the signed payload itself, and it must decode it byte-identically to
+ * the code that produced it, or it will read the wrong amount and still report
+ * GENUINE. A second implementation living here is the drift risk this
+ * repository keeps writing guard tests to prevent, and this is the one place
+ * where drifting would launder a forgery.
+ *
+ * The rule's purpose survives: the browser is not computing money, it is
+ * READING a figure the server computed and signed. `Money.fromUnits().toString()`
+ * is also how minor units become a decimal without float error — hand-rolling
+ * that here is how you get `1250.0000000001` on a receipt.
+ *
+ * `@emil/domain/attestation` is a subpath export, not the package barrel: the
+ * graph is `attestation.ts` plus `money.ts`, and `money.ts` imports nothing.
+ * Importing from the root would pull all 49 domain modules into the bundle.
+ * `transpilePackages` is required because the package ships raw TypeScript.
+ * ---------------------------------------------------------------------------
+ */
+const shared = {
+  transpilePackages: ['@emil/domain'],
+  /**
+   * Teach webpack that `./money.js` means `./money.ts`.
+   *
+   * `packages/domain` is written for Node's ESM resolution, where a relative
+   * import must carry the extension it will have AFTER compilation — so its
+   * source says `from './money.js'` while the file on disk is `money.ts`. `tsc`
+   * and `vitest` both understand that convention; webpack does not, and reports
+   * `Module not found: Can't resolve './money.js'`.
+   *
+   * TYPECHECKING PASSES EITHER WAY, which is what makes this worth a comment:
+   * the failure appears only when the bundler runs, so it cannot be caught by
+   * `pnpm typecheck` and will look mysterious to whoever meets it next.
+   */
+  webpack(config: { resolve: { extensionAlias?: Record<string, string[]> } }) {
+    config.resolve.extensionAlias = {
+      ...config.resolve.extensionAlias,
+      '.js': ['.ts', '.tsx', '.js'],
+    };
+    return config;
+  },
+} satisfies Partial<NextConfig>;
+
 const config: NextConfig = staticExport
   ? {
+      ...shared,
       output: 'export',
       // Only the Pages demo lives under a sub-path; Netlify serves from the root.
       basePath: demo ? (process.env['DEMO_BASE_PATH'] ?? '') : '',
@@ -66,6 +121,7 @@ const config: NextConfig = staticExport
        */
     }
   : {
+      ...shared,
       async rewrites() {
         const api = process.env['API_ORIGIN'] ?? 'http://127.0.0.1:3001';
         return [{ source: '/api/:path*', destination: `${api}/:path*` }];

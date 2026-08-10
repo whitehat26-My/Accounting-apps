@@ -36,6 +36,16 @@ COPY apps/web apps/web
 ARG NEXT_PUBLIC_APP_NAME
 ENV NEXT_PUBLIC_APP_NAME=${NEXT_PUBLIC_APP_NAME}
 
+# The public half of DOCUMENT_SIGNING_KEY, compiled into /verify so a customer's
+# phone can check a printed QR code against it with no server involved. Not a
+# secret: it is published on purpose, so anybody holding a document can check it.
+#
+# Empty is fine and means "this build cannot check signatures" — /verify says so
+# and offers the typed-reference path instead, which is what every deployment did
+# before signing existed.
+ARG NEXT_PUBLIC_VERIFY_KEY
+ENV NEXT_PUBLIC_VERIFY_KEY=${NEXT_PUBLIC_VERIFY_KEY}
+
 # Where /api/* is proxied to — ALSO a build arg, and for a less obvious reason
 # than the name above.
 #
