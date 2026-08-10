@@ -22,6 +22,11 @@ interface Item {
   id: string;
   code: string;
   name: string;
+  /**
+   * GOODS or SERVICE. The API has always sent this; the type simply never
+   * named it, so the till could not tell a labour charge from a hard disk.
+   */
+  itemType: 'GOODS' | 'SERVICE';
   isTracked: boolean;
   isSerialised: boolean;
   sale: { unitPrice: string | null };
@@ -220,12 +225,44 @@ export default function PosPage() {
             <button
               key={item.id}
               onClick={() => add(item)}
-              className="rounded-lg border border-line bg-surface-raised p-3 text-left shadow-sm hover:border-positive"
+              /*
+               * Bigger than it needs to look, because this is pressed with a
+               * thumb while a customer waits and a queue builds. `active:` is
+               * a real state and not a nicety: on a touch screen there is no
+               * hover, so the press itself has to be the confirmation.
+               */
+              className="group relative overflow-hidden rounded-xl border border-line bg-surface-raised py-3 pl-4 pr-3 text-left shadow-sm transition-all hover:border-primary hover:shadow-md active:scale-[0.98]"
             >
-              <div className="text-xs text-ink-muted">{item.code}</div>
-              <div className="text-sm font-medium">{item.name}</div>
-              <div className="mt-1 text-sm font-semibold text-positive">
-                {item.sale.unitPrice ? rm(item.sale.unitPrice) : 'price at till'}
+              {/*
+                A colour rail rather than a badge: it costs no width on a card
+                that is mostly name, and a wall of them sorts itself into
+                stripes you can scan without reading. Indigo is a thing you
+                stock, amber a thing you do — the distinction that decides
+                whether stock moves and whether a serial is asked for.
+              */}
+              <span
+                aria-hidden="true"
+                className={`absolute inset-y-0 left-0 w-1.5 ${
+                  item.itemType === 'SERVICE' ? 'bg-caution' : 'bg-primary'
+                }`}
+              />
+              <div className="flex items-center gap-1.5 text-xs text-ink-muted">
+                <span className="truncate">{item.code}</span>
+                {item.isSerialised ? (
+                  /* Warned BEFORE the tap, not after. This item stops the sale
+                     to ask for a serial number, and knowing that in advance is
+                     the difference between reaching for the box and hunting
+                     for it with somebody waiting. */
+                  <span className="ml-auto shrink-0 rounded bg-primary-soft px-1.5 py-0.5 text-[10px] font-semibold text-primary">
+                    SERIAL
+                  </span>
+                ) : null}
+              </div>
+              <div className="mt-0.5 line-clamp-2 text-sm font-semibold text-ink">{item.name}</div>
+              <div className="mt-1.5 text-sm font-bold tabular-nums text-ink">
+                {item.sale.unitPrice ? rm(item.sale.unitPrice) : (
+                  <span className="font-medium text-ink-muted">price at till</span>
+                )}
               </div>
             </button>
           ))}

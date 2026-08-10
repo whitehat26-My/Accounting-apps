@@ -44,6 +44,11 @@ interface DigestList {
   }[];
 }
 
+/** Matches the Insights screen's shape — the same endpoint, the same rows. */
+interface DailySeries {
+  points: { date: string; receipts: string; grossProfit: string }[];
+}
+
 interface Takings {
   date: string;
   byMethod: { method: string; depositAccount: string; total: string; count: number }[];
@@ -91,6 +96,20 @@ export default function TodayPage() {
     enabled: seesMoney,
   });
 
+  /*
+   * The 14-day series behind the summary tiles.
+   *
+   * Same queryKey as the Insights screen, so TanStack serves both from ONE
+   * cache entry and one request — this costs the dashboard nothing that
+   * Insights was not already fetching.
+   */
+  const daily = useQuery({
+    queryKey: ['daily-takings'],
+    queryFn: () => api<DailySeries>('/v1/reports/daily-takings?days=14'),
+    enabled: seesTakings,
+    refetchInterval: 300_000,
+  });
+
   const digests = useQuery({
     queryKey: ['weekly-digests'],
     queryFn: () => api<DigestList>('/v1/reports/weekly-digests?limit=1'),
@@ -99,6 +118,18 @@ export default function TodayPage() {
   });
 
   const t = takings.data;
+  /*
+   * A decimal string per day, straight to a number for DRAWING ONLY.
+   *
+   * `Number()` on money is normally forbidden here and rightly so — but this
+   * value never returns to the ledger, never reaches an input, and never gets
+   * displayed. It picks a Y coordinate in a 28-unit viewBox, where float error
+   * is many orders of magnitude below one screen pixel. Every figure a person
+   * READS on this page is still the untouched string, formatted by `rm()`.
+   */
+  const series = (field: 'receipts' | 'grossProfit'): number[] =>
+    (daily.data?.points ?? []).map((point) => Number(point[field]));
+
   const f = forecast.data;
   const fc = free.data;
   const d = digests.data?.digests[0];
@@ -123,10 +154,23 @@ export default function TodayPage() {
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
           {/* Raw decimal strings, not rm() — Money formats the resting frame
               itself and counts through changes (a sale rings, Takings rolls). */}
-          <Stat label="Takings" value={t ? t.receiptsTotal : '—'} delay={0} delta />
+          <Stat
+            label="Takings"
+            value={t ? t.receiptsTotal : '—'}
+            delay={0}
+            delta
+            trend={series('receipts')}
+          />
           <Stat label="Sales" value={t ? `${t.invoiceCount}` : '—'} plain delay={60} />
           <Stat label="Cost of goods" value={t ? t.costOfGoodsSold : '—'} delay={120} />
-          <Stat label="Gross profit" value={t ? t.grossProfit : '—'} highlight delay={180} delta />
+          <Stat
+            label="Gross profit"
+            value={t ? t.grossProfit : '—'}
+            highlight
+            delay={180}
+            delta
+            trend={series('grossProfit')}
+          />
         </div>
       ) : null}
 
@@ -277,6 +321,7 @@ function Stat({
   plain,
   delay = 0,
   delta = false,
+  trend,
 }: {
   label: string;
   value: string;
@@ -287,15 +332,26 @@ function Stat({
   delay?: number;
   /** Flash what the figure moved by when it changes. See the note below. */
   delta?: boolean;
+  /**
+   * The last 14 days of this figure, drawn faintly behind it.
+   *
+   * REAL NUMBERS OR NOTHING. A decorative squiggle on an accounting dashboard
+   * is a lie sitting beside figures that are not, and the person reading it
+   * cannot tell which is which — they will see a rising line next to their
+   * takings and believe it. Fewer than two points draws nothing at all, which
+   * is the honest thing for a shop that opened yesterday.
+   */
+  trend?: number[];
 }) {
   return (
     <div
-      className="emil-rise rounded-2xl bg-surface-raised p-4 shadow-sm ring-1 ring-line"
+      className="emil-rise relative overflow-hidden rounded-2xl bg-surface-raised p-4 shadow-md ring-1 ring-line"
       style={{ animationDelay: `${delay}ms` }}
     >
-      <div className="text-xs font-medium text-ink-muted">{label}</div>
+      {trend && trend.length > 1 ? <Sparkline points={trend} /> : null}
+      <div className="relative text-xs font-medium text-ink-muted">{label}</div>
       <div
-        className={`mt-1.5 text-2xl font-semibold tracking-tight ${
+        className={`relative mt-1.5 text-3xl font-extrabold tracking-tight ${
           highlight ? 'text-positive' : 'text-ink'
         }`}
       >
@@ -310,6 +366,41 @@ function Stat({
         {plain ? value : <Money value={value} delta={delta} />}
       </div>
     </div>
+  );
+}
+
+/**
+ * Fourteen days of a figure, as a filled area behind the tile.
+ *
+ * `preserveAspectRatio="none"` so it stretches to whatever the tile is; the
+ * viewBox is arbitrary units and the shape is what matters, not the scale.
+ * `aria-hidden` because the accessible content is the FIGURE — a screen reader
+ * announcing a polyline helps nobody, and the number is already there.
+ *
+ * Flat series (a shop with one trading day, or the same total every day) would
+ * divide by zero on the range; they render as a flat line at the bottom, which
+ * is true.
+ */
+function Sparkline({ points }: { points: number[] }) {
+  const min = Math.min(...points);
+  const max = Math.max(...points);
+  const span = max - min || 1;
+  const step = 100 / (points.length - 1);
+
+  const xy = points.map((v, i) => `${i * step},${28 - ((v - min) / span) * 24}`);
+  const line = `M${xy.join(' L')}`;
+  const area = `${line} L100,28 L0,28 Z`;
+
+  return (
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 100 28"
+      preserveAspectRatio="none"
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-12 w-full"
+    >
+      <path d={area} className="fill-primary" opacity={0.09} />
+      <path d={line} fill="none" strokeWidth={1.5} className="stroke-primary" opacity={0.5} />
+    </svg>
   );
 }
 
