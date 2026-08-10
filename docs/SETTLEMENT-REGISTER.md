@@ -439,6 +439,40 @@ Render/Heroku managed PostgreSQL refuse by design — a VPS, Railway or Fly are 
 homes that work. Unverifiable from this environment (no Docker here): the compose
 file is YAML-validated and the runbook states what to check on first boot.
 
+### 4.12 Self-verifying documents — BUILT for invoices, receipts and repair jobs
+
+The QR on a printed document used to be a POINTER: `…/verify#d=<digest>`, which
+sent the reader's phone to ask this system whether the digest was real. That holds
+only while the system is running and reachable — for books on one PC, during shop
+hours, on that WiFi, until the PC is replaced. A warranty card outlives all three,
+and no hosting decision fixes a URL printed years earlier.
+
+It now CARRIES the proof: `#v=<payload>.<signature>`, ECDSA P-256, checked in the
+reader's own browser against a published public key. `packages/domain/attestation.ts`
+(pure codec), `apps/api/src/documents/attest.ts` (signing),
+`apps/web/src/app/verify/page.tsx` (checking), `scripts/new-signing-key.mjs`.
+
+Optional by design: with no `DOCUMENT_SIGNING_KEY`, documents keep the pointer QR
+and nothing breaks on upgrade. `main.ts` says at boot which mode it is in.
+
+**The constraint that shaped the format.** `qr.ts` stops at version 10 / EC-M —
+213 usable bytes — and throws past it, at the printer, on a real receipt. JSON
+plus a 64-byte signature measures 233. Packed binary is 27 bytes, a 162-byte URL,
+QR version 9. A test asserts the fit and records the 233 figure beside it.
+
+**Still outstanding — warranty cards.** They keep the pointer QR. The payload
+carries a monetary total and a warranty card has none, so signing one would attest
+a zero; the field a reader actually wants is the EXPIRY DATE. Carrying it means a
+type-dependent field, which is a format decision rather than a patch, and encoding
+a misleading zero to avoid making it would be worse than the gap. This is the
+long-lived document that most deserves an offline check, so it is the first thing
+to do here next.
+
+**Also not carried: the digest.** There is no room, so the signed path cannot ask
+`/public/verify` for live status — a signature attests a moment and cannot say a
+document was later cancelled. The printed reference under the QR remains how a
+reader asks the live system, and the page says which check it ran.
+
 ### 4.11 Cloud hosting — BUILT as configuration; two external answers still open
 
 `netlify.toml`, `scripts/netlify-redirects.mjs`, the `EMIL_STATIC` build target in
