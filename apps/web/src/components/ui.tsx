@@ -16,7 +16,7 @@ export function Button({
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'danger' }) {
   const styles = {
     primary:
-      'bg-positive text-surface-raised shadow-sm hover:brightness-110 active:brightness-95 disabled:bg-line disabled:text-ink-faint disabled:shadow-none',
+      'bg-primary text-primary-ink shadow-sm shadow-primary/25 hover:brightness-110 active:brightness-95 disabled:bg-line disabled:text-ink-faint disabled:shadow-none',
     ghost:
       'bg-surface-raised text-ink shadow-sm ring-1 ring-inset ring-line-strong hover:bg-surface-sunken disabled:text-ink-faint',
     danger: 'bg-negative text-surface-raised shadow-sm hover:brightness-110 disabled:bg-line disabled:text-ink-faint',

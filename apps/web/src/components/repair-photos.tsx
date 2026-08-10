@@ -135,7 +135,7 @@ export function RepairPhotos({ jobId, jobStatus }: { jobId: string; jobStatus: s
           </div>
 
           <input
-            className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none focus:border-positive"
+            className="w-full rounded-xl border border-line px-3 py-2 text-sm outline-none focus:border-primary"
             placeholder="What does it show? e.g. dent on lid, top left"
             value={caption}
             onChange={(e) => setCaption(e.target.value)}

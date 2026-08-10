@@ -190,12 +190,21 @@ export default function AppLayout({ children }: { children: ReactNode }) {
                       // same class looked perfect.
                       className={`relative flex items-center justify-center gap-2.5 rounded-lg px-2.5 py-2.5 text-[13px] transition-colors md:justify-start ${
                         active
-                          ? 'bg-rail-accent/15 font-medium text-rail-accent'
+                          ? 'bg-rail-accent/12 font-semibold text-rail-accent'
                           : 'text-rail-ink hover:bg-rail-ink/10 hover:text-rail-ink-strong'
                       }`}
                     >
+                      {/*
+                        The marker is the BAR, not the tint. A wash alone is
+                        easy to miss down a list of twenty; a hard vertical edge
+                        against the rail's own border reads at a glance and from
+                        the corner of the eye, which is how somebody at a till
+                        actually checks where they are. Full height rather than
+                        a centred stub, and rounded only on the outer edge so it
+                        looks attached to the rail instead of floating in it.
+                      */}
                       {active ? (
-                        <span className="absolute left-0 top-1/2 h-5 w-0.5 -translate-y-1/2 rounded-full bg-rail-accent" />
+                        <span className="absolute -left-px top-1 bottom-1 w-[3px] rounded-r-full bg-rail-accent" />
                       ) : null}
                       <Icon name={item.icon} className={active ? 'text-rail-accent' : 'text-rail-ink/60'} />
                       <span className="hidden md:inline">{item.label}</span>

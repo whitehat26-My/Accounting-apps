@@ -1,6 +1,24 @@
 import type { Metadata, Viewport } from 'next';
 import type { ReactNode } from 'react';
-import { GeistSans } from 'geist/font/sans';
+/**
+ * Plus Jakarta Sans — geometric, more character than Inter, still unambiguous
+ * at the 13px the nav runs at.
+ *
+ * FROM A PACKAGE, NOT `next/font/google`, AND THAT IS A DEPLOYMENT DECISION.
+ * `next/font/google` downloads the font at BUILD time, which would make
+ * `docker compose up -d --build` — the upgrade command run on a shop PC —
+ * depend on reaching Google's servers. A shop with flaky internet would get a
+ * failed build and no obvious reason why. `@fontsource-variable` is an ordinary
+ * dependency already in node_modules, so the build works offline and the font
+ * is self-hosted (nothing about a customer is sent to Google when a till loads).
+ *
+ * WHAT MUST NOT BE LOST: `globals.css` sets `font-variant-numeric: tabular-nums`
+ * globally, and that is the only reason ringgit columns line up down a page.
+ * This face ships tabular figures so the rule still bites — but every money
+ * table has to be LOOKED AT after this change, because a font with proportional
+ * figures would unalign every report and no test would fail.
+ */
+import '@fontsource-variable/plus-jakarta-sans';
 import './globals.css';
 import { Providers } from './providers';
 import { APP_NAME, BRAND_MARK, appNameParts } from '@/lib/brand';
@@ -110,7 +128,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     // `suppressHydrationWarning`: the script above adds a class to <html>
     // before React sees it, so the server and client markup differ by design.
-    <html lang="en" className={GeistSans.className} suppressHydrationWarning>
+    <html lang="en" className="font-sans" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
       </head>

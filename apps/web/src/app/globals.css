@@ -45,6 +45,29 @@
   --color-line: oklch(89% 0.008 260);
   --color-line-strong: oklch(80% 0.012 260);
 
+  /* -------------------------------------------------------------------------
+   * PRIMARY IS FOR ACTIONS. POSITIVE IS FOR MONEY. THEY ARE NOT THE SAME JOB.
+   *
+   * They used to be. `--positive` painted the profit figures AND the assistant
+   * button AND every primary Button, which is the real reason actions did not
+   * stand out: the thing to press was the same colour as every good number on
+   * the page, so it read as more background rather than as the call to action.
+   * Separating them makes the accent pop by making it RARE.
+   *
+   * Green-up / red-down stays on money, because it is a convention a shop owner
+   * reads without thinking and this is not the place to be original. Anything
+   * you PRESS is indigo; anything you COUNT is green or red.
+   *
+   * 55% is measured, not picked: white text on it is 5.14:1, the same contrast
+   * the green button carried (5.16:1) — a change of hue, not a quiet loss of
+   * legibility. `primary-soft` at 96% carries `primary` as text at 4.54:1.
+   * ---------------------------------------------------------------------- */
+  --color-primary: oklch(55% 0.19 275);
+  --color-primary-soft: oklch(96% 0.03 275);
+  /* What sits ON primary. Named rather than reaching for a white token, so a
+     future primary light enough to need dark text has one place to change. */
+  --color-primary-ink: oklch(100% 0 0);
+
   /* The shop's blue, and the accents money uses. */
   --color-brand: oklch(55% 0.14 245);
   --color-positive: oklch(52% 0.13 155);
@@ -72,8 +95,8 @@
    * that never changes needs colours that never change, and they have to be
    * SAYABLE or every future edit re-litigates it.
    *
-   * `rail-accent` is the night value of `--positive` on purpose: dark chrome
-   * wants the night green whatever the page around it is doing.
+   * `rail-accent` is a night-weight `--primary`: dark chrome wants a lightened
+   * accent whatever the page around it is doing.
    * ---------------------------------------------------------------------- */
   --color-rail: oklch(20% 0.02 260);
   --color-rail-raised: oklch(26% 0.02 260);
@@ -81,7 +104,10 @@
   --color-rail-ink-strong: oklch(97% 0.005 260);
   --color-rail-ink-dim: oklch(68% 0.015 260);
   --color-rail-line: oklch(34% 0.016 260);
-  --color-rail-accent: oklch(78% 0.15 155);
+  /* Follows PRIMARY, not `--positive`. The rail is chrome you navigate, not a
+     figure you read — the selected page is an action's after-image, so it wears
+     the action colour. 72% measures 6.59:1 on the rail. */
+  --color-rail-accent: oklch(72% 0.16 275);
 
   /*
    * The logo plate stays WHITE in both themes, and that is not an oversight.
@@ -108,17 +134,36 @@
  *     from a lighter sheet, because a darker one just looks like a hole.
  * ------------------------------------------------------------------------ */
 .dark {
-  --color-surface: oklch(17.5% 0.015 260);
-  --color-surface-raised: oklch(22.5% 0.018 260);
-  --color-surface-sunken: oklch(14% 0.014 260);
+  /*
+   * STEPPED, AND THE STEP IS MEASURED.
+   *
+   * A drop shadow does almost nothing on near-black — black on black is not a
+   * shadow, it is the same colour. Elevation at night comes from the sheet
+   * being LIGHTER than the page, plus a border light enough to see.
+   *
+   * The page/card step was 17.5% -> 22.5%, which measures 1.11:1: below the
+   * ~1.15:1 where a step reads as elevation rather than as a rendering
+   * artefact. Page 14%, card 22% measures 1.15:1 — cards now sit ON the page
+   * instead of in it, and the page is genuinely the darkest thing on screen.
+   */
+  --color-surface: oklch(14% 0.015 260);
+  --color-surface-raised: oklch(22% 0.018 260);
+  --color-surface-sunken: oklch(10.5% 0.012 260);
 
   --color-ink: oklch(96% 0.005 260);
   --color-ink-muted: oklch(72% 0.015 260);
   /* Same measurement, the other way up: 58% gave 3.99:1 on the night card. */
   --color-ink-faint: oklch(61% 0.015 260);
 
-  --color-line: oklch(30% 0.015 260);
-  --color-line-strong: oklch(40% 0.018 260);
+  /* 30% measured 1.28:1 against the card — present, but not visible. 33%
+     measures 1.43:1, the quiet edge that does the elevating. */
+  --color-line: oklch(33% 0.015 260);
+  --color-line-strong: oklch(42% 0.018 260);
+
+  --color-primary: oklch(72% 0.16 275);
+  --color-primary-soft: oklch(26% 0.05 275);
+  /* Dark text on a light indigo, the inverse of the day pairing. */
+  --color-primary-ink: oklch(17% 0.02 275);
 
   --color-brand: oklch(72% 0.13 245);
   --color-positive: oklch(78% 0.15 155);
@@ -146,6 +191,10 @@
  * `.dark` override never reaches the utility.
  */
 @theme inline {
+  /* The face loaded by `@fontsource-variable/plus-jakarta-sans` in layout.tsx.
+     Named here so `font-sans` is the only way anything asks for it. */
+  --font-sans: 'Plus Jakarta Sans Variable', ui-sans-serif, system-ui, sans-serif;
+
   --color-surface: var(--color-surface);
   --color-surface-raised: var(--color-surface-raised);
   --color-surface-sunken: var(--color-surface-sunken);
@@ -154,6 +203,9 @@
   --color-ink-faint: var(--color-ink-faint);
   --color-line: var(--color-line);
   --color-line-strong: var(--color-line-strong);
+  --color-primary: var(--color-primary);
+  --color-primary-soft: var(--color-primary-soft);
+  --color-primary-ink: var(--color-primary-ink);
   --color-brand: var(--color-brand);
   --color-positive: var(--color-positive);
   --color-positive-soft: var(--color-positive-soft);

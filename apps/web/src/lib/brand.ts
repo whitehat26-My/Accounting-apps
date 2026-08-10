@@ -30,7 +30,7 @@
  * is how the old bug survived: it looked correct to the only people who could
  * have noticed it was wrong.
  */
-export const APP_NAME = process.env['NEXT_PUBLIC_APP_NAME'] ?? 'Emil Books';
+export const APP_NAME = process.env['NEXT_PUBLIC_APP_NAME'] ?? 'Emil Accounting Pro';
 
 /**
  * Split a name on its em-dash into the two lines the sign-in panel and the

@@ -289,7 +289,7 @@ export function Assistant() {
       <button
         aria-label="Open assistant"
         onClick={() => setOpen(true)}
-        className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-positive p-3 text-surface-raised shadow-lg shadow-positive/30 transition-transform hover:scale-105"
+        className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary p-3 text-primary-ink shadow-lg shadow-primary/40 transition-transform hover:scale-105"
       >
         <SparkleIcon />
       </button>
@@ -359,7 +359,7 @@ export function Assistant() {
               <button
                 key={prompt}
                 onClick={() => void send(prompt)}
-                className="rounded-full bg-surface-raised px-3 py-1.5 text-xs text-ink-muted ring-1 ring-inset ring-line-strong transition-colors hover:bg-positive-soft hover:text-positive hover:ring-positive/40"
+                className="rounded-full bg-surface-raised px-3 py-1.5 text-xs text-ink-muted ring-1 ring-inset ring-line-strong transition-colors hover:bg-primary-soft hover:text-primary hover:ring-primary/40"
               >
                 {prompt}
               </button>
@@ -372,7 +372,7 @@ export function Assistant() {
             <div
               className={
                 entry.role === 'user'
-                  ? 'ml-8 rounded-2xl rounded-br-md bg-positive px-3.5 py-2 text-sm text-surface-raised'
+                  ? 'ml-8 rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-sm text-primary-ink'
                   : 'mr-4 whitespace-pre-wrap rounded-2xl rounded-bl-md bg-surface-sunken px-3.5 py-2 text-sm text-ink'
               }
             >
@@ -422,13 +422,13 @@ export function Assistant() {
           value={input}
           onChange={(e) => setInput(e.target.value)}
           placeholder='Ask, or say "add item…", "invoice…"'
-          className="min-w-0 flex-1 rounded-full bg-surface-sunken px-4 py-2 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-positive"
+          className="min-w-0 flex-1 rounded-full bg-surface-sunken px-4 py-2 text-sm text-ink placeholder:text-ink-faint focus:outline-none focus:ring-2 focus:ring-primary"
         />
         <button
           type="submit"
           disabled={busy || input.trim().length === 0}
           aria-label="Send"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-positive text-surface-raised transition-[filter] hover:brightness-110 disabled:bg-line-strong"
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-primary text-primary-ink transition-[filter] hover:brightness-110 disabled:bg-line-strong"
         >
           <svg viewBox="0 0 16 16" className="h-4 w-4" aria-hidden="true">
             <path d="M2.5 8h10M9 4.5 13 8l-4 3.5" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />

@@ -126,7 +126,7 @@ services:
         #
         # A build arg, not an environment entry: Next inlines NEXT_PUBLIC_* at
         # build time. Changing it therefore needs `up -d --build`.
-        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Emil Books}
+        NEXT_PUBLIC_APP_NAME: ${NEXT_PUBLIC_APP_NAME:-Emil Accounting Pro}
         # The public half of DOCUMENT_SIGNING_KEY above, compiled into the
         # verify page so a customer's phone can check a printed QR with no
         # server involved. Not a secret — published on purpose. A build arg
