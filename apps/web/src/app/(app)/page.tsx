@@ -384,11 +384,28 @@ function Stat({
 function Sparkline({ points }: { points: number[] }) {
   const min = Math.min(...points);
   const max = Math.max(...points);
-  const span = max - min || 1;
-  const step = 100 / (points.length - 1);
 
-  const xy = points.map((v, i) => `${i * step},${28 - ((v - min) / span) * 24}`);
-  const line = `M${xy.join(' L')}`;
+  /*
+   * Nothing has happened yet, so draw nothing.
+   *
+   * All-zero days are a real answer and a flat line pinned to the floor is not
+   * how to give it: it vanishes into the bottom edge, and the only thing left
+   * on screen is whatever single day was not zero — which then reads as a
+   * decorative arrow floating beside the figure rather than as a chart. Found
+   * by looking at it, not by reading the code: the maths was right and the
+   * result was misleading.
+   */
+  if (max <= 0) return null;
+
+  /*
+   * The baseline sits ABOVE the floor (26, not 28) so a quiet day is still a
+   * visible line. A chart whose zero is invisible only ever shows its spikes.
+   */
+  const span = max - min || max;
+  const step = 100 / (points.length - 1);
+  const y = (v: number) => 26 - ((v - min) / span) * 20;
+
+  const line = `M${points.map((v, i) => `${i * step},${y(v)}`).join(' L')}`;
   const area = `${line} L100,28 L0,28 Z`;
 
   return (
@@ -396,10 +413,17 @@ function Sparkline({ points }: { points: number[] }) {
       aria-hidden="true"
       viewBox="0 0 100 28"
       preserveAspectRatio="none"
-      className="pointer-events-none absolute inset-x-0 bottom-0 h-12 w-full"
+      className="pointer-events-none absolute inset-x-0 bottom-0 h-10 w-full"
     >
-      <path d={area} className="fill-primary" opacity={0.09} />
-      <path d={line} fill="none" strokeWidth={1.5} className="stroke-primary" opacity={0.5} />
+      <path d={area} className="fill-primary" opacity={0.08} />
+      <path
+        d={line}
+        fill="none"
+        strokeWidth={1.25}
+        strokeLinejoin="round"
+        className="stroke-primary"
+        opacity={0.35}
+      />
     </svg>
   );
 }

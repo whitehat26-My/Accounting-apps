@@ -176,7 +176,19 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               ) : null}
               <div className="space-y-0.5">
                 {section.items.map((item) => {
-                  const active = pathname === item.href;
+                  /*
+                   * Compare with trailing slashes stripped from BOTH sides.
+                   *
+                   * The static export sets `trailingSlash: true`, so the
+                   * browser's pathname is `/pos/` while this list declares
+                   * `/pos` — and a strict equality made every screen except
+                   * Today (whose href is already `/`) look unvisited. The nav
+                   * silently stopped saying where you were on the ONE build
+                   * that ships to Netlify. Found by screenshotting the POS and
+                   * noticing nothing was lit, which no test was watching for.
+                   */
+                  const here = pathname.replace(/\/+$/, '') || '/';
+                  const active = here === item.href;
                   return (
                     <Link
                       key={item.href}
