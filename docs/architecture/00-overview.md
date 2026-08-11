@@ -41,6 +41,7 @@ Everything in this specification follows from treating those five rows as first-
 | [`05-malaysia-localization.md`](05-malaysia-localization.md) | MyInvois, SST, payment rails, statutory reporting, bank formats |
 | [`06-data-model.md`](06-data-model.md) | Reference schema for the ledger core, with DDL sketches |
 | [`07-prompt-engineering-guidelines.md`](07-prompt-engineering-guidelines.md) | Meta-prompts for building these modules with Claude |
+| [`08-reading-from-python.md`](08-reading-from-python.md) | How the tables map out for a second service reading this same database — RLS, types, what must never be written |
 
 ## 4. MVP scope boundary
 

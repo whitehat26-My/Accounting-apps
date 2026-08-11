@@ -103,6 +103,36 @@ lifecycle status and are not touched, because a credit note does not "reverse" a
 the ledger sense — it is a document in its own right with its own number and its own tax
 point.
 
+### 2.4 `journal_entry.description` is mutable after posting — tamper-EVIDENT, not tamper-PROOF
+
+Found while verifying `docs/architecture/08-reading-from-python.md` against a live database
+rather than against the migration files. `UPDATE journal_entry SET description = …` on 84
+posted entries succeeded.
+
+**What is actually guaranteed**, tested rather than assumed:
+
+- `journal_line` is absolutely immutable once its entry is POSTED or REVERSED —
+  `forbid_posted_line_mutation` refuses every `UPDATE` and `DELETE` without inspecting
+  columns. Every amount is beyond reach. **This is the part that matters and it holds.**
+- `journal_entry` refuses `DELETE`, refuses any status change out of POSTED/REVERSED, and
+  freezes `entry_no`, `entry_date`, `fiscal_period_id`, `tenant_id`, `source_module`,
+  `posted_at`.
+- `forbid_posted_mutation` names those six columns explicitly, so everything else on the
+  header — `description` above all — is not covered.
+
+The change is not silent: `trg_audit_journal_entry` writes before and after into `audit_log`,
+which is append-only and hash-chained, so rewriting a narration leaves a record that cannot
+itself be removed. Verified: the audit row showed
+`"Bill BILL-00001 (LEN-8842)" → "tampered"`.
+
+**Not fixed here, deliberately.** Adding `description` to the frozen list is a one-line
+migration, but it is a change to a ledger invariant, and the question of whether a posted
+entry's narration should be correctable at all — a typo in a description misleads an auditor
+too — is a decision for the shop, not a detail to settle inside a documentation task. The
+unblocker is that decision. If the answer is "freeze it", the change is a new migration
+extending `forbid_posted_mutation`, plus a check that nothing in year-end close or
+`reversePostedEntry()` updates a posted header today.
+
 ---
 
 ## 3. BLOCKED — ON EXTERNAL
