@@ -133,6 +133,38 @@ unblocker is that decision. If the answer is "freeze it", the change is a new mi
 extending `forbid_posted_mutation`, plus a check that nothing in year-end close or
 `reversePostedEntry()` updates a posted header today.
 
+### 2.5 API pen-test — three findings deliberately NOT code-fixed
+
+The API penetration test (`docs/security/API-PENTEST-PLAN.md`, harness
+`scripts/security/pentest-poc.mjs`) fixed all three genuine `VULN`s in migration `0052` +
+guard/service/config changes (PE-5 token revocation, PT-3 revenue-account-type guard, AI-2
+forced audit attribution) and closed the AI-5 `TRUST_PROXY` foot-gun and the AI-6
+organisation-DELETE gap. Three residual items are decided-and-scoped rather than shipped,
+each for a reason:
+
+- **PT-7 — idempotency is presence-only, by design.** `idempotency.interceptor.ts` argues,
+  correctly, against a second source of truth for a financial write, and the DB's per-table
+  `UNIQUE (tenant_id, idempotency_key)` already makes every write `SAFE` against
+  double-posting. The residual is only that a key reused with a *different* body silently
+  returns the original instead of a `409`. The unblocker, if that silence ever matters, is a
+  small `idempotency_key` table holding a request fingerprint, checked in the interceptor —
+  additive, so losing it degrades to today's presence-only behaviour rather than to a wrong
+  answer. Not bolted on now because it contradicts a deliberate architectural decision for a
+  low-severity gap.
+
+- **AI-4 — `request_id`/`user_agent` in the audit log are client-influenced.** They are
+  correlation fields sourced from request headers by nature. `actor_user_id` — the
+  accountable party — is now unforgeable (AI-2 forces it from the session in
+  `audit_log_chain`). The unblocker, if forensics ever needs a trustworthy correlation id, is
+  a separate server-generated field; the fix is not to pretend a client header is trusted.
+
+- **AI-6 (identity events) — password / lockout / session changes are unaudited.**
+  `app_user` and `user_session` are tenant-less, so they fall outside the generic
+  `tenant_id`-keyed audit trigger, and the audit log they would write to is itself
+  tenant-scoped. Auditing them needs a dedicated security-event log with its own hash chain —
+  a real feature, not a trigger tweak. The organisation-DELETE half of AI-6 IS fixed (a
+  `BEFORE DELETE` refusal in `0052`); this half is the unblocker's scope.
+
 ---
 
 ## 3. BLOCKED — ON EXTERNAL

@@ -16,6 +16,7 @@ import {
   registerUser,
   resolveApiKey,
   revokeSession,
+  sessionIsActive,
   verifyPassword,
   hashPassword,
 } from '../src/identity.js';
@@ -275,6 +276,36 @@ describe('refresh token rotation', () => {
   it('rejects a token nobody issued without revoking anything', async () => {
     const { token } = mintToken();
     expect(await refresh(token)).toMatchObject({ ok: false, code: 'SESSION_INVALID' });
+  });
+
+  // Pen-test PE-5: the 15-minute access token carries a `sessionId`, and the
+  // guard now asks `session_is_active` about it on every request — so revoking a
+  // session takes its access token down immediately instead of at expiry. The
+  // subtlety is that a NORMAL rotation must NOT do that.
+  describe('access-token revocation (session_is_active)', () => {
+    const active = (sessionId: string) => withUser(sql, null, (tx) => sessionIsActive(tx, sessionId));
+
+    it('is live for a live session and dies the instant it is revoked', async () => {
+      const { session } = await loggedIn();
+      expect(await active(session.sessionId)).toBe(true);
+
+      await withUser(sql, null, (tx) => revokeSession(tx, session.sessionId));
+      expect(await active(session.sessionId)).toBe(false);
+    });
+
+    it('survives a routine refresh — a rotation must not log you out', async () => {
+      const { session } = await loggedIn();
+      const rotated = await refresh(session.refreshToken);
+      expect(rotated.ok).toBe(true);
+      // Rotation set `rotated_to_id`, never `revoked_at`, so an access token
+      // minted before the refresh still names a live session.
+      expect(await active(session.sessionId)).toBe(true);
+    });
+
+    it('is false for a session id nobody issued (fails closed)', async () => {
+      expect(await active(randomUUID())).toBe(false);
+      expect(await active('not-a-uuid')).toBe(false);
+    });
   });
 
   it('rejects a revoked session', async () => {

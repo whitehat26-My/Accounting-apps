@@ -115,7 +115,8 @@ export class InvoiceError extends Error {
       | 'DOCUMENT_INVALID'
       | 'NO_EXCHANGE_RATE'
       | 'JOURNAL_INVALID'
-      | 'LINE_INCOMPLETE',
+      | 'LINE_INCOMPLETE'
+      | 'LINE_ACCOUNT_TYPE',
     message: string,
     readonly detail?: unknown,
   ) {
@@ -736,5 +737,55 @@ async function settleLines(
     });
   }
 
+  await assertRevenueAccounts(tx, ctx, settled);
   return settled;
+}
+
+/**
+ * A sale's revenue must land in an INCOME account.
+ *
+ * ---------------------------------------------------------------------------
+ * WHAT THIS CLOSES.
+ *
+ * The line's `accountId` is client-supplied, and until here nothing checked
+ * WHAT KIND of account it named — only that it existed (the composite FK). So a
+ * sale could credit its revenue to an asset, a bank account, or equity, and the
+ * ledger balanced and was silently wrong: income understated, some other
+ * account overstated, in a way no report would flag because the books still
+ * add up. A line with no `itemId` made this a one-request move — no item
+ * defaults to fall back on, just the account the caller chose.
+ *
+ * The item's own `sale_account_id` is always an INCOME account, so this never
+ * bites the item path; it bites the path where the caller names the account
+ * directly. Cost of goods and inventory relief post their own lines through
+ * `LedgerService`, not through `invoice_line`, so this is purely the revenue
+ * side. The FK guarantees each id resolves, so a missing type means the
+ * account is not this tenant's — reported the same way.
+ * ---------------------------------------------------------------------------
+ */
+async function assertRevenueAccounts(
+  tx: Tx,
+  ctx: TenantContext,
+  settled: readonly SettledLine[],
+): Promise<void> {
+  const accountIds = [...new Set(settled.map((line) => line.accountId))];
+  const rows = await tx<{ id: string; type: string }[]>`
+      SELECT id, type
+        FROM account
+       WHERE tenant_id = ${ctx.tenantId}
+         AND id = ANY(${accountIds}::uuid[])
+  `;
+  const typeById = new Map(rows.map((row) => [row.id, row.type]));
+
+  settled.forEach((line, index) => {
+    const type = typeById.get(line.accountId);
+    if (type !== 'INCOME') {
+      throw new InvoiceError(
+        'LINE_ACCOUNT_TYPE',
+        `Line ${index + 1} posts revenue to ${
+          type === undefined ? 'an account that does not belong to this organisation' : `a ${type} account`
+        }. A sale's revenue must go to an INCOME account.`,
+      );
+    }
+  });
 }

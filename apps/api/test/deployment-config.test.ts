@@ -355,3 +355,38 @@ describe('SIGNUP_MODE', () => {
     expect(loadConfig({ ...base, SIGNUP_MODE: 'open' }).signupMode).toBe('open');
   });
 });
+
+describe('TRUST_PROXY (pen-test AI-5)', () => {
+  const base = {
+    DATABASE_URL: 'postgres://x@localhost/x',
+    JWT_SECRET: 'a-secret-that-is-at-least-32-characters',
+  };
+
+  it('trusts nothing when unset — the real socket, which a client cannot spoof', () => {
+    expect(loadConfig(base).trustProxy).toBe(false);
+    expect(loadConfig({ ...base, TRUST_PROXY: '' }).trustProxy).toBe(false);
+    expect(loadConfig({ ...base, TRUST_PROXY: 'false' }).trustProxy).toBe(false);
+  });
+
+  it('takes a hop count or a CIDR — the real client without trusting a header', () => {
+    expect(loadConfig({ ...base, TRUST_PROXY: '2' }).trustProxy).toBe(2);
+    expect(loadConfig({ ...base, TRUST_PROXY: '10.0.0.0/8' }).trustProxy).toBe('10.0.0.0/8');
+  });
+
+  it('allows a bare true OUTSIDE production, where tests need it', () => {
+    expect(loadConfig({ ...base, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
+  });
+
+  it('REFUSES a bare true in production — it forges actor_ip and defeats the limiter', () => {
+    // A bare `true` trusts every hop, so X-Forwarded-For becomes client-controlled.
+    // In production that is a rate-limit bypass and a forged audit actor_ip, so
+    // loadConfig must refuse it and demand a hop count or CIDR instead.
+    expect(() => loadConfig({ ...base, NODE_ENV: 'production', TRUST_PROXY: 'true' })).toThrow(
+      /TRUST_PROXY/,
+    );
+    // A hop count is the correct production setting and must still be accepted.
+    expect(
+      loadConfig({ ...base, NODE_ENV: 'production', TRUST_PROXY: '2' }).trustProxy,
+    ).toBe(2);
+  });
+});

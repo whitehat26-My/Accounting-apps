@@ -3,7 +3,14 @@ import { Reflector } from '@nestjs/core';
 import type { FastifyRequest } from 'fastify';
 import { jwtVerify } from 'jose';
 import { checkClaims, type Permission } from '@emil/domain';
-import { principalFor, resolveApiKey, withTenant, withUser, type Sql } from '@emil/db';
+import {
+  principalFor,
+  resolveApiKey,
+  sessionIsActive,
+  withTenant,
+  withUser,
+  type Sql,
+} from '@emil/db';
 import { CONFIG, SQL } from '../tokens.js';
 import type { ApiConfig } from '../config.js';
 import { contextOf } from '../context/request-context.js';
@@ -132,9 +139,19 @@ export class AuthGuard implements CanActivate {
     }
 
     const userId = claims['sub'] as string;
-    return withTenant(this.sql, { tenantId, userId }, (tx) =>
-      principalFor(tx, userId, tenantId),
-    );
+    const sessionId = claims['sessionId'] as string;
+    return withTenant(this.sql, { tenantId, userId }, async (tx) => {
+      // The token's signature and expiry are not enough: a token can be signed,
+      // unexpired, and belong to a session that was signed out or revoked for
+      // reuse. Checking it here — in the transaction already opened to resolve
+      // the principal, so it costs no extra round-trip — is what makes logout
+      // take effect immediately instead of at the 15-minute expiry. Same 401 as
+      // any other credential failure, so a revoked session is not an oracle.
+      if (!(await sessionIsActive(tx, sessionId))) {
+        throw new UnauthenticatedError('Invalid or expired token');
+      }
+      return principalFor(tx, userId, tenantId);
+    });
   }
 
   private async fromApiKey(presented: string, tenantId: string) {

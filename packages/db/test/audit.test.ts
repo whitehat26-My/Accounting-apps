@@ -148,6 +148,17 @@ describe('audit coverage', () => {
 
     expect(row).toMatchObject({ insert: true, update: true, delete: true });
   });
+
+  // Pen-test AI-6: an organisation DELETE would leave no audit trail — the audit
+  // row it should write references the very organisation being removed. Rather
+  // than a trigger that always errors, deletion is refused outright, the way the
+  // ledger refuses to delete a posted entry. Runs as the owner, whom the trigger
+  // still binds.
+  it('refuses to delete an organisation outright', async () => {
+    await expect(
+      admin`DELETE FROM organisation WHERE id = ${ctx.tenantId}`,
+    ).rejects.toThrow(/not deleted/i);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -188,6 +199,40 @@ describe('what the trigger records', () => {
       request_id: requestId,
       action: 'CREATE',
     });
+  });
+
+  // Pen-test AI-2: emil_app holds INSERT on audit_log (the generic trigger needs
+  // it), so a hand-written INSERT — the shape an SQL-injection foothold would use
+  // — is accepted and chains cleanly. What it must NOT be able to do is name an
+  // actor of the attacker's choosing: audit_log_chain now derives the actor
+  // columns from the session context and discards whatever the INSERT supplied.
+  it('discards a forged actor on a directly-inserted row, keeping attribution honest', async () => {
+    const forgedActor = randomUUID();
+    const marker = randomUUID();
+
+    const [inserted] = await withTenant(sql, { ...ctx, requestId: 'authentic-request' }, (tx) =>
+      tx<{ id: string }[]>`
+        INSERT INTO audit_log
+            (tenant_id, actor_user_id, action, entity_type, entity_id, after_json, row_hash)
+        VALUES
+            (${ctx.tenantId}, ${forgedActor}, 'CREATE', 'invoice', ${marker}, '{"forged":true}'::jsonb, ''::bytea)
+        RETURNING id`,
+    );
+
+    const [row] = await admin<{ actor_user_id: string; request_id: string }[]>`
+        SELECT actor_user_id::text, request_id FROM audit_log WHERE id = ${inserted!.id}
+    `;
+
+    // The forged actor was thrown away; attribution is whoever's authenticated
+    // transaction actually ran the insert.
+    expect(row!.actor_user_id).toBe(ctx.userId);
+    expect(row!.actor_user_id).not.toBe(forgedActor);
+    expect(row!.request_id).toBe('authentic-request');
+
+    // And the forced row is hashed consistently, so the chain still verifies —
+    // the fix hardens attribution without breaking the chain.
+    const result = await withTenant(sql, ctx, (tx) => verifyAuditChain(tx, ctx));
+    expect(result.intact).toBe(true);
   });
 
   it('records the before image on an update, which no hand-written row did', async () => {

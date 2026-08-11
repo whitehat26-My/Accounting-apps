@@ -122,6 +122,33 @@ describe('issuing an invoice', () => {
     expect(second.id).toBe(first.id);
     expect(second.invoiceNo).toBe(first.invoiceNo);
   });
+
+  // Pen-test PT-3: the line's accountId is client-supplied, and a sale's revenue
+  // must land in an INCOME account. Crediting an asset balances the ledger and
+  // is silently wrong — income understated, an asset overstated — so it is
+  // refused rather than posted.
+  it('refuses a revenue line posted to a non-INCOME account', async () => {
+    const toAsset = invoiceInput({
+      lines: [
+        {
+          description: 'Revenue smuggled onto an asset account',
+          quantity: '1',
+          unitPrice: '500.00',
+          accountId: tenant.accounts['1300']!, // Inventory on Hand — ASSET
+          taxCodeId: tenant.taxCodes['SST-SVC']!,
+        },
+      ],
+    });
+
+    await expect(withTenant(sql, ctx(), (tx) => issueInvoice(tx, ctx(), toAsset))).rejects.toThrow(
+      /INCOME account/,
+    );
+  });
+
+  it('still accepts a revenue line on a genuine INCOME account', async () => {
+    const ok = await withTenant(sql, ctx(), (tx) => issueInvoice(tx, ctx(), invoiceInput()));
+    expect(ok.id).toBeTruthy();
+  });
 });
 
 describe('effective-dated rates reach all the way through', () => {

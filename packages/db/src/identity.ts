@@ -407,6 +407,26 @@ export async function revokeSession(tx: Tx, sessionId: string, reason = 'Signed 
 }
 
 /**
+ * Is the session behind an access token still live?
+ *
+ * The `sessionId` claim inside a 15-minute access token is verified here against
+ * the session table so that revoking a session — sign-out, refresh-token reuse,
+ * the 90-day family ceiling — takes the token down on its NEXT request rather
+ * than letting it run to expiry. See migration 0052 for why `revoked_at`, not
+ * `rotated_to_id`, is the test: a routine refresh rotates a session without
+ * revoking it, and an access token minted just before that must stay valid.
+ *
+ * A malformed session id resolves to `false` (fail closed) rather than raising.
+ */
+export async function sessionIsActive(tx: Tx, sessionId: string): Promise<boolean> {
+  if (!/^[0-9a-fA-F-]{36}$/.test(sessionId)) return false;
+  const [row] = await tx<{ session_is_active: boolean }[]>`
+      SELECT session_is_active(${sessionId}::uuid)
+  `;
+  return row?.session_is_active === true;
+}
+
+/**
  * Sign out — by presenting the refresh token, which is proof of ownership.
  *
  * ---------------------------------------------------------------------------

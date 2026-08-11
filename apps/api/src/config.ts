@@ -196,6 +196,21 @@ const schema = z.object({
       'model with canned test replies while still reporting the assistant as ' +
       'configured, which misleads every person who asks it a question.',
     path: ['enableFakeAssistant'],
+  })
+  .refine((c) => !(c.trustProxy === true && c.nodeEnv === 'production'), {
+    // A bare `true` trusts EVERY hop, so `request.ip` becomes the left-most
+    // `X-Forwarded-For` — whatever the client typed. That value keys the rate
+    // limiter and is written to the audit log as `actor_ip`, so a bare `true`
+    // in production hands an attacker both a rate-limit bypass and a forged
+    // "from where" on the audit trail (pen-test AI-5). A hop count or a CIDR
+    // gets the real client address without trusting a client-injected header;
+    // `true` is left usable only outside production, for tests that need it.
+    message:
+      'TRUST_PROXY=true must never be set in production: it trusts every hop, so ' +
+      'X-Forwarded-For becomes client-controlled — forging actor_ip and defeating ' +
+      'the rate limiter. Set it to the exact number of proxy hops in front of the ' +
+      'API (the bundled Caddy + web is 2) or to the proxy CIDR instead.',
+    path: ['trustProxy'],
   });
 
 export type ApiConfig = z.infer<typeof schema>;
