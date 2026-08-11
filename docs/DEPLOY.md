@@ -14,6 +14,14 @@ itself needs an account only the owner can create.
 > The compose file, the secrets and the commands are identical — only the
 > surrounding explanation differs.
 
+> **Need the till to keep selling when the ISP dies, and the owner to watch from
+> home?** [`HYBRID-SHOP-DEPLOYMENT.md`](HYBRID-SHOP-DEPLOYMENT.md) is that
+> deployment end to end: LAN binding and a static shop address that needs no DNS,
+> Tailscale for private remote access (with the `TRUST_PROXY` setting Serve
+> forces you to get right), the checklist of everything that must not reach for
+> the internet mid-sale, and why local→cloud sync belongs in the outbox rather
+> than in BullMQ.
+
 ## The one constraint that picks your host
 
 **Migrations must run as a role with SUPERUSER or BYPASSRLS.** Migration `0021`
