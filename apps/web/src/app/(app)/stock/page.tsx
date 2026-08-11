@@ -63,9 +63,9 @@ export default function StockPage() {
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold tracking-tight text-ink">Stock</h1>
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid gap-4 lg:grid-cols-2">
         <Card title="On hand">
-          <table className="w-full text-sm">
+          <table className="min-w-[24rem] w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-2">Item</th>
@@ -103,7 +103,7 @@ export default function StockPage() {
 
         <Card title={selected ? `Movements — ${selected.code}` : 'Movements'}>
           {selected ? (
-            <table className="w-full text-sm">
+            <table className="min-w-[30rem] w-full text-sm">
               <tbody>
                 {(movements.data?.movements ?? []).map((m) => (
                   <tr key={m.id} className="border-t border-line">
@@ -234,7 +234,7 @@ function AgeingCard() {
 
   return (
     <Card title="What is sitting — oldest silence first">
-      <table className="w-full text-sm">
+      <table className="min-w-[36rem] w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-ink-muted">
             <th className="pb-2">Item</th>
@@ -353,7 +353,7 @@ function PromisesCard() {
         ) : null}
         .
       </p>
-      <table className="w-full text-sm">
+      <table className="min-w-[48rem] w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-ink-muted">
             <th className="pb-2">Serial</th>

@@ -81,7 +81,7 @@ export default function TeamPage() {
 
       <Card title="Who has access">
         {members.data ? (
-          <table className="w-full text-sm">
+          <table className="min-w-[24rem] w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-2">Name</th>

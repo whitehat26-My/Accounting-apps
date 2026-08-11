@@ -181,7 +181,7 @@ function RepairDetail() {
 
       {j.lines.length > 0 ? (
         <Card title="Quote — agreed prices">
-          <table className="w-full text-sm">
+          <table className="min-w-[19rem] w-full text-sm">
             <tbody>
               {j.lines.map((line) => (
                 <tr key={line.lineNo} className="border-t border-line">

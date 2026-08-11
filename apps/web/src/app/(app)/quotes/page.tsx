@@ -150,7 +150,7 @@ export default function QuotesPage() {
 
       {closed.length > 0 ? (
         <Card title="Finished">
-          <table className="w-full text-sm">
+          <table className="min-w-[30rem] w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-2">Quote</th>

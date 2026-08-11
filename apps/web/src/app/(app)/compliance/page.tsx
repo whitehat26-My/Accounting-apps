@@ -127,7 +127,7 @@ export default function CompliancePage() {
 
       {[...groups.entries()].map(([month, entries]) => (
         <Card key={month} title={monthTitle(month)}>
-          <table className="w-full text-sm">
+          <table className="min-w-[24rem] w-full text-sm">
             <tbody>
               {entries.map((entry) => {
                 const style = STATUS_STYLE[entry.status];

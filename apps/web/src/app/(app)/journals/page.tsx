@@ -302,7 +302,7 @@ export default function JournalsPage() {
                     {entry.reversalOfId ? <Badge status="REVERSAL" /> : null}
                     <span className="font-medium">{rm(entry.totalDebit)}</span>
                   </summary>
-                  <table className="w-full border-t border-line text-sm">
+                  <table className="min-w-[24rem] w-full border-t border-line text-sm">
                     <tbody>
                       {entry.lines.map((line, i) => (
                         <tr key={i} className="border-t border-line">

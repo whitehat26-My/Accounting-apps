@@ -839,7 +839,7 @@ function RulesCard({
     <Card title="Rules — teach it your recurring lines">
       <div className="space-y-3">
         {rules.data && rules.data.rules.length > 0 ? (
-          <table className="w-full text-sm">
+          <table className="min-w-[30rem] w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-1">If it contains</th>

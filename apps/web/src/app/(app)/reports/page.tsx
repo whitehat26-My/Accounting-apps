@@ -133,7 +133,7 @@ export default function ReportsPage() {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Reports</h1>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-3">
           <Field label="From">
             <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
           </Field>
@@ -229,7 +229,7 @@ export default function ReportsPage() {
       <Card title="Margin by item — worst first">
         {margins.data && margins.data.rows.length > 0 ? (
           <>
-            <table className="w-full text-sm">
+            <table className="min-w-[36rem] w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
                   <Th>Item</Th>
@@ -372,7 +372,7 @@ export default function ReportsPage() {
         <Card title="Changes in equity">
           {equity.data ? (
             <div className="overflow-x-auto text-sm">
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-2 text-right text-xs font-semibold uppercase tracking-wider text-ink-faint">
+              <div className="grid min-w-[32rem] grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-2 text-right text-xs font-semibold uppercase tracking-wider text-ink-faint">
                 <span className="text-left">Component</span>
                 <span>Opening</span>
                 <span>Movement</span>
@@ -381,7 +381,7 @@ export default function ReportsPage() {
               {equity.data.components.map((component) => (
                 <div
                   key={component.key}
-                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-2.5 text-right"
+                  className="grid min-w-[32rem] grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-2.5 text-right"
                 >
                   <span className="text-left">{component.label}</span>
                   <span className="whitespace-nowrap">{rm(component.opening)}</span>
@@ -391,7 +391,7 @@ export default function ReportsPage() {
                   <span className="whitespace-nowrap">{rm(component.closing)}</span>
                 </div>
               ))}
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t-2 border-line-strong py-3 text-right font-semibold">
+              <div className="grid min-w-[32rem] grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t-2 border-line-strong py-3 text-right font-semibold">
                 <span className="text-left">Total equity</span>
                 <span className="whitespace-nowrap">{rm(equity.data.openingEquity)}</span>
                 <span />
@@ -421,7 +421,7 @@ export default function ReportsPage() {
       >
         {tb.data ? (
           <div>
-            <table className="w-full text-sm">
+            <table className="min-w-[24rem] w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
                   <Th>Code</Th>
@@ -694,7 +694,7 @@ function TimeMachineCard({
         ) : diff.data ? (
           <div className="space-y-4">
             <div className="overflow-x-auto text-sm">
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-1 text-right text-xs text-ink-muted">
+              <div className="grid min-w-[32rem] grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-1 text-right text-xs text-ink-muted">
                 <span className="text-left">Account</span>
                 <span>As you read it</span>
                 <span>Now</span>
@@ -703,7 +703,7 @@ function TimeMachineCard({
               {diff.data.changes.map((c) => (
                 <div
                   key={c.accountId}
-                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-2.5 text-right"
+                  className="grid min-w-[32rem] grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-2.5 text-right"
                 >
                   <span className="text-left">
                     <span className="font-mono text-xs text-ink-faint">{c.code}</span> {c.name}

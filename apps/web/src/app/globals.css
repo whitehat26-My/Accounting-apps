@@ -347,6 +347,44 @@ tbody tr:hover {
 }
 
 /* ---------------------------------------------------------------------------
+ * The edge that says a table has more to the side of it.
+ *
+ * On a phone the wide tables scroll inside their card, which solved the
+ * squashing but left a subtler problem: the columns are cut off cleanly at the
+ * card's edge, and a clean cut looks like the end of the table rather than the
+ * middle of it. Somebody checking a cost price would conclude the figure is not
+ * there. Scrolling only helps a person who knows there is somewhere to scroll.
+ *
+ * Four background layers and no JavaScript, which matters because the
+ * alternative is a resize listener on twenty-eight tables:
+ *
+ *   - Two OPAQUE covers in `local` coordinates. They are painted relative to
+ *     the scrolled content, so they slide away with it.
+ *   - Two shadows in `scroll` coordinates, pinned to the box, sitting beneath.
+ *
+ * At rest the left cover hides the left shadow, so only the right one shows:
+ * "there is more that way". Scrolled to the end, the mirror image. Scrolled
+ * halfway, both. And when the table already fits, both covers sit over both
+ * shadows and the cue is INVISIBLE WITHOUT BEING TOLD ANYTHING — which is why
+ * this can go on every card body rather than on the ones somebody remembered.
+ *
+ * `color-mix` against the ink token rather than a literal black: on the dark
+ * theme a black shadow over a near-black card is nothing at all.
+ * ------------------------------------------------------------------------ */
+
+.emil-scroll-cue {
+  background:
+    linear-gradient(to right, var(--color-surface-raised) 55%, transparent) 0 0 / 2rem 100% no-repeat
+      local,
+    linear-gradient(to left, var(--color-surface-raised) 55%, transparent) 100% 0 / 2rem 100%
+      no-repeat local,
+    linear-gradient(to right, color-mix(in oklch, var(--color-ink) 13%, transparent), transparent) 0
+      0 / 1.5rem 100% no-repeat scroll,
+    linear-gradient(to left, color-mix(in oklch, var(--color-ink) 13%, transparent), transparent)
+      100% 0 / 1.5rem 100% no-repeat scroll;
+}
+
+/* ---------------------------------------------------------------------------
  * Skeleton shimmer.
  *
  * A light sweep across the placeholder bars instead of the stock opacity

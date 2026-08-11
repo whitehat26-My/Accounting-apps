@@ -188,8 +188,17 @@ export default function PosPage() {
     }
   }
 
+  /*
+   * STACKED UNTIL THERE IS ROOM FOR TWO COLUMNS.
+   *
+   * The layout was a fixed two-column grid at every width, which on a 390px
+   * phone gave each side under 170px: item names truncated to "HD…" and
+   * "Sams 99…", and "RM 5,200.00" was clipped mid-figure. A price a cashier
+   * cannot read is worse than a longer page. Items come first because you pick
+   * before you pay; the cart follows underneath, where the total lands.
+   */
   return (
-    <div className="grid grid-cols-2 gap-4">
+    <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
       <div className="space-y-3">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Point of sale</h1>
         <Input
@@ -220,7 +229,12 @@ export default function PosPage() {
           value={search}
           onChange={(e) => setSearch(e.target.value)}
         />
-        <div className="grid grid-cols-2 gap-2">
+        {/*
+          Two across on a phone is the tap target, not the layout: a thumb
+          needs the width. Wider screens get more columns because the cards
+          stop being thumb-sized and start being a wall to scan.
+        */}
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-2 xl:grid-cols-3">
           {(items.data ?? []).map((item) => (
             <button
               key={item.id}

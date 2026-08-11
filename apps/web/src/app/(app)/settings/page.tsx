@@ -407,7 +407,7 @@ function PeriodsCard({ canLock }: { canLock: boolean }) {
     <Card title="Periods & year end">
       {periods.data && years.data ? (
         <div className="space-y-4">
-          <table className="w-full text-sm">
+          <table className="min-w-[24rem] w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-1">Period</th>
@@ -649,7 +649,7 @@ function TaxCard({ canAdd }: { canAdd: boolean }) {
     <Card title="Tax codes — every rate cites its law">
       {taxCodes.data ? (
         <div className="space-y-3">
-          <table className="w-full text-sm">
+          <table className="min-w-[30rem] w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-1">Code</th>

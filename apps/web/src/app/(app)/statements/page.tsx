@@ -118,7 +118,7 @@ export default function StatementsPage() {
       <Card title={`Who owes something as at ${displayDate(to)}`}>
         {owing.data ? (
           customers.length > 0 ? (
-            <table className="w-full text-sm">
+            <table className="min-w-[19rem] w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-2">Customer</th>
@@ -163,7 +163,7 @@ export default function StatementsPage() {
             </div>
 
             <div className="overflow-x-auto">
-              <table className="w-full text-sm">
+              <table className="min-w-[36rem] w-full text-sm">
                 <thead>
                   <tr className="text-left text-xs text-ink-muted">
                     <th className="pb-2">Date</th>

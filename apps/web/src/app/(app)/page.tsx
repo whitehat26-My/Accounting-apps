@@ -151,7 +151,16 @@ export default function TodayPage() {
       </div>
 
       {seesTakings ? (
-        <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
+        /*
+          ONE ACROSS ON A PHONE, NOT TWO.
+
+          These were two-up at every width. On a 390px screen that leaves each
+          tile 131px of interior, and the figure inside is `text-3xl
+          font-extrabold` — "RM 12,345.00" wants about 190px. The number a shop
+          owner opens this page to read was the one thing that did not fit.
+          Full width to 640px, two across on a tablet, four on a desk.
+        */
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {/* Raw decimal strings, not rm() — Money formats the resting frame
               itself and counts through changes (a sale rings, Takings rolls). */}
           <Stat
@@ -192,7 +201,7 @@ export default function TodayPage() {
               <span className="text-sm text-ink-muted">In the bank now</span>
               <span className="text-lg font-bold"><Money value={f.openingCash} /></span>
             </div>
-            <table className="w-full text-sm">
+            <table className="min-w-[24rem] w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-1">Horizon</th>
@@ -284,7 +293,7 @@ export default function TodayPage() {
       {seesTakings ? (
       <Card title="Drawer — by payment method">
         {t && t.byMethod.length > 0 ? (
-          <table className="w-full text-sm">
+          <table className="min-w-[24rem] w-full text-sm">
             <tbody>
               {t.byMethod.map((m) => (
                 <tr key={`${m.method}-${m.depositAccount}`} className="border-t border-line">
@@ -500,7 +509,7 @@ function FreeCashCard({ position }: { position: FreeCash }) {
       </div>
 
       {position.held.length > 0 ? (
-        <table className="mt-3 w-full text-sm">
+        <table className="min-w-[19rem] mt-3 w-full text-sm">
           <thead>
             <tr className="text-left text-xs text-ink-muted">
               <th className="pb-1">Not yours</th>

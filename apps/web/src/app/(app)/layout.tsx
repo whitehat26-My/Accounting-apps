@@ -259,7 +259,13 @@ export default function AppLayout({ children }: { children: ReactNode }) {
         blur is invisible and the translucency just looks like a lighter colour.
         Kept very low contrast so it never competes with the cards on top.
       */}
-      <main className="min-w-0 flex-1 bg-surface p-4 md:p-6 lg:p-8">
+      {/* The extra bottom padding on the phone is for the assistant button.
+          It is `fixed bottom-5 right-5`, so without room reserved underneath it
+          parks on top of the last card and there is no amount of scrolling that
+          moves it off — the final row of a table was unreadable on every screen
+          at once. From `md` the content is centred with margin to spare and the
+          button floats clear, so the padding goes back to the normal rhythm. */}
+      <main className="min-w-0 flex-1 bg-surface p-4 pb-24 md:p-6 lg:p-8">
         {/*
           `key={pathname}` remounts the wrapper on navigation so each screen
           arrives with the same short rise the sign-in card uses. The nav rail

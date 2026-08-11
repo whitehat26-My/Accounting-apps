@@ -100,11 +100,11 @@ export default function ItemsPage() {
   });
 
   return (
-    <div className="grid grid-cols-2 gap-4">
-      <div className="space-y-3">
+    <div className="grid gap-4 lg:grid-cols-2">
+      <div className="min-w-0 space-y-3">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">Items</h1>
         <Card>
-          <table className="w-full text-sm">
+          <table className="min-w-[24rem] w-full text-sm">
             <tbody>
               {(items.data ?? []).map((item) => (
                 <tr key={item.id} className="border-t border-line">
@@ -125,7 +125,7 @@ export default function ItemsPage() {
         </Card>
       </div>
 
-      <div className="space-y-3">
+      <div className="min-w-0 space-y-3">
         <h1 className="text-2xl font-semibold tracking-tight text-ink">&nbsp;</h1>
         <Card title="New item">
           <form

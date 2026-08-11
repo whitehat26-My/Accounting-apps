@@ -356,7 +356,7 @@ function BenchProfitCard() {
 
   return (
     <Card title="The bench, last 30 days">
-      <table className="w-full text-sm">
+      <table className="min-w-[24rem] w-full text-sm">
         <thead>
           <tr className="text-left text-xs text-ink-muted">
             <th className="pb-2">Job</th>

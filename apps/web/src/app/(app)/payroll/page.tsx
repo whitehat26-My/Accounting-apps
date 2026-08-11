@@ -403,7 +403,7 @@ function CalculatorSection() {
           </div>
 
           <Card title="Line by line">
-            <table className="w-full text-sm">
+            <table className="min-w-[19rem] w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-2">Deduction</th>
@@ -736,7 +736,7 @@ function StaffCard() {
     <Card title="Staff">
       {staff.data ? (
         staff.data.employees.length > 0 ? (
-          <table className="w-full text-sm">
+          <table className="min-w-[30rem] w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-muted">
                 <th className="pb-2">Name</th>
@@ -1196,7 +1196,7 @@ function RunCard() {
           <ErrorNote error={blobError} />
 
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="min-w-[48rem] w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-2">Staff</th>

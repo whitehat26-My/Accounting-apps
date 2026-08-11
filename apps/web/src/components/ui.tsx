@@ -99,7 +99,24 @@ export function Card({
   style?: CSSProperties;
 }) {
   return (
-    <div className={`rounded-2xl bg-surface-raised shadow-sm ring-1 ring-line ${className}`} style={style}>
+    /*
+      `min-w-0` is not cosmetic — it is what lets the `overflow-x-auto` below
+      ever run.
+
+      Almost every card is a grid or flex child, and such a child's automatic
+      minimum size is its CONTENT, not the track it sits in. So a card holding
+      a table that wants 384px did not become 318px wide with a scrolling
+      table inside it. It became 504px wide on a 390px phone, pushed past the
+      screen edge, and took the whole page sideways with it — the one thing
+      the scroll container exists to prevent. The container was never at fault;
+      it simply had no shortfall to absorb, because its own box had grown to
+      meet the content.
+
+      `min-w-0` withdraws that permission. The card is then whatever the layout
+      gives it, the overflow lands where it was always meant to, and the page
+      itself holds still.
+    */
+    <div className={`min-w-0 rounded-2xl bg-surface-raised shadow-sm ring-1 ring-line ${className}`} style={style}>
       {/*
         `flex-wrap` on the header for the phone: several cards put date pickers
         or a filter in `action`, and on a 390px screen a title plus two date
@@ -115,15 +132,29 @@ export function Card({
         </div>
       ) : null}
       {/*
-        `overflow-x-auto` is what makes this usable on a phone. Every data table
-        in the app lives in a Card and is `w-full` with five to eight columns of
-        figures — on a 390px screen that is wider than the viewport, and without
-        a scroll container here the whole PAGE scrolls sideways instead of the
-        table. Contained, the table scrolls within its own card and the page
-        never moves. Safe to put on the body rather than around each table: no
-        card contains an absolutely-positioned popover that would be clipped.
+        `overflow-x-auto` is what makes this usable on a phone, and it is HALF
+        of the mechanism — the other half lives on the tables themselves.
+
+        Every data table in the app sits in a Card, and all twenty-eight of them
+        are `w-full`. That is a percentage, so on a 390px screen a table did not
+        overflow this container and scroll: it SHRANK to fit it, and eight
+        columns of figures shared 318px. Nothing was cut off, so nothing looked
+        broken; the columns simply crushed until "RM 5,200.00" wrapped mid-figure
+        and item names became "Sams 99…". A scroll container alone never fired,
+        because there was never anything to scroll.
+
+        So each table also carries a `min-w-[…]` sized by its column count —
+        roughly 6rem a column past three, three columns being what fits a phone
+        unaided. The minimum is below the width of any tablet or desktop card,
+        so it changes nothing there; on a phone it is what turns squashing into
+        scrolling, inside the card, with the page itself still.
+
+        Safe on the body rather than around each table: no card contains an
+        absolutely-positioned popover that this would clip.
       */}
-      <div className="overflow-x-auto p-5">{children}</div>
+      {/* `emil-scroll-cue` shows a soft edge on whichever side has more table
+          out of view, and shows nothing at all when there is none. */}
+      <div className="emil-scroll-cue overflow-x-auto p-5">{children}</div>
     </div>
   );
 }

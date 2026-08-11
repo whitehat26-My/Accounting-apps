@@ -78,7 +78,7 @@ export default function AuditPage() {
       <Card
         title="Every change, newest first"
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <Input
               className="!w-44"
               placeholder="Table, e.g. invoice"
@@ -101,7 +101,7 @@ export default function AuditPage() {
       >
         {trail.data ? (
           trail.data.entries.length > 0 ? (
-            <table className="w-full text-sm">
+            <table className="min-w-[30rem] w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
                   <Th>When</Th>
@@ -373,7 +373,7 @@ function FraudWatchCard() {
         )}
 
         {data.duplicates.length > 0 ? (
-          <table className="w-full text-sm">
+          <table className="min-w-[24rem] w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-muted">
                 <Th>Supplier</Th>

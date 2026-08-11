@@ -568,7 +568,23 @@ export function Donut({
         ))}
       </svg>
 
-      <ul className="min-w-0 flex-1 space-y-2">
+      {/*
+        `min-w-[13rem]` rather than `min-w-0`, and it is the difference between
+        a legend and a collision.
+
+        The wrapper wraps, but `flex-1` with no floor meant the legend never
+        took the offer: beside a 148px ring on a 390px phone it accepted the
+        150px left over and squeezed. Its own contents cannot squeeze — the
+        amount and the percentage are both `shrink-0`, because a half-printed
+        ringgit figure is worse than no figure — so the label slid underneath
+        the amount and the card read "CRM 91,663.". Two true things drawn on
+        top of each other, which is the one output worse than either alone.
+
+        With a floor of 13rem the row no longer fits beside the ring at that
+        width, so the legend drops to its own line and takes the full card.
+        Wider than that it still sits alongside, unchanged.
+      */}
+      <ul className="min-w-[13rem] flex-1 space-y-2">
         {slices.map((s, i) => (
           <li key={s.label} className="flex items-baseline gap-2.5 text-sm">
             <span

@@ -99,7 +99,7 @@ export default function CollectionsPage() {
       <Card title="Everything overdue">
         {overdue.data ? (
           overdue.data.overdue.length > 0 ? (
-            <table className="w-full text-sm">
+            <table className="min-w-[30rem] w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
                   <th className="pb-2">Invoice</th>
