@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
-import { Badge, Button, Card, ErrorNote, Input, Skeleton } from '@/components/ui';
+import { Badge, Button, Card, ErrorNote, Input, Skeleton, Th } from '@/components/ui';
 
 /**
  * The audit trail: who changed what, when, from where.
@@ -104,31 +104,31 @@ export default function AuditPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
-                  <th className="pb-1">When</th>
-                  <th className="pb-1">Who</th>
-                  <th className="pb-1">Action</th>
-                  <th className="pb-1">Record</th>
-                  <th className="pb-1">Fields changed</th>
+                  <Th>When</Th>
+                  <Th>Who</Th>
+                  <Th>Action</Th>
+                  <Th>Record</Th>
+                  <Th>Fields changed</Th>
                 </tr>
               </thead>
               <tbody>
                 {trail.data.entries.map((entry) => (
                   <tr key={entry.id} className="border-t border-line align-top">
-                    <td className="whitespace-nowrap py-2 text-ink-muted">
+                    <td className="whitespace-nowrap py-3 text-ink-muted">
                       {displayDate(entry.occurredAt.slice(0, 10))}{' '}
                       <span className="text-xs">{entry.occurredAt.slice(11, 16)}</span>
                     </td>
-                    <td className="py-2">
+                    <td className="py-3">
                       {entry.actorEmail ?? <span className="text-ink-faint">system</span>}
                       {entry.actorIp ? (
                         <div className="text-xs text-ink-faint">{entry.actorIp}</div>
                       ) : null}
                     </td>
-                    <td className="py-2">
+                    <td className="py-3">
                       <Badge status={entry.action} />
                     </td>
-                    <td className="py-2 font-mono text-xs text-ink-muted">{entry.entityType}</td>
-                    <td className="py-2 text-xs text-ink-muted">
+                    <td className="py-3 font-mono text-xs text-ink-muted">{entry.entityType}</td>
+                    <td className="py-3 text-xs text-ink-muted">
                       {entry.changed.length > 0 ? entry.changed.join(', ') : '—'}
                     </td>
                   </tr>
@@ -241,7 +241,7 @@ function ProofPackCard() {
         </p>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button onClick={() => void download()}>Download proof pack</Button>
+          <Button variant="ghost" onClick={() => void download()}>Download proof pack</Button>
           <label className="cursor-pointer rounded-lg px-3.5 py-2 text-sm font-medium text-ink-muted hover:bg-surface-sunken">
             Check a pack…
             <input
@@ -376,19 +376,19 @@ function FraudWatchCard() {
           <table className="w-full text-sm">
             <thead>
               <tr className="text-left text-xs text-ink-muted">
-                <th className="pb-1">Supplier</th>
-                <th className="pb-1">Documents</th>
-                <th className="pb-1 text-right">Amount</th>
-                <th className="pb-1 text-right">Days apart</th>
+                <Th>Supplier</Th>
+                <Th>Documents</Th>
+                <Th align="right">Amount</Th>
+                <Th align="right">Days apart</Th>
               </tr>
             </thead>
             <tbody>
               {data.duplicates.map((d) => (
                 <tr key={`${d.party}-${d.documents.join()}`} className="border-t border-line">
-                  <td className="py-1.5">{d.party}</td>
-                  <td className="py-1.5 text-xs text-ink-muted">{d.documents.join(' and ')}</td>
-                  <td className="py-1.5 text-right font-medium">{rm(d.amount)}</td>
-                  <td className="py-1.5 text-right">{d.daysApart}</td>
+                  <td className="py-3">{d.party}</td>
+                  <td className="py-3 text-xs text-ink-muted">{d.documents.join(' and ')}</td>
+                  <td className="py-3 text-right font-medium">{rm(d.amount)}</td>
+                  <td className="py-3 text-right">{d.daysApart}</td>
                 </tr>
               ))}
             </tbody>

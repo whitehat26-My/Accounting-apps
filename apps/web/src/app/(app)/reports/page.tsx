@@ -4,8 +4,9 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, apiBlobUrl, apiDownload } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
-import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
+import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton, Th } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
+import { Donut, HBarChart } from '@/components/charts';
 
 /**
  * The statements: profit or loss, financial position, trial balance, cash
@@ -142,6 +143,38 @@ export default function ReportsPage() {
         </div>
       </div>
 
+      {/*
+        THE SHAPE FIRST, THE LEDGER UNDERNEATH.
+        A statement is a wall of numbers that answers precisely once you have
+        read all of it. These two answer at a glance — did the period make
+        money, and what is the money sitting in — and the exact figures are
+        still directly below, unchanged, because a chart is never the record.
+      */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card title="How the period went">
+          {sopl.data ? (
+            profitBars(sopl.data.lines).length > 0 ? (
+              <HBarChart rows={profitBars(sopl.data.lines)} />
+            ) : (
+              <p className="text-sm text-ink-muted">Nothing was earned or spent in this period.</p>
+            )
+          ) : (
+            <Loading />
+          )}
+        </Card>
+        <Card title="What the money is in">
+          {sofp.data ? (
+            assetSlices(sofp.data.lines).length > 0 ? (
+              <Donut slices={assetSlices(sofp.data.lines)} />
+            ) : (
+              <p className="text-sm text-ink-muted">No assets recorded yet.</p>
+            )
+          ) : (
+            <Loading />
+          )}
+        </Card>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Profit or loss">
           {sopl.data ? <Statement lines={sopl.data.lines} /> : <Loading />}
@@ -199,23 +232,23 @@ export default function ReportsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
-                  <th className="pb-2">Item</th>
-                  <th className="pb-2 text-right">Qty sold</th>
-                  <th className="pb-2 text-right">Revenue</th>
-                  <th className="pb-2 text-right">Cost</th>
-                  <th className="pb-2 text-right">Margin</th>
-                  <th className="pb-2 text-right">%</th>
+                  <Th>Item</Th>
+                  <Th align="right">Qty sold</Th>
+                  <Th align="right">Revenue</Th>
+                  <Th align="right">Cost</Th>
+                  <Th align="right">Margin</Th>
+                  <Th align="right">%</Th>
                 </tr>
               </thead>
               <tbody>
                 {margins.data.rows.map((row) => (
                   <tr key={row.itemId ?? 'free-text'} className="border-t border-line">
-                    <td className="py-2">
+                    <td className="py-3">
                       <span className="text-xs text-ink-muted">{row.code}</span> {row.name}
                     </td>
-                    <td className="py-2 text-right">{row.quantitySold}</td>
-                    <td className="py-2 text-right">{rm(row.revenue)}</td>
-                    <td className="py-2 text-right">{rm(row.cost)}</td>
+                    <td className="py-3 text-right">{row.quantitySold}</td>
+                    <td className="py-3 text-right">{rm(row.revenue)}</td>
+                    <td className="py-3 text-right">{rm(row.cost)}</td>
                     <td
                       className={`py-2 text-right font-medium ${
                         row.margin.startsWith('-') ? 'text-negative' : ''
@@ -223,7 +256,7 @@ export default function ReportsPage() {
                     >
                       {rm(row.margin)}
                     </td>
-                    <td className="py-2 text-right">
+                    <td className="py-3 text-right">
                       {row.marginBp === null ? '—' : `${(row.marginBp / 100).toFixed(1)}%`}
                     </td>
                   </tr>
@@ -266,7 +299,7 @@ export default function ReportsPage() {
                 .filter((s) => !(s.activity === 'UNCLASSIFIED' && s.lines.length === 0))
                 .map((section) => (
                   <div key={section.activity}>
-                    <div className="pt-1 text-xs font-semibold uppercase text-ink-faint">
+                    <div className="pt-2 text-xs font-semibold uppercase tracking-wider text-ink-faint">
                       {section.activity.charAt(0) + section.activity.slice(1).toLowerCase()}
                     </div>
                     {section.lines.map((line) => (
@@ -339,7 +372,7 @@ export default function ReportsPage() {
         <Card title="Changes in equity">
           {equity.data ? (
             <div className="overflow-x-auto text-sm">
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-1 text-right text-xs text-ink-muted">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 pb-2 text-right text-xs font-semibold uppercase tracking-wider text-ink-faint">
                 <span className="text-left">Component</span>
                 <span>Opening</span>
                 <span>Movement</span>
@@ -348,7 +381,7 @@ export default function ReportsPage() {
               {equity.data.components.map((component) => (
                 <div
                   key={component.key}
-                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-1 text-right"
+                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-2.5 text-right"
                 >
                   <span className="text-left">{component.label}</span>
                   <span className="whitespace-nowrap">{rm(component.opening)}</span>
@@ -358,7 +391,7 @@ export default function ReportsPage() {
                   <span className="whitespace-nowrap">{rm(component.closing)}</span>
                 </div>
               ))}
-              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t-2 border-line-strong py-1.5 text-right font-semibold">
+              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t-2 border-line-strong py-3 text-right font-semibold">
                 <span className="text-left">Total equity</span>
                 <span className="whitespace-nowrap">{rm(equity.data.openingEquity)}</span>
                 <span />
@@ -391,25 +424,25 @@ export default function ReportsPage() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-ink-muted">
-                  <th className="pb-1">Code</th>
-                  <th className="pb-1">Account</th>
-                  <th className="pb-1 text-right">Debit</th>
-                  <th className="pb-1 text-right">Credit</th>
+                  <Th>Code</Th>
+                  <Th>Account</Th>
+                  <Th align="right">Debit</Th>
+                  <Th align="right">Credit</Th>
                 </tr>
               </thead>
               <tbody>
                 {tb.data.rows.map((r) => (
                   <tr key={r.code} className="border-t border-line">
-                    <td className="py-1 font-mono text-xs text-ink-muted">{r.code}</td>
-                    <td className="py-1">{r.name}</td>
-                    <td className="py-1 text-right">{r.debit === '0.0000' ? '' : rm(r.debit)}</td>
-                    <td className="py-1 text-right">{r.credit === '0.0000' ? '' : rm(r.credit)}</td>
+                    <td className="py-3.5 font-mono text-xs text-ink-muted">{r.code}</td>
+                    <td className="py-3.5">{r.name}</td>
+                    <td className="py-3.5 text-right">{r.debit === '0.0000' ? '' : rm(r.debit)}</td>
+                    <td className="py-3.5 text-right">{r.credit === '0.0000' ? '' : rm(r.credit)}</td>
                   </tr>
                 ))}
                 <tr className="border-t-2 border-line-strong font-semibold">
-                  <td className="py-1.5" colSpan={2}>Totals</td>
-                  <td className="py-1.5 text-right">{rm(tb.data.totalDebit)}</td>
-                  <td className="py-1.5 text-right">{rm(tb.data.totalCredit)}</td>
+                  <td className="py-3" colSpan={2}>Totals</td>
+                  <td className="py-3 text-right">{rm(tb.data.totalDebit)}</td>
+                  <td className="py-3 text-right">{rm(tb.data.totalCredit)}</td>
                 </tr>
               </tbody>
             </table>
@@ -670,7 +703,7 @@ function TimeMachineCard({
               {diff.data.changes.map((c) => (
                 <div
                   key={c.accountId}
-                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-1 text-right"
+                  className="grid grid-cols-[1fr_auto_auto_auto] gap-x-4 border-t border-line py-2.5 text-right"
                 >
                   <span className="text-left">
                     <span className="font-mono text-xs text-ink-faint">{c.code}</span> {c.name}
@@ -724,6 +757,50 @@ function TimeMachineCard({
       </div>
     </Card>
   );
+}
+
+/**
+ * The three bars worth drawing from a profit-or-loss statement.
+ *
+ * Read from the line TYPES, never from the labels. `DETAIL` lines are what
+ * came in and what went out; the single `TOTAL` is the answer. Matching on the
+ * word "Revenue" instead would break the day somebody renames a caption, or
+ * the moment this is sold to a shop whose statements are in Malay.
+ *
+ * `HBarChart` already handles a negative — expenses arrive as `-4350.0000` and
+ * it draws them red without being told.
+ */
+function profitBars(lines: StatementLine[]): { label: string; value: string }[] {
+  return lines
+    .filter((l) => l.lineType === 'DETAIL' || l.lineType === 'TOTAL')
+    .filter((l) => Number(l.amount) !== 0)
+    .map((l) => ({ label: l.label, value: l.amount }));
+}
+
+/**
+ * The asset side of a balance sheet, as parts of a whole.
+ *
+ * Everything between the first `HEADER` and the `TOTAL` that closes it — which
+ * is the assets block by construction, because a balance sheet is emitted in
+ * that order. Stopping at the TOTAL is what keeps liabilities out: adding them
+ * to the same ring would draw a circle that means nothing, since the two sides
+ * are equal by definition and the ring would always read half-and-half.
+ *
+ * Zero-value lines are dropped rather than drawn as invisible slivers that
+ * still take a legend row.
+ */
+function assetSlices(lines: StatementLine[]): { label: string; value: string }[] {
+  const start = lines.findIndex((l) => l.lineType === 'HEADER');
+  if (start === -1) return [];
+
+  const slices: { label: string; value: string }[] = [];
+  for (const line of lines.slice(start + 1)) {
+    if (line.lineType === 'TOTAL' || line.lineType === 'HEADER') break;
+    if (Number(line.amount) > 0) slices.push({ label: line.label, value: line.amount });
+  }
+  // Largest first: a ring read clockwise from the top should start with the
+  // thing most of the money is in.
+  return slices.sort((a, b) => Number(b.value) - Number(a.value));
 }
 
 function Statement({ lines }: { lines: StatementLine[] }) {

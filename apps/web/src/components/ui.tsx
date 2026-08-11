@@ -17,8 +17,21 @@ export function Button({
   const styles = {
     primary:
       'bg-primary text-primary-ink shadow-sm shadow-primary/25 hover:brightness-110 active:brightness-95 disabled:bg-line disabled:text-ink-faint disabled:shadow-none',
+    /*
+     * The premium secondary: a crisp edge at rest, and it COMMITS on hover —
+     * filling solid primary rather than nudging a grey a shade darker.
+     *
+     * Applied to the variant rather than to the three export buttons that
+     * prompted it, because "Print", "CSV" and "Download proof pack" are not
+     * special: they are what a secondary action is, and 51 of these exist. A
+     * second lookalike variant for one screen is how two grammars of button
+     * end up in one app.
+     */
     ghost:
-      'bg-surface-raised text-ink shadow-sm ring-1 ring-inset ring-line-strong hover:bg-surface-sunken disabled:text-ink-faint',
+      'bg-surface-raised text-ink shadow-sm ring-1 ring-inset ring-line-strong transition-all '
+      + 'hover:bg-primary hover:text-primary-ink hover:ring-primary hover:shadow-md hover:shadow-primary/25 '
+      + 'disabled:text-ink-faint disabled:hover:bg-surface-raised disabled:hover:text-ink-faint '
+      + 'disabled:hover:ring-line-strong disabled:hover:shadow-sm',
     danger: 'bg-negative text-surface-raised shadow-sm hover:brightness-110 disabled:bg-line disabled:text-ink-faint',
   }[variant];
   /*
@@ -165,13 +178,52 @@ const STATUS_TONE: Record<string, Tone> = {
   CREATE: 'done', UPDATE: 'working', DELETE: 'stopped',
 };
 
+/**
+ * A table's header cell.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE COMPONENT, NOT NINETEEN COPIES OF FOUR UTILITIES.
+ *
+ * Headers and data used to be the same size and weight, so a table read as one
+ * undifferentiated block and the eye had to re-find the columns on every
+ * glance. Smaller, uppercase, tracked wider and muted separates the LABELS
+ * from the FIGURES — which is the whole job of a header row.
+ *
+ * It is a component rather than a copied class string because there are
+ * nineteen of these across reports and audit alone. Copied, the twentieth is
+ * written slightly differently and a column quietly stops matching its
+ * neighbours; nobody notices, because each table looks fine on its own.
+ * ---------------------------------------------------------------------------
+ */
+export function Th({
+  children,
+  align = 'left',
+}: {
+  children?: ReactNode;
+  align?: 'left' | 'right';
+}) {
+  return (
+    <th
+      scope="col"
+      className={`pb-2 text-xs font-semibold uppercase tracking-wider text-ink-faint ${
+        align === 'right' ? 'text-right' : 'text-left'
+      }`}
+    >
+      {children}
+    </th>
+  );
+}
+
 export function Badge({ status }: { status: string }) {
   return (
     <span
       // `whitespace-nowrap`: a status is one word to the reader even when it is
       // two on the page. Without it "IN PROGRESS" breaks across two lines and
       // spills out of its own pill the moment the column is narrow.
-      className={`inline-block whitespace-nowrap rounded-full px-2 py-0.5 text-xs font-medium ring-1 ring-inset ${
+      // Bolder and wider than a label: in a column of a hundred audit rows the
+      // action is the thing being SCANNED for, so it has to be findable at
+      // arm's length rather than merely readable up close.
+      className={`inline-block whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-bold tracking-wide ring-1 ring-inset ${
         TONE[STATUS_TONE[status] ?? 'neutral']
       }`}
     >

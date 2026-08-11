@@ -485,3 +485,105 @@ export function HBarChart({ rows }: { rows: { label: string; value: string }[] }
     </div>
   );
 }
+
+/**
+ * A part-to-whole ring — what the money is sitting IN, not how much there is.
+ *
+ * ---------------------------------------------------------------------------
+ * ONE HUE, VARYING WEIGHT — NOT A BOX OF CRAYONS.
+ *
+ * The obvious donut gives every slice its own colour. That is wrong here twice
+ * over. This palette's colours MEAN things: green is money up, red is money
+ * down, amber is a warning. Handing "Trade and other receivables" the red slot
+ * because it happened to be third would tell a reader something alarming and
+ * untrue.
+ *
+ * It is also the wrong dataviz. These slices are the same measure divided, not
+ * different measures compared, so they should share a hue and differ in weight
+ * — which additionally survives being printed in grey and being looked at by
+ * somebody who cannot separate red from green.
+ *
+ * ---------------------------------------------------------------------------
+ * WHY NOT CHART.JS OR RECHARTS.
+ *
+ * Both want colours as literal strings at the call site. That is exactly what
+ * `palette.test.ts` forbids and exactly how this app got a light-mode island
+ * the first time: hard-coded chart colours cannot follow a theme, so the
+ * charts stayed bright while the page went dark. Everything here paints with
+ * `className` and semantic tokens instead, which is the whole reason night
+ * mode works without a single `dark:` variant on a chart.
+ * ---------------------------------------------------------------------------
+ */
+export function Donut({
+  slices,
+  size = 148,
+}: {
+  slices: { label: string; value: string }[];
+  size?: number;
+}) {
+  const values = slices.map((s) => Math.abs(scale(s.value)));
+  const total = values.reduce((a, b) => a + b, 0);
+  // Nothing to divide. A ring of zero slices is a circle, and a circle here
+  // would read as "all of it is the first thing".
+  if (total <= 0) return null;
+
+  const stroke = size * 0.17;
+  const radius = (size - stroke) / 2;
+  const circumference = 2 * Math.PI * radius;
+
+  let consumed = 0;
+  const arcs = values.map((v, i) => {
+    const length = (v / total) * circumference;
+    const offset = consumed;
+    consumed += length;
+    return { i, length, offset, share: v / total };
+  });
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-5 gap-y-4">
+      <svg
+        width={size}
+        height={size}
+        viewBox={`0 0 ${size} ${size}`}
+        // The figures are in the legend beside it, which is the accessible
+        // content; a screen reader gains nothing from the geometry.
+        aria-hidden="true"
+        className="shrink-0 -rotate-90"
+      >
+        {arcs.map(({ i, length, offset }) => (
+          <circle
+            key={i}
+            cx={size / 2}
+            cy={size / 2}
+            r={radius}
+            fill="none"
+            strokeWidth={stroke}
+            // A hairline of the card colour between slices, so neighbours are
+            // separated by the page rather than by a drawn outline.
+            strokeDasharray={`${Math.max(length - 1.5, 0)} ${circumference}`}
+            strokeDashoffset={-offset}
+            className="stroke-primary"
+            opacity={1 - i * 0.17}
+          />
+        ))}
+      </svg>
+
+      <ul className="min-w-0 flex-1 space-y-2">
+        {slices.map((s, i) => (
+          <li key={s.label} className="flex items-baseline gap-2.5 text-sm">
+            <span
+              aria-hidden="true"
+              className="mt-1 h-2.5 w-2.5 shrink-0 rounded-sm bg-primary"
+              style={{ opacity: 1 - i * 0.17 }}
+            />
+            <span className="min-w-0 flex-1 text-ink-muted">{s.label}</span>
+            <span className="shrink-0 tabular-nums font-semibold text-ink">{rm(s.value)}</span>
+            <span className="w-11 shrink-0 text-right tabular-nums text-xs text-ink-faint">
+              {(arcs[i]!.share * 100).toFixed(0)}%
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
