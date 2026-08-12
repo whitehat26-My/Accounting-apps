@@ -99,6 +99,17 @@ const ALLOWED: { file: string; tokens: string[]; because: string }[] = [
       'is the only place it matters. The pad is a slip of paper, so it is drawn as one.',
   },
   {
+    file: 'components/duitnow-qr.tsx',
+    tokens: ['bg-white', '#ffffff', '#000000'],
+    because:
+      'A payment QR is read by a camera, not by a person, and scanners rely on ' +
+      'maximum contrast between dark and light modules. Themed tokens would render ' +
+      'it near-black on near-black at night — a symbol that looks fine on screen and ' +
+      'will not scan, discovered by a customer standing at the counter. The same ' +
+      'reason apps/api/src/pdf/render.ts draws the verification QR in #000000: the ' +
+      'quiet zone and the modules are part of the symbology, not of the theme.',
+  },
+  {
     file: 'app/(app)/settings/page.tsx',
     tokens: ['#1875be'],
     because:

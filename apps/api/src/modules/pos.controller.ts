@@ -2,7 +2,15 @@ import { Body, Controller, Get, Headers, Inject, Post, Query, Req, Res } from '@
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { isoDate, positiveDecimal, uuid } from '@emil/contracts';
-import { dailyTakings, recordCashSale, sellerBlock, withTenant, type Sql } from '@emil/db';
+import {
+  buildQrForAmount,
+  dailyTakings,
+  DuitNowNotConfiguredError,
+  recordCashSale,
+  sellerBlock,
+  withTenant,
+  type Sql,
+} from '@emil/db';
 import { SQL } from '../tokens.js';
 import { Doc } from '../openapi/doc.decorator.js';
 import { Requires } from '../guards/decorators.js';
@@ -36,6 +44,46 @@ export class PosController {
     return withTenant(this.sql, ctx, (tx) =>
       recordCashSale(tx, ctx, { ...input, idempotencyKey }),
     );
+  }
+
+  /**
+   * The DuitNow QR for an amount at the counter.
+   *
+   * -------------------------------------------------------------------------
+   * ANSWERS 200 EVEN WHEN IT CANNOT PRODUCE A QR.
+   *
+   * "Is DuitNow available?" is an ordinary question with an ordinary negative
+   * answer — most shops have never set it up — and modelling that as an error
+   * would make the till's checkout screen handle an exception on its happy
+   * path. The same call the e-Invoice config route makes when it reports
+   * `adapterConfigured: false`.
+   *
+   * `available: false` carries WHAT is missing, because the fixes differ: a
+   * template comes from PayNet, a category code from the acquiring bank, and a
+   * merchant name is typed on the Settings screen.
+   * -------------------------------------------------------------------------
+   */
+  @Requires('pos.sale')
+  @Get('duitnow-qr')
+  async duitNowQr(
+    @Query('amount') amount: string | undefined,
+    @Query('reference') reference: string | undefined,
+    @Req() request: FastifyRequest,
+  ) {
+    const input = parse(duitNowQrSchema, { amount, reference });
+    const ctx = tenantContextOf(request);
+
+    try {
+      return {
+        available: true as const,
+        ...(await withTenant(this.sql, ctx, (tx) => buildQrForAmount(tx, ctx, input))),
+      };
+    } catch (error) {
+      if (error instanceof DuitNowNotConfiguredError) {
+        return { available: false as const, reason: error.message, missing: error.missing };
+      }
+      throw error;
+    }
   }
 
   /**
@@ -106,3 +154,10 @@ const cashSaleSchema = z.object({
 });
 
 const takingsSchema = z.object({ date: isoDate });
+
+const duitNowQrSchema = z.object({
+  /** Decimal string, never a number — the amount goes into the QR verbatim. */
+  amount: positiveDecimal,
+  /** What reconciliation matches on later. The cart or invoice reference. */
+  reference: z.string().min(1).max(25),
+});

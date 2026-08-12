@@ -6,6 +6,7 @@ import { api, apiBlobUrl } from '@/lib/api';
 import { qty, rm, todayIso } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 import { useNotice } from '@/components/notice';
+import { DuitNowQr } from '@/components/duitnow-qr';
 
 /**
  * The till.
@@ -409,6 +410,27 @@ export default function PosPage() {
                 <span>Total</span>
                 <span className="font-bold">{rm(result.total)}</span>
               </div>
+
+              {/*
+                THE QR GOES HERE, AFTER THE SALE, NOT BESIDE THE CART.
+
+                The cart shows an estimate that is explicitly BEFORE TAX — a QR
+                built from it would ask the customer for the wrong amount, and
+                they would find that out at their bank rather than at the
+                counter. `result.total` is the server's figure with tax in it,
+                and `result.invoiceNo` is what a bank statement line can later
+                be matched against.
+
+                The accounting already assumes this order: a DUITNOW sale lands
+                in undeposited funds, which is exactly "taken, not yet in the
+                bank" — so ring first, collect second.
+              */}
+              {method === 'DUITNOW' ? (
+                <div className="border-t border-line pt-3">
+                  <DuitNowQr amount={result.total} reference={result.invoiceNo} />
+                </div>
+              ) : null}
+
               <Button
                 variant="ghost"
                 className="w-full"

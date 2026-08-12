@@ -75,6 +75,8 @@ export interface GatewayConfig {
   readonly settlementBankAccountId?: string;
   /** Empty until confirmed against PayNet. See duitnow-qr.ts. */
   readonly merchantTemplate: readonly (readonly [string, string])[];
+  /** Which EMVCo tag (26-51) the template above occupies. See migration 0053. */
+  readonly merchantTemplateTag?: string;
   readonly merchantName?: string;
   readonly merchantCity?: string;
   readonly merchantCategoryCode?: string;
@@ -94,14 +96,15 @@ export async function loadGatewayConfig(
       fee_account_id: string | null;
       settlement_bank_account_id: string | null;
       merchant_template: unknown;
+      merchant_template_tag: string | null;
       merchant_name: string | null;
       merchant_city: string | null;
       merchant_category_code: string | null;
     }[]
   >`
       SELECT id, provider, display_name, clearing_account_id, fee_account_id,
-             settlement_bank_account_id, merchant_template, merchant_name,
-             merchant_city, merchant_category_code
+             settlement_bank_account_id, merchant_template, merchant_template_tag,
+             merchant_name, merchant_city, merchant_category_code
         FROM payment_gateway_config
        WHERE tenant_id = ${ctx.tenantId} AND provider = ${provider} AND is_active
   `;
@@ -127,6 +130,9 @@ export async function loadGatewayConfig(
     merchantTemplate: Array.isArray(row.merchant_template)
       ? (row.merchant_template as (readonly [string, string])[])
       : [],
+    ...(row.merchant_template_tag !== null
+      ? { merchantTemplateTag: row.merchant_template_tag }
+      : {}),
     ...(row.merchant_name !== null ? { merchantName: row.merchant_name } : {}),
     ...(row.merchant_city !== null ? { merchantCity: row.merchant_city } : {}),
     ...(row.merchant_category_code !== null

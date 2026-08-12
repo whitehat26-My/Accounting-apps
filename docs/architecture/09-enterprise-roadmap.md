@@ -185,10 +185,26 @@ not the answer, and neither does this document.
   `merchantCity` and `merchantCategoryCode` — **exactly the shape `DuitNowQrInput`
   wants**. `paymentReference()` already produces the reconciliation-safe reference.
 
-### The single missing wire
+### The wire is now built — only the template is still missing
 
-`buildDuitNowQr` has **zero production callers**. Nothing joins the config to the
-encoder to the renderer — and joining them is gated on PayNet, not on code.
+`packages/db/src/duitnow.ts` (`buildQrForAmount`) joins the stored configuration
+to the encoder; `GET /v1/pos/duitnow-qr` serves the payload under `pos.sale`; and
+`apps/web/src/components/duitnow-qr.tsx` renders it with the app's own
+`encodeQr` — no QR library, because a second encoder in one product is two
+encoders that can disagree, and the disagreement shows up as a symbol that scans
+on screen and not on paper.
+
+**Migration 0053 closed a gap that would have blocked this even with PayNet's
+answer in hand.** `MerchantAccountTemplate` is `{ tag, fields }`, but
+`payment_gateway_config` stored only the fields — the tag, which of 26–51 PayNet
+assigns to DuitNow, had nowhere to live. It is now a column, constrained to the
+EMVCo band, and required whenever a template exists. The constraint makes
+"template without a tag" unrepresentable rather than merely rejected at build
+time, which is why the test for it asserts against the database.
+
+What remains is the template itself. The route answers `200` with
+`{ available: false, reason, missing }` rather than an error, because "this shop
+has not set up DuitNow" is an ordinary answer and most shops are that shop.
 
 `buildDuitNowQr` **throws `NO_MERCHANT_TEMPLATE`** rather than defaulting, because
 which of tags 26–51 carries DuitNow, the AID/GUID and the merchant-id format are
@@ -221,7 +237,7 @@ account (`apps/web/src/app/(app)/pos/page.tsx`). The change is:
 | Auto-updater | **Configured**; workflow written | `tauri signer generate`, then the keys as CI secrets |
 | Code signing | Procedure documented | Buying a certificate, or Azure Trusted Signing |
 | MyInvois submission | Everything up to the wire built and tested | **LHDN SDK docs + sandbox client id/secret** |
-| DuitNow QR | Encoder, renderer and config all built | **PayNet's merchant specification** |
+| DuitNow QR | Encoder, renderer, config, API route and till UI all built | **PayNet's merchant specification** — the template values themselves |
 
 Three of those five are a purchase or an email away. None of them is a rewrite —
 which is the whole return on having built the neutral intermediate, the port, and

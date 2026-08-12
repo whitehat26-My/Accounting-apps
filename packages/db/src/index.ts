@@ -18,6 +18,7 @@ export * from './general-ledger.js';
 export * from './outbox.js';
 export * from './item.js';
 export * from './collection.js';
+export * from './duitnow.js';
 export * from './contact.js';
 export * from './audit.js';
 export * from './account.js';

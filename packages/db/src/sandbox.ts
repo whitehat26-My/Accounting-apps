@@ -74,6 +74,12 @@ export async function seedSandboxStatutoryValues(
    * obviously not. The EMVCo envelope around it is a published standard and is
    * genuinely correct; only the PayNet-assigned parts are invented, and they
    * announce themselves.
+   *
+   * `merchant_template_tag` is '26' because migration 0053 requires a tag
+   * whenever a template exists, and it is the only field here that CANNOT
+   * announce itself as fake — every value in the EMVCo band 26–51 is
+   * structurally legal. So the source string below remains the marker, and
+   * readiness.ts keys on that rather than on the tag.
    */
   const templates = await tx<{ id: string }[]>`
       UPDATE payment_gateway_config
@@ -81,6 +87,7 @@ export async function seedSandboxStatutoryValues(
            ['00', 'SANDBOX.NOT.A.REAL.AID'],
            ['01', 'SANDBOX-NOT-A-REAL-MERCHANT'],
          ] as never)},
+             merchant_template_tag = '26',
              merchant_template_source =
                  ${`${SANDBOX_CITATION_PREFIX} VALUE — NOT CONFIRMED WITH PAYNET. ` +
                    'A QR built from this will not pay anyone.'},
