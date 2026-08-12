@@ -24,6 +24,7 @@
 
 import { Money, sumMoney, type Currency } from './money.js';
 import { err, ok, type Result } from './result.js';
+import { isCalendarDate } from './calendar-date.js';
 
 /**
  * Document types LHDN accepts. The self-billed variants are the ones generic
@@ -169,7 +170,7 @@ export function validateForSubmission(
   const violations: EInvoiceViolation[] = [];
   const baseCurrency = config.baseCurrency ?? 'MYR';
 
-  if (!ISO_DATE.test(doc.issueDate) || Number.isNaN(Date.parse(doc.issueDate))) {
+  if (!isCalendarDate(doc.issueDate)) {
     violations.push({ code: 'INVALID_ISSUE_DATE', value: doc.issueDate });
   }
 

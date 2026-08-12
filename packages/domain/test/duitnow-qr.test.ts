@@ -321,3 +321,137 @@ describe('a QR-driven payment stays matchable', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// The bytes a scanner actually reads
+// ---------------------------------------------------------------------------
+
+/**
+ * A camera does not see a JavaScript string.
+ *
+ * `encodeQr` puts the payload through `TextEncoder`, so the symbol carries
+ * UTF-8 bytes and EMVCo lengths count those bytes. Everything else in this file
+ * checks the payload as a string — which is exactly how a name with one accent
+ * in it shipped broken: the builder, `parseTlv` and `verifyQr` all agreed with
+ * each other in UTF-16 while the wire disagreed with all three.
+ *
+ * So this walks the bytes the way a reader does, which is the only vantage
+ * point from which the bug was ever visible.
+ */
+function walkBytes(payload: string): { tag: string; value: string }[] {
+  const bytes = new TextEncoder().encode(payload);
+  const ascii = (a: number, b: number) => String.fromCharCode(...bytes.slice(a, b));
+  const out: { tag: string; value: string }[] = [];
+
+  let i = 0;
+  while (i < bytes.length) {
+    const tag = ascii(i, i + 2);
+    const lengthDigits = ascii(i + 2, i + 4);
+    if (!/^\d{2}$/.test(tag) || !/^\d{2}$/.test(lengthDigits)) {
+      throw new Error(`desynchronised at byte ${i}: read "${tag}${lengthDigits}"`);
+    }
+    const length = Number(lengthDigits);
+    out.push({ tag, value: new TextDecoder().decode(bytes.slice(i + 4, i + 4 + length)) });
+    i += 4 + length;
+  }
+  return out;
+}
+
+/** The CRC as a reader computes it: over the bytes preceding the four hex digits. */
+function crcOverBytes(payload: string): string {
+  const bytes = new TextEncoder().encode(payload);
+  const body = bytes.slice(0, bytes.length - 4);
+  let crc = 0xffff;
+  for (const byte of body) {
+    crc ^= byte << 8;
+    for (let bit = 0; bit < 8; bit++) {
+      crc = (crc & 0x8000) !== 0 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
+    }
+  }
+  return (crc & 0xffff).toString(16).toUpperCase().padStart(4, '0');
+}
+
+describe('a merchant name that is not ASCII', () => {
+  // é, ñ and CJK are ordinary in Malaysian business names, and every one of
+  // these produced a symbol that desynchronised at the name and failed its own
+  // checksum, while this module reported it perfectly well formed.
+  const NAMES = ['Kedai Kopi Café', 'Ñoño Enterprise', '阿成茶室', 'Kedai Ξ Sdn Bhd'];
+
+  for (const merchantName of NAMES) {
+    it(`survives the byte walk: ${merchantName}`, () => {
+      const payload = buildDuitNowQr(input({ merchantName }));
+
+      // Reading it as a scanner does must not throw, and must recover the name.
+      const elements = walkBytes(payload);
+      expect(elements.find((e) => e.tag === '59')?.value).toBe(merchantName);
+      expect(elements.find((e) => e.tag === '60')?.value).toBe('KUALA LUMPUR');
+
+      // The reference is the last element before the CRC, and the one a
+      // desynchronised parse loses first — so it is the canary.
+      const additional = elements.find((e) => e.tag === '62');
+      expect(additional?.value).toContain('INV00042');
+
+      // And the checksum the reader computes must be the one that is printed.
+      expect(crcOverBytes(payload)).toBe(payload.slice(-4));
+      expect(verifyQr(payload)).toBe(true);
+    });
+  }
+
+  it('measures the length in bytes, not code units', () => {
+    const payload = buildDuitNowQr(input({ merchantName: 'Kedai Kopi Café' }));
+    // 15 code units, 16 UTF-8 bytes. The declared length must be the latter.
+    expect('Kedai Kopi Café'.length).toBe(15);
+    expect(payload).toContain('5916Kedai Kopi Café');
+  });
+
+  it('refuses a name whose bytes exceed the tag ceiling, rather than emitting it', () => {
+    // 25 CJK characters is 75 bytes — under any character-based limit and well
+    // over what two ASCII digits can express once other fields are considered.
+    expect(() => tlv('59', '阿'.repeat(40))).toThrow(/120 bytes|bytes; EMVCo/);
+  });
+
+  it('truncates on a character boundary, never mid-character', () => {
+    // A cut between the halves of a surrogate pair yields a lone surrogate,
+    // which TextEncoder renders as U+FFFD — a replacement character in the name
+    // shown to somebody about to pay.
+    const payload = buildDuitNowQr(input({ merchantName: '𝐀'.repeat(20) }));
+    const name = walkBytes(payload).find((e) => e.tag === '59')?.value ?? '';
+    expect(name).not.toContain('�');
+    expect([...name].every((c) => c === '𝐀')).toBe(true);
+  });
+});
+
+describe('verifyQr finds the CRC element by position, not by search', () => {
+  it('accepts a payload whose own checksum happens to read 6304', () => {
+    /*
+     * `lastIndexOf('6304')` found the CRC VALUE rather than its header when the
+     * two coincided, and reported a valid payload corrupt. Roughly one payload
+     * in twelve thousand, measured — which also made the property test above a
+     * flake nobody would have trusted, failing about one run in three hundred
+     * and being dismissed as noise.
+     *
+     * This vector was found by searching references until one produced a
+     * checksum of exactly "6304", and is pinned here rather than searched for
+     * at test time: the search takes a few hundred thousand tries, and a test
+     * that sometimes cannot find its own fixture is not a test.
+     */
+    const payload = '000201010211530345854045.005802MY5913TEST MERCHANT62370509REF03728463046304';
+
+    // It really does end with the CRC element header immediately followed by a
+    // value that reads the same — the whole point of the vector.
+    expect(payload.slice(-8)).toBe('63046304');
+    expect(crcHex(payload.slice(0, -4))).toBe('6304');
+
+    expect(verifyQr(payload)).toBe(true);
+  });
+
+  it('still rejects a payload whose CRC is wrong', () => {
+    const payload = buildDuitNowQr(input());
+    expect(verifyQr(payload.slice(0, -4) + '0000')).toBe(false);
+  });
+
+  it('rejects a payload with no CRC element at the fixed offset', () => {
+    expect(verifyQr('0002016300ABCD')).toBe(false);
+    expect(verifyQr('short')).toBe(false);
+  });
+});

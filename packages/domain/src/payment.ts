@@ -16,6 +16,7 @@ import { Money, sumMoney, type Currency } from './money.js';
 import { err, isErr, ok, type Result } from './result.js';
 import { realisedFx, Rate, toBase, type SettlementLeg } from './fx.js';
 import type { JournalEntryDraft, JournalLineDraft } from './journal-entry.js';
+import { isCalendarDate } from './calendar-date.js';
 
 export type PaymentMethod =
   | 'FPX'
@@ -184,7 +185,7 @@ export function validateReceipt(
 ): Result<ValidatedReceipt, ReceiptViolation[]> {
   const violations: ReceiptViolation[] = [];
 
-  if (!ISO_DATE.test(input.paymentDate) || Number.isNaN(Date.parse(input.paymentDate))) {
+  if (!isCalendarDate(input.paymentDate)) {
     violations.push({ code: 'INVALID_PAYMENT_DATE', value: input.paymentDate });
   }
 

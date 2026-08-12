@@ -45,6 +45,7 @@ import { Money, sumMoney, type Currency } from './money.js';
 import { err, ok, type Result } from './result.js';
 import { Rate, toBase } from './fx.js';
 import type { JournalEntryDraft, JournalLineDraft } from './journal-entry.js';
+import { isCalendarDate } from './calendar-date.js';
 
 /**
  * One open monetary item to be restated.
@@ -104,7 +105,7 @@ export function revalue(
 ): Result<Revaluation, RevaluationViolation[]> {
   const violations: RevaluationViolation[] = [];
 
-  if (!ISO_DATE.test(asOfDate) || Number.isNaN(Date.parse(asOfDate))) {
+  if (!isCalendarDate(asOfDate)) {
     violations.push({ code: 'INVALID_AS_OF_DATE', value: asOfDate });
   }
 

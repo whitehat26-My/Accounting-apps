@@ -58,9 +58,32 @@ export const quantity = positiveDecimal.describe('A quantity as a decimal string
  * inherits that ambiguity produces invoices dated a month out with nothing to
  * detect it.
  */
+/**
+ * A real day, not merely a well-shaped one.
+ *
+ * The regex proves the SHAPE. It says nothing about whether the day exists, and
+ * `2026-02-30` is shaped perfectly. Posted through the API it was accepted, the
+ * response echoed `2026-02-30`, and the ledger stored `2026-03-02` — a
+ * different month, so a different accounting period, with the answer and the
+ * books disagreeing and nothing raising a hand.
+ *
+ * Deliberately duplicated from `isCalendarDate` in `packages/domain`, six lines
+ * of pure predicate, rather than making `@emil/contracts` — which depends on
+ * nothing but zod — depend on the domain package to borrow them. Both are
+ * tested against the same cases; if they ever disagree, one of those tests
+ * fails.
+ */
+const isRealDay = (value: string): boolean => {
+  const [y, m, d] = value.split('-').map(Number) as [number, number, number];
+  if (m < 1 || m > 12 || d < 1 || d > 31) return false;
+  const utc = new Date(Date.UTC(y, m - 1, d));
+  return utc.getUTCFullYear() === y && utc.getUTCMonth() === m - 1 && utc.getUTCDate() === d;
+};
+
 export const isoDate = z
   .string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'Dates must be YYYY-MM-DD')
+  .refine(isRealDay, 'That date does not exist')
   .describe('A date as YYYY-MM-DD. Displayed as DD/MM/YYYY; never sent that way.');
 
 /**
@@ -79,9 +102,13 @@ export const isoDate = z
  */
 export const isoInstant = z
   .string()
-  .refine((v) => /^\d{4}-\d{2}-\d{2}$/.test(v) || !Number.isNaN(Date.parse(v)), {
-    message: 'Must be YYYY-MM-DD or an ISO 8601 timestamp',
-  })
+  .refine(
+    (v) =>
+      /^\d{4}-\d{2}-\d{2}$/.test(v)
+        ? isRealDay(v)
+        : !Number.isNaN(Date.parse(v)),
+    { message: 'Must be YYYY-MM-DD or an ISO 8601 timestamp' },
+  )
   .transform((v) => (/^\d{4}-\d{2}-\d{2}$/.test(v) ? `${v}T00:00:00+08:00` : v))
   .describe(
     'An instant: an ISO 8601 timestamp, or YYYY-MM-DD meaning midnight in Asia/Kuala_Lumpur.',

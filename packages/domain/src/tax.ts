@@ -32,6 +32,7 @@
 
 import { Money, sumMoney, type Currency, type RoundingMode } from './money.js';
 import { err, ok, type Result } from './result.js';
+import { isCalendarDate } from './calendar-date.js';
 
 /** Basis points: 1 bp = 0.01%. 8% = 800bp. Exact, no floats. */
 export type BasisPoints = bigint;
@@ -215,7 +216,7 @@ export function computeTax(
   const policy = input.policy ?? DEFAULT_TAX_POLICY;
   const violations: TaxViolation[] = [];
 
-  if (!ISO_DATE.test(input.taxPointDate) || Number.isNaN(Date.parse(input.taxPointDate))) {
+  if (!isCalendarDate(input.taxPointDate)) {
     violations.push({ code: 'INVALID_TAX_POINT_DATE', value: input.taxPointDate });
   }
   if (input.lines.length === 0) {

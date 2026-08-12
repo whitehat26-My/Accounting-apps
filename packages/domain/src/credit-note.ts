@@ -19,6 +19,7 @@ import { Money, type Currency } from './money.js';
 import { err, ok, type Result } from './result.js';
 import type { JournalEntryDraft, JournalLineDraft } from './journal-entry.js';
 import type { DocumentComputation } from './document.js';
+import { isCalendarDate } from './calendar-date.js';
 
 /**
  * Why the credit was raised. Recorded because MyInvois requires a reason on a
@@ -239,7 +240,7 @@ export function validateCreditNote(
 ): Result<CreditNoteCheck, CreditNoteViolation[]> {
   const violations: CreditNoteViolation[] = [];
 
-  if (!ISO_DATE.test(input.creditDate) || Number.isNaN(Date.parse(input.creditDate))) {
+  if (!isCalendarDate(input.creditDate)) {
     violations.push({ code: 'INVALID_CREDIT_DATE', value: input.creditDate });
   }
 

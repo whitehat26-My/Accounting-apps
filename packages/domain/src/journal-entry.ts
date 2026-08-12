@@ -15,6 +15,7 @@
 
 import { Money, sumMoney, type Currency } from './money.js';
 import { err, ok, type Result } from './result.js';
+import { isCalendarDate } from './calendar-date.js';
 
 export type EntrySide = 'DEBIT' | 'CREDIT';
 
@@ -85,7 +86,7 @@ export function validateJournalEntry(
 ): Result<ValidatedJournalEntry, JournalEntryViolation[]> {
   const violations: JournalEntryViolation[] = [];
 
-  if (!ISO_DATE.test(draft.entryDate) || Number.isNaN(Date.parse(draft.entryDate))) {
+  if (!isCalendarDate(draft.entryDate)) {
     violations.push({ code: 'INVALID_ENTRY_DATE', value: draft.entryDate });
   }
 

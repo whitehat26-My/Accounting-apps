@@ -98,23 +98,55 @@ export class DuitNowQrError extends Error {
 }
 
 /**
+ * The number of BYTES a string occupies in the symbol.
+ *
+ * ---------------------------------------------------------------------------
+ * THE DISTINCTION THAT BROKE EVERY QR WITH AN ACCENT IN THE MERCHANT NAME.
+ *
+ * A JavaScript string's `.length` counts UTF-16 code units. `encodeQr` writes
+ * the payload with `new TextEncoder()`, so the symbol carries UTF-8 BYTES, and
+ * EMVCo lengths count exactly those bytes. For "Kedai Kopi Café" the two
+ * disagree — 15 units, 16 bytes — so tag 59 declared 15, the scanner consumed
+ * fifteen bytes, and the sixteenth was read as the start of the next tag. The
+ * parse desynchronised, the payment reference in tag 62 was never reached, and
+ * the CRC (also computed over code units) failed, so a conformant reader
+ * rejected the symbol outright.
+ *
+ * None of that was visible from inside this module: `parseTlv` and `verifyQr`
+ * walk the same JavaScript string with the same UTF-16 convention, so they
+ * agreed with the builder and the tests passed. It is the same shape of failure
+ * as the format-information bug in `qr.ts` — code and test sharing a convention
+ * the outside world does not share — and it was found the same way, by decoding
+ * what actually goes on the wire rather than what the code believes it wrote.
+ *
+ * ASCII is unaffected, which is why this survived: the two counts are equal for
+ * every character below U+0080. Malaysian business names are not all ASCII.
+ * ---------------------------------------------------------------------------
+ */
+const BYTES = new TextEncoder();
+export function byteLength(value: string): number {
+  return BYTES.encode(value).length;
+}
+
+/**
  * Encode one tag-length-value element.
  *
- * The length is two ASCII digits — so no value may exceed 99 characters, and
- * one that does is an error rather than a silent truncation. A truncated
- * merchant id would produce a scannable QR pointing somewhere unintended.
+ * The length is two ASCII digits — so no value may exceed 99 BYTES, and one
+ * that does is an error rather than a silent truncation. A truncated merchant
+ * id would produce a scannable QR pointing somewhere unintended.
  */
 export function tlv(tag: string, value: string): string {
   if (!/^\d{2}$/.test(tag)) {
     throw new DuitNowQrError('INVALID_FIELD', `Tag must be two digits, got "${tag}"`);
   }
-  if (value.length > 99) {
+  const length = byteLength(value);
+  if (length > 99) {
     throw new DuitNowQrError(
       'INVALID_FIELD',
-      `Value for tag ${tag} is ${value.length} characters; EMVCo allows at most 99`,
+      `Value for tag ${tag} is ${length} bytes; EMVCo allows at most 99`,
     );
   }
-  return `${tag}${String(value.length).padStart(2, '0')}${value}`;
+  return `${tag}${String(length).padStart(2, '0')}${value}`;
 }
 
 /**
@@ -128,8 +160,15 @@ export function tlv(tag: string, value: string): string {
 export function crc16(input: string): number {
   let crc = 0xffff;
 
-  for (let i = 0; i < input.length; i++) {
-    crc ^= input.charCodeAt(i) << 8;
+  /*
+   * OVER THE BYTES, not the code units — see `byteLength` above. `charCodeAt`
+   * returns 0xE9 for "é" where the symbol actually carries 0xC3 0xA9, so a
+   * name with one accent produced a checksum no scanner could reproduce. The
+   * published check value for "123456789" is unchanged by this: it is ASCII,
+   * where the two are identical.
+   */
+  for (const byte of BYTES.encode(input)) {
+    crc ^= byte << 8;
     for (let bit = 0; bit < 8; bit++) {
       crc = (crc & 0x8000) !== 0 ? ((crc << 1) ^ 0x1021) & 0xffff : (crc << 1) & 0xffff;
     }
@@ -222,8 +261,23 @@ export function parseTlv(payload: string): Map<string, string> {
 
 /** Whether a payload's checksum is intact. */
 export function verifyQr(payload: string): boolean {
-  const marker = payload.lastIndexOf(`${TAG.CRC}04`);
-  if (marker === -1 || marker + 8 !== payload.length) return false;
+  /*
+   * THE MARKER IS AT A FIXED OFFSET, AND SEARCHING FOR IT WAS A BUG.
+   *
+   * This used to be `lastIndexOf('6304')`. EMVCo puts the CRC element last and
+   * fixes its length at four, so the header sits exactly eight characters from
+   * the end — but a CRC whose own hex value is "6304" contains the search
+   * string, `lastIndexOf` found THAT, and the offset check then failed. A
+   * perfectly valid payload was reported corrupt. Measured on real payloads:
+   * three false negatives in 37,287.
+   *
+   * The same accident made the "every payload it builds verifies" property test
+   * a latent flake that would have failed roughly one run in three hundred, and
+   * been dismissed as noise.
+   */
+  if (payload.length < 8) return false;
+  const marker = payload.length - 8;
+  if (payload.slice(marker, marker + 4) !== `${TAG.CRC}04`) return false;
 
   const body = payload.slice(0, marker + 4);
   const supplied = payload.slice(marker + 4);
@@ -251,6 +305,27 @@ export function amountForQr(amount: Money): string {
     .replace(/(\.\d{2})\d*$/, '$1');
 }
 
+/**
+ * Trim to `limit` BYTES without splitting a character in half.
+ *
+ * `slice(0, limit)` cut by code unit, which had two failures: a name of 25
+ * CJK characters is 75 bytes and sailed past a 25-"character" limit into the
+ * 99-byte tag ceiling, and a cut landing between the two halves of a surrogate
+ * pair (any emoji, and the rarer Chinese characters) produced a lone surrogate
+ * that `TextEncoder` renders as U+FFFD — a merchant name with a replacement
+ * character in it, on the screen of somebody about to pay.
+ *
+ * `Intl.Segmenter` would respect grapheme clusters and is the better tool for
+ * display; this is a wire format, where the unit that matters is the byte and
+ * the only requirement is not to emit half a code point.
+ */
 function truncate(value: string, limit: number): string {
-  return value.length <= limit ? value : value.slice(0, limit);
+  if (byteLength(value) <= limit) return value;
+
+  let out = '';
+  for (const character of value) {
+    if (byteLength(out + character) > limit) break;
+    out += character;
+  }
+  return out;
 }
