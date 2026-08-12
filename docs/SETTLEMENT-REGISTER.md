@@ -535,6 +535,44 @@ to do here next.
 document was later cancelled. The printed reference under the QR remains how a
 reader asks the live system, and the page says which check it ran.
 
+**FIXED 2026-08-12 — every QR this system had ever drawn was unscannable.**
+Two defects in `packages/domain/src/qr.ts`, found while photographing the till for
+the DuitNow feature and confirmed by decoding the screenshots rather than by
+looking at them:
+
+1. The 15 format-information bits were written least-significant-bit first. ISO/IEC
+   18004 Figure 25 places bit 14 at (8,0). A decoder therefore recovered a mask
+   number that was the bit-reverse of the one applied, unmasked with the wrong
+   rule, and read noise. Affects every version.
+2. Versions 7 and up carry no version-information blocks. Below version 7 a scanner
+   infers the version by counting modules; from 7 the standard requires the two
+   BCH(18,6) blocks, and without them a conformant decoder stops before it starts.
+
+Both were invisible to the existing tests because those tests read the format bits
+back in the same reversed order the encoder wrote them, and took the version from
+the module count rather than from the symbol. An encoder tested only by its
+author's own decoder can agree with itself about anything.
+
+**What this had broken, in the shop:** the DuitNow QR at the till (≈150-byte
+payload → version 8–9, hit by both), the signed attestation on invoices, receipts
+and repair documents (162-byte URL → version 9, also both), and the pointer-form
+`#d=<digest>` QR on every document printed before signing existed (version 4–6,
+hit by the format-bit defect alone).
+
+**Verification is now cross-implementation:** `packages/domain/test/qr-golden.test.ts`
+holds whole symbols produced by a separate encoder and compares module for module,
+and the fix was confirmed end to end by decoding an actual screenshot of the till
+and an actual 300 dpi raster of a rendered invoice PDF with OpenCV's reader. Both
+read back their exact payloads; the same captures taken before the fix read back
+nothing.
+
+**Outstanding, and it is not a code change: documents already in customers' hands.**
+Every receipt, invoice and warranty card printed before this date carries a QR that
+will not scan. The printed reference under each one still works — a reader can type
+it into `/verify` — and the documents are otherwise correct and legally complete, so
+nothing needs reissuing for the books. It is worth knowing before somebody in the
+shop concludes that a customer's phone is at fault.
+
 ### 4.11 Cloud hosting — BUILT as configuration; two external answers still open
 
 `netlify.toml`, `scripts/netlify-redirects.mjs`, the `EMIL_STATIC` build target in

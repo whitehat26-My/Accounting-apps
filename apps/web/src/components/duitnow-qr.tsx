@@ -1,5 +1,6 @@
 'use client';
 
+import { useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { encodeQr } from '@emil/domain';
 import { api } from '@/lib/api';
@@ -131,6 +132,24 @@ function QrSymbol({ payload, size = 220 }: { payload: string; size?: number }) {
   const matrix = encodeQr(payload);
   const QUIET = 4;
   const span = matrix.length + QUIET * 2;
+
+  /*
+   * Clear the floating chrome off the symbol for as long as it is drawn.
+   *
+   * The assistant launcher and the notice stack are `fixed` to the viewport, so
+   * no amount of layout here moves them; at 390px they land on the QR and it
+   * stops scanning. The attribute is set on `document.body` — see globals.css
+   * for the rule and for how the overlap was proved.
+   *
+   * Cleared on unmount, which is every path out: ringing the next sale,
+   * switching tender, leaving the till.
+   */
+  useEffect(() => {
+    document.body.dataset['scanning'] = '1';
+    return () => {
+      delete document.body.dataset['scanning'];
+    };
+  }, []);
 
   return (
     <svg

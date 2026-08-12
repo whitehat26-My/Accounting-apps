@@ -73,30 +73,99 @@ describe('format information', () => {
     '100010111111001', '100000011001110', '100111110010111', '100101010100000',
   ];
 
+  /*
+   * THE ORDER THE MODULES ARE READ IN IS PART OF THE CLAIM.
+   *
+   * This block used to end with `.reverse()`, on the note "written
+   * most-significant-bit-last by the encoder". That is not a fact about the
+   * standard, it is a fact about the encoder — and the encoder had it
+   * backwards. Reading it back the same way it was written recovered the
+   * published string and passed, while no scanner on earth could read the
+   * symbol.
+   *
+   * ISO/IEC 18004 Figure 25 fixes the placement: bit 14 (the MSB of the
+   * published string) at (8,0), running to bit 0 at (0,8), and the second copy
+   * from (n-1,8) to (8,n-1). Read in that order the string comes out
+   * most-significant-bit FIRST, with no reversal anywhere. The reversal is
+   * gone, and `qr-golden.test.ts` compares whole symbols against a separate
+   * implementation so that no shared convention can hide here again.
+   */
+  const readFormat = (m: QrMatrix, positions: [number, number][]) =>
+    positions.map(([r, c]) => (m[r]![c] ? '1' : '0')).join('');
+
   it('writes one of the published strings, in both copies, consistently', () => {
     const m = encodeQr('hello');
     const n = size(m);
 
-    // Copy 1 reads bit 0..14 around the top-left finder.
-    const copy1: boolean[] = [];
-    for (let i = 0; i <= 5; i++) copy1[i] = m[8]![i]!;
-    copy1[6] = m[8]![7]!;
-    copy1[7] = m[8]![8]!;
-    copy1[8] = m[7]![8]!;
-    for (let i = 9; i <= 14; i++) copy1[i] = m[14 - i]![8]!;
+    const copy1: [number, number][] = [
+      ...Array.from({ length: 6 }, (_, c) => [8, c] as [number, number]),
+      [8, 7], [8, 8], [7, 8],
+      ...Array.from({ length: 6 }, (_, i) => [5 - i, 8] as [number, number]),
+    ];
+    const copy2: [number, number][] = [
+      ...Array.from({ length: 7 }, (_, i) => [n - 1 - i, 8] as [number, number]),
+      ...Array.from({ length: 8 }, (_, i) => [8, n - 8 + i] as [number, number]),
+    ];
 
-    const copy2: boolean[] = [];
-    for (let i = 0; i <= 6; i++) copy2[i] = m[n - 1 - i]![8]!;
-    for (let i = 7; i <= 14; i++) copy2[i] = m[8]![n - 15 + i]!;
-
-    // Written most-significant-bit-last by the encoder, so reverse to read.
-    const asString = (bits: boolean[]) =>
-      bits.map((b) => (b ? '1' : '0')).reverse().join('');
-
-    expect(PUBLISHED).toContain(asString(copy1));
+    expect(PUBLISHED).toContain(readFormat(m, copy1));
     // Both copies must say the same thing, or a scanner reading the damaged
     // corner gets a different mask than the one actually applied.
-    expect(asString(copy2)).toBe(asString(copy1));
+    expect(readFormat(m, copy2)).toBe(readFormat(m, copy1));
+  });
+});
+
+describe('version information', () => {
+  /**
+   * From version 7 a scanner is no longer allowed to infer the version by
+   * counting modules — two 6x3 blocks state it, BCH(18,6)-coded. Omit them and
+   * the symbol is structurally perfect and decodes as nothing at all, which is
+   * exactly what happened to every DuitNow QR the till drew: around 150 bytes
+   * of payload lands on version 8 or 9, on the far side of this threshold.
+   *
+   * The strings are ISO/IEC 18004 Annex D, hard-coded rather than recomputed
+   * for the same reason as the format table above.
+   */
+  const PUBLISHED: Record<number, string> = {
+    7: '000111110010010100',
+    8: '001000010110111100',
+    9: '001001101010011001',
+    10: '001010010011010011',
+  };
+
+  /** The smallest payload that lands on each version, at EC level M. */
+  const AT_VERSION: Record<number, string> = {
+    7: 'a'.repeat(110),
+    8: 'a'.repeat(130),
+    9: 'a'.repeat(160),
+    10: 'a'.repeat(195),
+  };
+
+  for (const version of [7, 8, 9, 10]) {
+    it(`states version ${version} in both blocks`, () => {
+      const m = encodeQr(AT_VERSION[version]!);
+      const n = size(m);
+      expect((n - 17) / 4).toBe(version);
+
+      // Bit 0 is the LSB and sits nearest each finder; the two blocks are
+      // transposes of one another.
+      const upperRight: string[] = [];
+      const lowerLeft: string[] = [];
+      for (let i = 17; i >= 0; i--) {
+        const row = Math.floor(i / 3);
+        const col = n - 11 + (i % 3);
+        upperRight.push(m[row]![col] ? '1' : '0');
+        lowerLeft.push(m[col]![row] ? '1' : '0');
+      }
+      expect(upperRight.join('')).toBe(PUBLISHED[version]);
+      expect(lowerLeft.join('')).toBe(PUBLISHED[version]);
+    });
+  }
+
+  it('leaves the blocks alone below version 7, where they do not exist', () => {
+    // Version 6 infers its size from the module count. Writing a version block
+    // there would overwrite data modules.
+    const m = encodeQr('a'.repeat(100));
+    expect(size(m)).toBe(41); // version 6
   });
 });
 
@@ -141,13 +210,29 @@ function decodeQr(matrix: QrMatrix): string {
 
   const reserved = functionModuleMap(n, version);
 
+  /*
+   * From version 7 a real scanner takes the version from the symbol rather
+   * than from the module count, so this does too — otherwise the decoder is
+   * told the answer and cannot notice a missing version block. It is read and
+   * checked against the size; a symbol that disagrees with itself is one no
+   * scanner would accept.
+   */
+  if (version >= 7) {
+    let stated = 0;
+    for (let i = 17; i >= 0; i--) {
+      stated = (stated << 1) | (matrix[Math.floor(i / 3)]![n - 11 + (i % 3)]! ? 1 : 0);
+    }
+    expect(stated >> 12).toBe(version);
+  }
+
   // The mask index lives in the format strip; read it and undo the mask.
+  // Bit 14 first — the standard's order, not the encoder's convenience.
   const formatBits: boolean[] = [];
-  for (let i = 0; i <= 5; i++) formatBits[i] = matrix[8]![i]!;
-  formatBits[6] = matrix[8]![7]!;
+  for (let i = 0; i <= 5; i++) formatBits[14 - i] = matrix[8]![i]!;
+  formatBits[8] = matrix[8]![7]!;
   formatBits[7] = matrix[8]![8]!;
-  formatBits[8] = matrix[7]![8]!;
-  for (let i = 9; i <= 14; i++) formatBits[i] = matrix[14 - i]![8]!;
+  formatBits[6] = matrix[7]![8]!;
+  for (let i = 9; i <= 14; i++) formatBits[14 - i] = matrix[14 - i]![8]!;
   const format =
     formatBits.reduce((acc, bit, i) => acc | ((bit ? 1 : 0) << i), 0) ^ 0b101010000010010;
   // The 15 bits are (5 data << 10) | 10 BCH, and the data half is
@@ -270,6 +355,16 @@ function functionModuleMap(n: number, version: number): boolean[][] {
   for (let i = 0; i < 8; i++) {
     map[8]![n - 1 - i] = true;
     map[n - 1 - i]![8] = true;
+  }
+
+  // The two version blocks, from version 7 up. They are function modules, so
+  // the zig-zag steps over them; a decoder that did not know that would read
+  // 36 modules of version string as though they were data and recover noise.
+  if (version >= 7) {
+    for (let i = 0; i < 18; i++) {
+      map[Math.floor(i / 3)]![n - 11 + (i % 3)] = true;
+      map[n - 11 + (i % 3)]![Math.floor(i / 3)] = true;
+    }
   }
   return map;
 }

@@ -289,6 +289,8 @@ export function Assistant() {
       <button
         aria-label="Open assistant"
         onClick={() => setOpen(true)}
+        // Stands down while a payment QR is on screen — see globals.css.
+        data-floating="hide"
         className="fixed bottom-5 right-5 z-40 flex h-12 w-12 items-center justify-center rounded-full bg-primary p-3 text-primary-ink shadow-lg shadow-primary/40 transition-transform hover:scale-105"
       >
         <SparkleIcon />

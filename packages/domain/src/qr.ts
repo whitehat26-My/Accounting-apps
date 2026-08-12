@@ -298,6 +298,8 @@ function placeFunctionPatterns(size: number, version: number): Grid {
   // The dark module — always set, always here.
   grid[size - 8]![8] = true;
 
+  writeVersionInfo(grid, size, version);
+
   // Reserve the format-information strips; written properly after masking.
   for (let i = 0; i < 9; i++) {
     if (grid[8]![i] === null) grid[8]![i] = false;
@@ -353,6 +355,55 @@ function applyMask(grid: Grid, reserved: boolean[][], mask: number): boolean[][]
 }
 
 /**
+ * The 18-bit version string, which versions 7 and up MUST carry.
+ *
+ * ---------------------------------------------------------------------------
+ * WITHOUT THIS, A LARGE SYMBOL IS UNREADABLE — AND LOOKS PERFECT.
+ *
+ * Up to version 6 a scanner works the version out by counting modules across
+ * the symbol. From version 7 the standard stops letting it guess: two 6x3
+ * blocks, one beside each of the lower-left and upper-right finders, carry the
+ * version number BCH(18,6)-coded, and a conformant decoder reads them. Leave
+ * the blocks light and the decoder finds no valid version, gives up, and the
+ * symbol scans as nothing at all.
+ *
+ * The reason this went unnoticed is that it is invisible: the finders, timing
+ * and data are all correct, so the code looks like a QR code, photographs like
+ * a QR code and fails only in a scanner. Every DuitNow payload is around 150
+ * bytes, which is version 8 or 9 — so the till QR was in exactly the band this
+ * omission breaks, while the short verification codes on receipts (version 3
+ * to 6) were unaffected by it.
+ *
+ * Written HERE, in the function patterns, rather than after masking: these
+ * modules are function modules, so they must be excluded from the data zig-zag
+ * and left unmasked, and being in the grid before `reserved` is derived is what
+ * arranges both.
+ * ---------------------------------------------------------------------------
+ */
+function writeVersionInfo(grid: Grid, size: number, version: number) {
+  if (version < 7) return;
+
+  // BCH(18,6), generator x^12 + x^11 + x^10 + x^9 + x^8 + x^5 + x^2 + 1.
+  let bch = version << 12;
+  for (let i = 5; i >= 0; i--) {
+    if ((bch >> (i + 12)) & 1) bch ^= 0b1111100100101 << i;
+  }
+  const info = (version << 12) | bch;
+
+  /*
+   * Bit 0 is the LSB and sits at the corner nearest the finder in both blocks;
+   * the two are transposes of one another, which is why one loop writes both.
+   */
+  for (let i = 0; i < 18; i++) {
+    const bit = ((info >> i) & 1) === 1;
+    const row = Math.floor(i / 3);
+    const col = size - 11 + (i % 3);
+    grid[row]![col] = bit; // upper right
+    grid[col]![row] = bit; // lower left
+  }
+}
+
+/**
  * The 15-bit format string: EC level M (0b00) and the mask, BCH(15,5)-coded
  * and XOR-masked with 0x5412 so an all-zero format cannot occur.
  */
@@ -364,7 +415,26 @@ function writeFormatInfo(grid: boolean[][], size: number, mask: number) {
   }
   const format = ((data << 10) | bch) ^ 0b101010000010010;
 
-  const bit = (i: number) => ((format >> i) & 1) === 1;
+  /*
+   * BIT 14 IS THE MOST SIGNIFICANT, AND IT GOES IN THE FIRST POSITION.
+   *
+   * ISO/IEC 18004 numbers the format bits 14 down to 0, and Figure 25 places
+   * bit 14 at (8,0) — the module nearest the top-left finder — running down to
+   * bit 0 at (0,8). Written the other way round, every module of the symbol is
+   * still correct and NO SCANNER CAN READ IT: the decoder recovers a mask
+   * number that is the bit-reverse of the one actually applied, unmasks with
+   * the wrong rule, and the data comes back as noise.
+   *
+   * This was `(format >> i) & 1` for months. Every QR this app has ever drawn —
+   * the verification code on invoices, receipts and warranty cards, and the
+   * DuitNow QR at the till — was structurally perfect and unscannable. It
+   * survived because the test that checked format information read the bits
+   * back in the same reversed order it wrote them, so the encoder and its test
+   * agreed with each other about a convention they had both got backwards.
+   * `qr-golden.test.ts` now compares whole symbols against an independent
+   * encoder instead, which cannot make that mistake.
+   */
+  const bit = (i: number) => ((format >> (14 - i)) & 1) === 1;
 
   // Copy 1, around the top-left finder.
   for (let i = 0; i <= 5; i++) grid[8]![i] = bit(i);

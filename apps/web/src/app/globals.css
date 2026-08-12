@@ -443,6 +443,53 @@ tbody tr:hover {
 }
 
 /* ---------------------------------------------------------------------------
+ * NOTHING MAY COVER A PAYMENT QR.
+ *
+ * Two things float above every screen: the assistant launcher at bottom-right
+ * and the notice stack, which on a phone is full-width along the bottom edge.
+ * On a 1440px till they sit far from the DuitNow QR in the right-hand column.
+ * At 390px the sale result is at the bottom of a long page, and BOTH land on
+ * top of the symbol — the "Sale rung — INV-00016" toast across its lower third
+ * and the launcher over its bottom-right corner.
+ *
+ * That is not cosmetic. A QR is read by a camera doing error correction on a
+ * complete symbol; covering a third of it at EC level M is well past what the
+ * 15% recovery can reconstruct, so it does not scan at all. It was confirmed
+ * the only way this can be confirmed: by decoding the screenshot. The desktop
+ * capture read back the full EMVCo payload; the phone capture read back
+ * nothing, and the two symbols were identical.
+ *
+ * So while a scannable QR is on screen the floating chrome stands down. The
+ * signal is a body attribute rather than React context because the three
+ * components involved — the QR, the launcher and the notices — sit in
+ * different subtrees, and a customer waiting at a counter is not a good moment
+ * to discover that a provider was missing.
+ * ------------------------------------------------------------------------ */
+
+body[data-scanning='1'] [data-floating='hide'] {
+  display: none;
+}
+
+/*
+ * The notice stack is MUTED, not removed, and the difference is the whole
+ * point of the component. It is this app's only live region for anything that
+ * happens away from a form — `display: none` would stop "Sale rung —
+ * INV-00017" being announced at all, which is a regression for the cashier who
+ * is looking at the drawer rather than the screen. So it is taken off the
+ * glass while remaining in the accessibility tree: nothing covers the symbol,
+ * and the sale is still spoken.
+ */
+body[data-scanning='1'] [data-floating='mute'] {
+  clip-path: inset(50%);
+  height: 1px;
+  width: 1px;
+  overflow: hidden;
+  white-space: nowrap;
+  inset: auto auto 0 0;
+  padding: 0;
+}
+
+/* ---------------------------------------------------------------------------
  * PRINTING A SCREEN.
  *
  * Invoices, receipts, statements, credit notes, the day sheet and the repair

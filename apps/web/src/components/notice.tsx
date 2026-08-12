@@ -121,7 +121,13 @@ export function NoticeProvider({ children }: { children: ReactNode }) {
         rings three sales in a row would have lost the button entirely. On a
         phone the notices go bottom-CENTRE, where nothing else lives.
       */}
-      <div className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 p-4 sm:inset-x-auto sm:bottom-20 sm:right-5 sm:items-end sm:p-0">
+      <div
+        // Taken off the glass — but NOT out of the accessibility tree — while a
+        // payment QR is on screen, so it cannot cover the symbol and the sale
+        // is still announced. See globals.css.
+        data-floating="mute"
+        className="pointer-events-none fixed inset-x-0 bottom-0 z-50 flex flex-col items-center gap-2 p-4 sm:inset-x-auto sm:bottom-20 sm:right-5 sm:items-end sm:p-0"
+      >
         {notices.map((notice) => (
           <div
             key={notice.id}
