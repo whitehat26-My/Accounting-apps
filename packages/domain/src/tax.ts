@@ -174,7 +174,6 @@ export type TaxViolation =
   | { readonly code: 'INVALID_TAX_POINT_DATE'; readonly value: string }
   | { readonly code: 'NO_LINES' };
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Resolve the rate version in force on `date`.

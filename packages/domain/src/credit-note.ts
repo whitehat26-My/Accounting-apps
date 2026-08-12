@@ -218,7 +218,6 @@ export type CreditNoteViolation =
   | { readonly code: 'ZERO_VALUE_CREDIT' }
   | { readonly code: 'CREDIT_EXCEEDS_INVOICE'; readonly invoiceId: string; readonly credit: string; readonly invoiceTotal: string };
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 export interface CreditNoteCheck {
   readonly creditDate: string;

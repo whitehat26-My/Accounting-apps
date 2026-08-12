@@ -152,7 +152,6 @@ export interface EInvoiceValidationConfig {
   readonly baseCurrency?: Currency;
 }
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Validate a document against everything checkable locally.

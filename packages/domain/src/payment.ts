@@ -169,7 +169,6 @@ export type ReceiptViolation =
   | { readonly code: 'NON_POSITIVE_AMOUNT'; readonly amount: string }
   | { readonly code: 'INVALID_PAYMENT_DATE'; readonly value: string };
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Validate a receipt against the invoices it claims to settle.

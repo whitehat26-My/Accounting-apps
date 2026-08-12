@@ -87,7 +87,6 @@ export type RevaluationViolation =
   | { readonly code: 'MISSING_CLOSING_RATE'; readonly currency: Currency }
   | { readonly code: 'INVALID_AS_OF_DATE'; readonly value: string };
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Restate open items at closing rates.

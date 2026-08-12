@@ -71,7 +71,6 @@ export type JournalEntryViolation =
   | { readonly code: 'MISSING_ACCOUNT'; readonly lineIndex: number }
   | { readonly code: 'INVALID_ENTRY_DATE'; readonly value: string };
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
  * Validate a draft entry. Returns every violation found, not just the first.
