@@ -42,6 +42,7 @@ Everything in this specification follows from treating those five rows as first-
 | [`06-data-model.md`](06-data-model.md) | Reference schema for the ledger core, with DDL sketches |
 | [`07-prompt-engineering-guidelines.md`](07-prompt-engineering-guidelines.md) | Meta-prompts for building these modules with Claude |
 | [`08-reading-from-python.md`](08-reading-from-python.md) | How the tables map out for a second service reading this same database — RLS, types, what must never be written |
+| [`09-enterprise-roadmap.md`](09-enterprise-roadmap.md) | The desktop app, MyInvois, code signing and DuitNow QR — what is built, and the one external thing each remaining piece waits on |
 
 ## 4. MVP scope boundary
 

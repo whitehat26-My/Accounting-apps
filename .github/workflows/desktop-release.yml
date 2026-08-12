@@ -1,0 +1,94 @@
+# Build, sign and publish the Windows till application.
+#
+# ---------------------------------------------------------------------------
+# TWO SIGNATURES, AND THEY ARE NOT INTERCHANGEABLE.
+#
+# This workflow applies one of them and leaves a hole where the other goes,
+# because they solve different problems and conflating them is the usual way a
+# desktop release ends up half-protected:
+#
+#   1. TAURI_SIGNING_PRIVATE_KEY signs the UPDATE ARTIFACT with minisign. The
+#      installed app refuses an update whose signature does not match the
+#      `pubkey` compiled into it. This stops a tampered patch, and it is what
+#      makes the auto-updater safe to point at a public URL.
+#
+#   2. A WINDOWS CODE-SIGNING CERTIFICATE signs the INSTALLER so SmartScreen
+#      does not warn the shop owner that the software is untrusted. Tauri's
+#      minisign key does nothing for this — Windows has never heard of it.
+#
+# Neither substitutes for the other. Without (1) the updater is a remote-code
+# execution channel; without (2) every install shows a blue warning panel and
+# some of them never get past it. See docs/architecture/09-enterprise-roadmap.md.
+# ---------------------------------------------------------------------------
+name: desktop-release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      # The Rust build is the slow half; cache it on the lockfile.
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build, sign the update artifact, and draft the release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          # (1) The updater signature. Generate once with `pnpm --filter
+          # @emil/desktop tauri signer generate`, put the private half here as a
+          # repository secret, and the public half in tauri.conf.json.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: apps/desktop
+          tagName: ${{ github.ref_name }}
+          releaseName: 'Emil Accounting Pro ${{ github.ref_name }}'
+          releaseDraft: true
+          # `latest.json` is the file tauri.conf.json's `endpoints` points at.
+          # tauri-action writes and uploads it from `createUpdaterArtifacts`.
+          includeUpdaterJson: true
+
+      # (2) Windows code signing. DELIBERATELY LEFT UNCONFIGURED rather than
+      # written with placeholder secrets that would fail the build for everyone
+      # who forks this before buying a certificate.
+      #
+      # Two routes, and the second is the one to prefer for a shop this size:
+      #
+      #   - A certificate file: import the .pfx, then set `signCommand` in
+      #     tauri.conf.json's bundle.windows so Tauri signs each artifact.
+      #   - Azure Trusted Signing: no USB token to keep plugged into a build
+      #     machine, billed per month, and the same signature to Windows.
+      #
+      # Whichever is used, ALWAYS timestamp (`/tn` + a TSA URL). Without a
+      # timestamp every signature stops validating the day the certificate
+      # expires, including on copies already installed in shops.
+      #
+      # See docs/architecture/09-enterprise-roadmap.md §2 before enabling.
+      - name: Code signing
+        if: false
+        run: echo 'Configure a certificate first — see the roadmap document.'

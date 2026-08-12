@@ -1,0 +1,15 @@
+{
+  "name": "@emil/desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The till as a Windows application — a Tauri shell around the shop server",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri",
+    "icons": "tauri icon ../web/public/logo.png"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

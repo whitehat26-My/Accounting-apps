@@ -18,3 +18,8 @@ test-results/
 playwright-report/
 out/
 e2e-artifacts/
+
+# Rust build output for the desktop shell. 4 GB of it after one check.
+apps/desktop/src-tauri/target/
+# Tauri writes these from tauri.conf.json at build time.
+apps/desktop/src-tauri/gen/

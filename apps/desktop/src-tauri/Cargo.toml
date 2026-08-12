@@ -1,0 +1,43 @@
+[package]
+name = "emil-desktop"
+version = "0.1.0"
+description = "Emil Accounting Pro — the till, as a Windows application"
+edition = "2021"
+rust-version = "1.77"
+publish = false
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
+tauri-plugin-single-instance = "2"
+
+# NO HTTP CLIENT DEPENDENCY, ON PURPOSE.
+#
+# The obvious choice is `reqwest`, and it was the first thing here. It pulls
+# rustls, which pulls `aws-lc-sys`, which needs a C toolchain for the target —
+# so the crate that exists to send one GET request is the reason the build needs
+# a cross-compiler. The probe in `main.rs` is std-only instead.
+#
+# It also turned out to be the more honest shape: the till talks to the shop
+# server over plain HTTP on the LAN and must never route through Tailscale
+# (docs/HYBRID-SHOP-DEPLOYMENT.md §2.3), so TLS was never on this path.
+url = "2"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[features]
+# Kept for parity with the Tauri template; the app defines no custom features.
+default = []
+
+[profile.release]
+# A till is not a place to debug, and a smaller binary is a faster update
+# download over a shop's ADSL line.
+panic = "abort"
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
