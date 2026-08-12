@@ -1,4 +1,4 @@
-import { Money, toCsv, type AccountType } from '@emil/domain';
+import { Money, standardCounterAccount, toCsv, type AccountType } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { loadBaseCurrency } from './invoice.js';
 import { ReportError } from './report.js';
@@ -434,8 +434,19 @@ export interface JournalCounterAccountSuggestion {
   readonly accountId: string;
   readonly code: string;
   readonly name: string;
-  /** How many past two-line entries paired these accounts this way. */
+  /** How many past two-line entries paired these accounts this way. Zero from the table. */
   readonly occurrences: number;
+  /**
+   * Where the answer came from, because the two deserve different trust and
+   * the form says which out loud.
+   *
+   * `HISTORY` is a fact about this shop: they have done this before, this many
+   * times. `STANDARD_ADJUSTMENT` is a fact about bookkeeping, offered because
+   * they have never posted this account and there was otherwise nothing to say.
+   */
+  readonly source: 'HISTORY' | 'STANDARD_ADJUSTMENT';
+  /** The rule's reasoning, on `STANDARD_ADJUSTMENT` only. Shown to the user. */
+  readonly because?: string;
 }
 
 /**
@@ -457,6 +468,25 @@ export interface JournalCounterAccountSuggestion {
  * Restricted to entries with EXACTLY two lines: a multi-line accrual would
  * otherwise pollute the count with every account it happens to share an
  * entry with, not the one it was actually paired against.
+ *
+ * ---------------------------------------------------------------------------
+ * AND THEN, ONLY IN THE SILENCE, THE STANDARD ADJUSTMENTS.
+ *
+ * The paragraph above is still the rule, and the order of the two lookups is
+ * how it survives: history is asked first and its answer is final. The table in
+ * `@emil/domain/journal-pairing` is consulted ONLY when this tenant has never
+ * posted the account at all — the case that previously returned `null` and left
+ * a new shop's accountant typing both lines by hand.
+ *
+ * What makes that acceptable, when a "sensible pairs" table was refused above,
+ * is that the table holds only entries where the pairing is an identity rather
+ * than a habit. Depreciation is credited to accumulated depreciation in every
+ * set of books there has ever been. Rent is not paid from cash in every set of
+ * books, which is why no rent rule exists.
+ *
+ * The answer carries its `source` so the form can say which it is, and a tenant
+ * missing the account a rule names gets `null` — the same honest silence, never
+ * a suggestion pointing at whatever else happens to sit at that code here.
  * ---------------------------------------------------------------------------
  */
 export async function suggestJournalCounterAccount(
@@ -499,8 +529,66 @@ export async function suggestJournalCounterAccount(
        LIMIT 1
   `;
 
-  if (!row) return null;
-  return { accountId: row.account_id, code: row.code, name: row.name, occurrences: Number(row.occurrences) };
+  if (row) {
+    return {
+      accountId: row.account_id,
+      code: row.code,
+      name: row.name,
+      occurrences: Number(row.occurrences),
+      source: 'HISTORY',
+    };
+  }
+
+  return standardAdjustmentFor(tx, ctx, accountId, side);
+}
+
+/**
+ * The fallback: what bookkeeping says, when history says nothing.
+ *
+ * Two queries rather than a join, and only on the path history did not answer —
+ * so the common case (a shop with a posting habit) costs exactly what it did
+ * before this existed.
+ */
+async function standardAdjustmentFor(
+  tx: Tx,
+  ctx: TenantContext,
+  accountId: string,
+  side: 'DEBIT' | 'CREDIT',
+): Promise<JournalCounterAccountSuggestion | null> {
+  // The rules key on CODE, not on id — a code is stable across tenants and an
+  // id is not. So the account the user picked has to be resolved to its code
+  // first. Scoped to the tenant: an id from another tenant finds nothing here,
+  // which is the 404-not-403 posture the whole system takes.
+  const [picked] = await tx<{ code: string }[]>`
+      SELECT code FROM account
+       WHERE tenant_id = ${ctx.tenantId} AND id = ${accountId}
+  `;
+  if (!picked) return null;
+
+  const rule = standardCounterAccount(picked.code, side);
+  if (!rule) return null;
+
+  /*
+   * The rule names a code; this tenant may not have it, or may have made it
+   * mean something else entirely. `is_active` matters: suggesting an account
+   * somebody deliberately retired is worse than suggesting nothing.
+   */
+  const [counter] = await tx<{ id: string; code: string; name: string }[]>`
+      SELECT id, code, name FROM account
+       WHERE tenant_id = ${ctx.tenantId} AND code = ${rule.then.code} AND is_active
+  `;
+  if (!counter) return null;
+
+  return {
+    accountId: counter.id,
+    code: counter.code,
+    name: counter.name,
+    // Zero, and it is not a placeholder: this tenant has genuinely posted this
+    // pairing no times. The form reads the source rather than the count.
+    occurrences: 0,
+    source: 'STANDARD_ADJUSTMENT',
+    because: rule.because,
+  };
 }
 
 // ------------------------------------------------------------------ internals

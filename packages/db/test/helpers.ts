@@ -183,6 +183,15 @@ export async function seedTenant(admin: Sql, name = 'Emil Demo Sdn Bhd'): Promis
       ['2320', 'EIS Payable', 'LIABILITY'],
       ['2330', 'PCB Payable', 'LIABILITY'],
       ['2340', 'Net Wages Payable', 'LIABILITY'],
+      // The month-end adjustment accounts the journal pairing table names by
+      // code (0054). Present here so the fallback has something to resolve to;
+      // a tenant WITHOUT them is a case the tests cover by deactivating one.
+      ['1400', 'Prepayments', 'ASSET'],
+      ['1500', 'Fixed Assets — at Cost', 'ASSET'],
+      ['1590', 'Accumulated Depreciation', 'ASSET'],
+      ['2400', 'Accrued Expenses', 'LIABILITY'],
+      ['6300', 'Depreciation', 'EXPENSE'],
+      ['6400', 'Bank Charges', 'EXPENSE'],
     ];
 
     const accounts: Record<string, string> = {};

@@ -338,7 +338,7 @@ describe('the engine refuses to lose money', () => {
     const [prepayments] = await withTenant(admin, { tenantId: t.tenantId }, (tx) =>
       tx<{ id: string }[]>`
           INSERT INTO account (tenant_id, code, name, type)
-          VALUES (${t.tenantId}, '1500', 'Prepayments', 'ASSET')
+          VALUES (${t.tenantId}, '1700', 'Prepayments', 'ASSET')
           RETURNING id
       `,
     );
@@ -384,7 +384,7 @@ describe('the engine refuses to lose money', () => {
     } catch (error) {
       const detail = (error as { detail?: { code: string; accounts?: { code: string }[] }[] }).detail;
       const unmapped = detail?.find((d) => d.code === 'UNMAPPED_ACCOUNTS');
-      expect(unmapped?.accounts?.map((a) => a.code)).toEqual(['1500']);
+      expect(unmapped?.accounts?.map((a) => a.code)).toEqual(['1700']);
     }
 
     // Restore the template for any test that runs after this one.

@@ -60,6 +60,29 @@ export interface ProvisionedOrganisation {
  * account is a line someone has to look past on every report — and account
  * creation is already a route. What must be here is every account a POSTING
  * ROLE resolves to, because a missing role is a runtime refusal mid-document.
+ *
+ * THERE IS NOW A SECOND REASON AN ACCOUNT EARNS ITS PLACE, and it is worth
+ * stating because it loosens the rule above. The pairing engine
+ * (`@emil/domain/journal-pairing`) names accounts by CODE — it suggests that
+ * depreciation debited pairs with accumulated depreciation credited — and a
+ * rule pointing at a code no tenant has is a rule that never fires. Those six
+ * accounts are marked below. They are not role-backed and nothing refuses a
+ * document without them; what they buy is that the month-end adjustments an
+ * accountant actually keys have somewhere to land on day one.
+ *
+ * NONE OF THE SIX CARRIES A STATEMENT TAG, which is deliberate rather than an
+ * omission. The four tags in use (`cash_and_bank`, `trade_receivables`,
+ * `trade_payables`, `ap_revaluation`) each carry a meaning a report acts on:
+ * `trade_payables` on an accrual would file a non-trade liability under trade
+ * payables, and `trade_receivables` on a prepayment would call it a debt owed
+ * to the shop. `cash-flow.ts` says explicitly that anything less than certain
+ * is left to explicit configuration, and these are less than certain. Most of
+ * this chart is untagged for the same reason.
+ *
+ * Accumulated depreciation is an ASSET of contra sign — it holds a credit
+ * balance. That needs no special handling: `buildBalanceSheet` sums assets
+ * debit-positive (report.ts:454), so it nets against fixed assets at cost,
+ * which is the presentation a reader expects.
  */
 const DEFAULT_CHART: readonly {
   code: string; name: string; type: string; role?: string; tags?: string[];
@@ -70,6 +93,10 @@ const DEFAULT_CHART: readonly {
   { code: '1190', name: 'AR Currency Revaluation', type: 'ASSET', role: 'AR_REVALUATION', tags: ['trade_receivables'] },
   { code: '1200', name: 'Undeposited Funds', type: 'ASSET', role: 'UNDEPOSITED_FUNDS' },
   { code: '1300', name: 'Inventory on Hand', type: 'ASSET', role: 'INVENTORY' },
+  // Pairing-engine accounts (see the note above). Not role-backed.
+  { code: '1400', name: 'Prepayments', type: 'ASSET' },
+  { code: '1500', name: 'Fixed Assets — at Cost', type: 'ASSET' },
+  { code: '1590', name: 'Accumulated Depreciation', type: 'ASSET' },
   { code: '2000', name: 'Accounts Payable', type: 'LIABILITY', role: 'AP', tags: ['trade_payables'] },
   { code: '2090', name: 'AP Currency Revaluation', type: 'LIABILITY', role: 'AP_REVALUATION', tags: ['ap_revaluation'] },
   { code: '2100', name: 'SST Payable', type: 'LIABILITY', role: 'SST_PAYABLE', tags: ['trade_payables'] },
@@ -79,6 +106,7 @@ const DEFAULT_CHART: readonly {
   { code: '2320', name: 'EIS Payable', type: 'LIABILITY', role: 'EIS_PAYABLE', tags: ['trade_payables'] },
   { code: '2330', name: 'PCB Payable', type: 'LIABILITY', role: 'PCB_PAYABLE', tags: ['trade_payables'] },
   { code: '2340', name: 'Net Wages Payable', type: 'LIABILITY', role: 'NET_WAGES_PAYABLE', tags: ['trade_payables'] },
+  { code: '2400', name: 'Accrued Expenses', type: 'LIABILITY' },
   { code: '3000', name: 'Retained Earnings', type: 'EQUITY', role: 'RETAINED_EARNINGS' },
   { code: '3100', name: 'Opening Balances', type: 'EQUITY' },
   { code: '4000', name: 'Sales Revenue', type: 'INCOME' },
@@ -87,6 +115,8 @@ const DEFAULT_CHART: readonly {
   { code: '5900', name: 'Stock Shrinkage', type: 'EXPENSE', role: 'STOCK_SHRINKAGE' },
   { code: '6000', name: 'Operating Expenses', type: 'EXPENSE' },
   { code: '6100', name: 'Payment Gateway Fees', type: 'EXPENSE', role: 'GATEWAY_FEE' },
+  { code: '6300', name: 'Depreciation', type: 'EXPENSE' },
+  { code: '6400', name: 'Bank Charges', type: 'EXPENSE' },
   // Payroll (0039). Wages and the employer's statutory share are separate
   // expenses because they answer different questions — "what do I pay my
   // staff" and "what does employing them cost on top" — and each authority

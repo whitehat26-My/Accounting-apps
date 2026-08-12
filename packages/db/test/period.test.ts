@@ -238,7 +238,7 @@ describe('the chart of accounts', () => {
 
   it('refuses a child of a different type from its parent', async () => {
     const parent = await withTenant(sql, ctx, (tx) =>
-      createAccount(tx, ctx, { code: '6300', name: 'Premises', type: 'EXPENSE' }),
+      createAccount(tx, ctx, { code: '6520', name: 'Premises', type: 'EXPENSE' }),
     );
 
     // A liability under an expense makes every rolled-up subtotal wrong, and it
@@ -246,7 +246,7 @@ describe('the chart of accounts', () => {
     await expect(
       withTenant(sql, ctx, (tx) =>
         createAccount(tx, ctx, {
-          code: '6301',
+          code: '6521',
           name: 'Wrong side',
           type: 'LIABILITY',
           parentId: parent.id,
@@ -257,7 +257,7 @@ describe('the chart of accounts', () => {
 
   it('lets an unused account be reclassified', async () => {
     const account = await withTenant(sql, ctx, (tx) =>
-      createAccount(tx, ctx, { code: '6400', name: 'Miscoded', type: 'EXPENSE' }),
+      createAccount(tx, ctx, { code: '6510', name: 'Miscoded', type: 'EXPENSE' }),
     );
 
     const fixed = await withTenant(sql, ctx, (tx) =>

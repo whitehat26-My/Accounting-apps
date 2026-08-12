@@ -281,7 +281,7 @@ describe('the statement reconciles against real postings', () => {
 describe('classification', () => {
   it('reports an unclassified movement rather than assuming it is operating', async () => {
     const t = await seedTenant(admin, 'Unclass Sdn Bhd');
-    const van = await newAccount(t, '1500', 'Motor vehicles', 'ASSET');
+    const van = await newAccount(t, '1700', 'Motor vehicles', 'ASSET');
 
     await post(t, '2026-03-01', 'Bought a van', [
       [van, 'DEBIT', '80000.00'],
@@ -292,7 +292,7 @@ describe('classification', () => {
 
     expect(before.check.reconciles).toBe(true);
     expect(before.statement.unclassifiedAccounts).toEqual([
-      { code: '1500', name: 'Motor vehicles' },
+      { code: '1700', name: 'Motor vehicles' },
     ]);
     expect(section(before, 'OPERATING').subtotal.isZero()).toBe(true);
     expect(section(before, 'UNCLASSIFIED').subtotal.equals(rm('-80000.00'))).toBe(true);
