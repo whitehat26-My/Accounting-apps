@@ -210,7 +210,8 @@ describe('journal counter-account suggestion', () => {
     });
     // The reason travels with it: the form prints this, and a suggestion the
     // accountant cannot evaluate is one they accept blindly or ignore.
-    expect(String(response.body['suggestion']?.['because'])).toMatch(/depreciation/i);
+    const offered = response.body['suggestion'] as Record<string, unknown>;
+    expect(String(offered['because'])).toMatch(/depreciation/i);
   });
 
   it('lets this shop’s own habit overrule the standard adjustment', async () => {
@@ -249,7 +250,7 @@ describe('journal counter-account suggestion', () => {
       occurrences: 3,
     });
     // No reason string: history does not explain itself, it counts.
-    expect(after.body['suggestion']?.['because']).toBeUndefined();
+    expect((after.body['suggestion'] as Record<string, unknown>)['because']).toBeUndefined();
   });
 });
 

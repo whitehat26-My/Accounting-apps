@@ -269,7 +269,7 @@ export default function JournalsPage() {
       const next: FormLine = {
         accountId: '',
         side: gap?.side ?? 'CREDIT',
-        amount: gap ? gap.amount.toString() : '',
+        amount: gap ? amountField(gap.amount) : '',
       };
       if (gap) markSettling(all.length);
       return [...all, next];
@@ -325,17 +325,41 @@ export default function JournalsPage() {
               {lines.map((line, i) => (
                 <div
                   key={i}
-                  className={`flex flex-wrap items-center gap-2 rounded-lg ${
+                  /*
+                   * `-mx-2 px-2 py-1.5` is what gives the highlight somewhere
+                   * to BE. Without it the row is exactly the height of its
+                   * controls and they cover every pixel of it, so the settle
+                   * animation played correctly and was invisible — found by
+                   * screenshotting it mid-animation rather than by trusting
+                   * that a class had been applied. The negative margin keeps
+                   * the controls on the same line they were on before.
+                   */
+                  className={`-mx-2 flex flex-wrap items-center gap-2 rounded-lg px-2 py-1.5 ${
                     settling.has(i) ? 'emil-settle' : ''
                   }`}
                   onAnimationEnd={() => doneSettling(i)}
                 >
-                  <div className="relative min-w-0 flex-1">
+                  {/*
+                    FULL WIDTH ON A PHONE, SHARING THE LINE FROM sm UP.
+
+                    `flex-1` alone let the account select shrink to a bare
+                    chevron at 390px — the side selector and the 8rem amount box
+                    took the line and the account, which is the longest label of
+                    the three, got what was left. It has been that way since the
+                    screen was written and is visible in any 390px screenshot of
+                    it; the sparkle only made it obvious, by landing outside the
+                    card. `w-full` makes the row wrap after the account, which
+                    is the reading order anyway: what, then which side, then how
+                    much.
+                  */}
+                  <div className="relative w-full min-w-0 sm:flex-1">
                     <select
                       className={`w-full rounded-lg border-0 bg-surface-raised py-2 pl-3 text-sm shadow-sm ring-1 ring-inset ring-line-strong focus:ring-2 focus:ring-positive ${
-                        // Room for the sparkle, and only when there is one — an
-                        // always-reserved gutter would misalign every other row.
-                        line.suggested ? 'pr-9' : 'pr-3'
+                        // Room for the sparkle BESIDE the chevron, not on top of
+                        // it — at `right-2.5` the two drew over each other and
+                        // the mark read as a rendering glitch. Reserved only
+                        // when there is a mark, so no other row is misaligned.
+                        line.suggested ? 'pr-14' : 'pr-3'
                       }`}
                       value={line.accountId}
                       onChange={(e) => void chooseAccount(i, e.target.value)}
@@ -494,6 +518,24 @@ export default function JournalsPage() {
  * tooltip is the right instrument: the information is confirming, not required.
  * ---------------------------------------------------------------------------
  */
+/**
+ * The shortest string that loses nothing, for a field somebody will read.
+ *
+ * `Money.toString()` is "120.0000 MYR" and `toDecimalString()` is "120.0000",
+ * because the ledger's scale is four decimals — either of which lands in the
+ * amount box looking wrong beside a line the user typed as "450.00".
+ *
+ * Trailing zeros are dropped ONLY when they are genuinely zero. A third or
+ * fourth decimal carrying value is kept in full: quietly rounding a fraction of
+ * a sen out of a figure somebody is about to post is precisely the thing this
+ * must not do, and it would balance the entry on screen while the server
+ * refused it.
+ */
+function amountField(money: Money): string {
+  const exact = money.toDecimalString();
+  return exact.endsWith('00') ? exact.slice(0, -2) : exact;
+}
+
 function SuggestionMark({ suggestion }: { suggestion: Suggestion }) {
   const explanation =
     suggestion.source === 'HISTORY'
@@ -505,7 +547,7 @@ function SuggestionMark({ suggestion }: { suggestion: Suggestion }) {
     <span
       // `pointer-events-none` so the mark never eats a click meant for the
       // select underneath it — the whole control stays one target.
-      className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-positive"
+      className="pointer-events-none absolute inset-y-0 right-8 flex items-center text-positive"
       title={explanation}
     >
       <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">

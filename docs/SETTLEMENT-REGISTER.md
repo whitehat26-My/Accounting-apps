@@ -372,6 +372,48 @@ restricted to two-line entries so a multi-line accrual can't pollute the count).
 brand-new tenant with no posting history simply gets no suggestion — the honest
 answer, not a hardcoded "rent usually means cash" table.
 
+**AMENDED 2026-08-12 — there is now a table, and it sits BEHIND history.** The
+paragraph above still describes the first lookup and its answer is still final; what
+changed is that the silence it used to return is now sometimes filled.
+`packages/domain/src/journal-pairing.ts` holds seven rules keyed on (account code,
+side), consulted ONLY where this tenant has never posted the account at all. The
+distinction that makes it acceptable is the one the original decision was really
+about: a rule is allowed here when the pairing is an IDENTITY rather than a habit.
+Depreciation is credited to accumulated depreciation in every set of books there has
+ever been; rent is not paid from cash in every set of books, which is why there is
+still no rent rule. A test fails any rule whose reason mentions a rate, a percentage
+or an authority, so the file cannot drift into statutory territory where CLAUDE.md
+rule 7 governs instead.
+
+The response now carries `source` (`HISTORY` | `STANDARD_ADJUSTMENT`) and, for the
+table, the rule's reasoning — because the two deserve different trust and the form
+prints which it is. A tenant who lacks or has retired the account a rule names gets
+`null`, never a suggestion pointing at whatever else sits at that code.
+
+**This needed six accounts that did not exist.** `DEFAULT_CHART` had no Prepayments,
+Fixed Assets, Accumulated Depreciation, Accruals, Depreciation or Bank Charges — a
+grep for "depreciat" across every TypeScript and SQL file hit one report module and
+one comment. They are seeded now, and migration `0054` backfills them for tenants
+already onboarded, idempotently on (tenant_id, code) so a shop that already made
+their own account at one of those codes keeps theirs. None carries a statement tag:
+`trade_payables` on an accrual would file a non-trade liability under trade payables,
+and the cash-flow module already says anything less than certain is left to explicit
+configuration.
+
+**The form gained four things** on top of the account fill: the auto-filled row
+settles from `bg-positive-soft` to transparent over 1.5s (switched off under
+`prefers-reduced-motion`), a drawn sparkle marks the suggested line and disappears
+the moment the account is changed by hand, Enter on a completed balanced entry moves
+focus to Post journal, and `+ Line` arrives holding whatever is still needed to
+balance. That last one is arithmetic on a screen whose rule is that it holds none —
+done with `Money` (integer minor units, never `parseFloat`) and producing a default
+in an editable field the server re-validates, so rule 2 is intact.
+
+**Tab is deliberately NOT intercepted**, though it was asked for alongside Enter:
+Tab is how a keyboard user reaches the side selector and the second line, and
+Shift-Tab is how they get back, so short-circuiting it removes the only route to the
+controls somebody needs precisely when the suggestion is wrong.
+
 With this, every screen the shell promised has a working equivalent. What remains
 outstanding is stated deliberately (§2, §3) or is genuinely not started (§4.3, §4.6,
 §4.8) — nothing is a UI gap over a working API anymore.
