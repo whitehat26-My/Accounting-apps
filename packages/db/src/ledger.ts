@@ -205,8 +205,16 @@ export async function postJournalEntry(
   // exists for acts rather than for row changes.
 
   // ---- 8. Outbox -----------------------------------------------------------
-  // Written in the SAME transaction as the ledger effect. If the commit fails
-  // there is no job; if it succeeds the job exists even if Redis was down.
+  // Written in the SAME transaction as the ledger effect, and this INSERT is
+  // the whole of the transactional-outbox pattern here: the job and the effect
+  // commit together or neither does. If the commit fails there is no job; if it
+  // succeeds the job exists, and it survives the relay, the network and this
+  // process all being down — which is what lets a shop keep selling through an
+  // ISP outage and drain the backlog when the line returns.
+  //
+  // There is no enqueue helper to call and no second event type to remember:
+  // passing `emitEvent` IS the enqueue. See migration 0021_worker.sql for why
+  // the queue lives in PostgreSQL rather than in Redis.
   if (options.emitEvent) {
     await tx`
         INSERT INTO outbox_event (tenant_id, event_type, aggregate_type, aggregate_id, payload)

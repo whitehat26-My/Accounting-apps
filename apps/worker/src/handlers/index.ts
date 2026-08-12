@@ -1,4 +1,6 @@
 import { einvoiceHandlers } from './einvoice.js';
+import { cloudSyncHandlers } from './cloud-sync.js';
+import { resolveCloudTarget } from '../sync/cloud-target.js';
 import type { HandlerRegistry } from './registry.js';
 
 /**
@@ -23,10 +25,18 @@ import type { HandlerRegistry } from './registry.js';
  * A registry that quietly grew a no-op entry for each of these would report a
  * fully-consumed queue. The count of unroutable events is the more useful
  * number, and it is in every pass summary.
+ *
+ * CLOUD SYNC IS REGISTERED ONLY WHEN A TARGET EXISTS. `cloudSyncHandlers`
+ * returns `{}` when `resolveCloudTarget` finds none, which is the default. That
+ * is the same principle as the paragraph above: a handler that existed and
+ * skipped would move four of those events from *unroutable* to *skipped*, and
+ * "nothing consumes this" would start reading as "considered and declined"
+ * while no second copy of the books existed anywhere.
  * ---------------------------------------------------------------------------
  */
 export const handlers: HandlerRegistry = {
   ...einvoiceHandlers,
+  ...cloudSyncHandlers(resolveCloudTarget()),
 };
 
 export * from './registry.js';

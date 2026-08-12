@@ -373,6 +373,15 @@ describe('TRUST_PROXY (pen-test AI-5)', () => {
     expect(loadConfig({ ...base, TRUST_PROXY: '10.0.0.0/8' }).trustProxy).toBe('10.0.0.0/8');
   });
 
+  it('accepts 1 — the value behind Tailscale Serve, which is one hop', () => {
+    // `tailscale serve` is a single reverse proxy in front of the app, so the
+    // documented value for the hybrid shop deployment is exactly 1. Tested
+    // because docs/HYBRID-SHOP-DEPLOYMENT.md §4.4 tells operators to set it, and
+    // a documented value that nothing exercises is a documented guess.
+    expect(loadConfig({ ...base, TRUST_PROXY: '1' }).trustProxy).toBe(1);
+    expect(loadConfig({ ...base, NODE_ENV: 'production', TRUST_PROXY: '1' }).trustProxy).toBe(1);
+  });
+
   it('allows a bare true OUTSIDE production, where tests need it', () => {
     expect(loadConfig({ ...base, TRUST_PROXY: 'true' }).trustProxy).toBe(true);
   });

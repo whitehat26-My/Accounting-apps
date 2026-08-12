@@ -337,22 +337,41 @@ The checklist that makes §0's claim true rather than hopeful.
 
 ### The acceptance test — actually pull the cable
 
-Do this before you trust it, with the shop closed:
+Do this before you trust it, with the shop closed. It is a script rather than a
+checklist, because the claim it verifies is the one the whole deployment exists
+to make and a checklist gets read once:
 
 ```bash
-# 1. Unplug the WAN cable from the router (leave the LAN switch powered).
-# 2. On the cashier PC, open http://till:8080 and ring a real cash sale.
-# 3. Print the receipt.
-# 4. Check the takings screen shows it.
-# 5. Plug the WAN back in. Within a minute:
-docker compose -f docker-compose.prod.yml logs worker --tail=50
-psql "$DATABASE_URL" -c \
-  "SELECT event_type, status, attempts FROM outbox_event WHERE status <> 'DISPATCHED';"
+scripts/shop/offline-acceptance.sh \
+  --api http://localhost:8080/api \
+  --email owner@shop.example --password '…'
 ```
 
-The sale must complete in step 2 with no spinner and no error, and the queued
-outbound work must drain in step 5. If either fails, something in the table above
-is not as it claims.
+It records the before-state, prompts you to **unplug the WAN**, rings a real cash
+sale in RM through the live API, and then checks what must be true locally:
+
+| Check | Why it is there |
+| --- | --- |
+| API answers, database reachable, clock sane | the run is meaningless otherwise |
+| worker is draining the outbox | an unclaimed backlog means no worker — caught in preflight, not as a mystery at the end |
+| **sale completes with the WAN down** | the requirement, stated as an assertion |
+| stock decremented | the shelf moved, not just a row |
+| journal entry posted, and every entry balances | the books are still books |
+| outbound work queued in `outbox_event` | queued, not lost — an outage is a delay |
+| queue drains after reconnect | and it recovers by itself |
+
+Then it prompts you to plug the cable back in and polls until the queue clears,
+printing a PASS/FAIL table and exiting non-zero if anything failed.
+
+`--simulate` runs every assertion except the two physical ones and labels the
+output **SIMULATED RUN — no cable was pulled**, so a run that did not actually
+test the offline case cannot be mistaken for one that did. Use it to check the
+script; never to sign off a shop.
+
+`scripts/shop/lan-check.sh` is the smaller companion: it prints the server's LAN
+address, warns if that address came from DHCP without a reservation, confirms the
+app answers there rather than only on `localhost`, and prints the `hosts` line to
+paste on the cashier PC.
 
 ---
 
@@ -411,40 +430,144 @@ COMMIT;   -- the effect and the intent to sync commit together, or neither does
 Offline is not a special case here — it is the *normal* case. The row simply sits
 in `outbox_event` until something drains it.
 
-### 6.3 The table already exists
+This is not a position adopted for the shop deployment; it is written into the
+schema. From `packages/db/migrations/0021_worker.sql`, which created the relay:
 
-```
-outbox_event: tenant_id, id, event_type, aggregate_type, aggregate_id,
-              payload, status, attempts, available_at, created_at,
-              dispatched_at, last_error
-```
+> **Why PostgreSQL and not BullMQ, which the stack names.** The outbox exists to
+> eliminate a dual write. Its whole premise is that the job and the ledger effect
+> commit or fail TOGETHER, which is only true while the job lives in the same
+> database as the effect. A relay that pushed to Redis from inside the writing
+> transaction would reintroduce exactly the inconsistency the pattern was adopted
+> to prevent, and one that pushed after commit can lose jobs when it dies in
+> between.
+>
+> Redis and BullMQ are deferred rather than rejected. They earn their place when
+> there is work that genuinely needs a distributed queue — cross-process rate
+> limiting against LHDN, fan-out at a scale one poller cannot serve. A second
+> datastore introduced for one nightly job is operational burden and another
+> thing to be down.
 
-`attempts`, `available_at` and `last_error` are retry-with-backoff, already
-modelled. `claim_outbox_batch` is a `SECURITY DEFINER` function using
-`SELECT … FOR UPDATE SKIP LOCKED`, executable by `emil_worker` and **not** by the
-internet-facing `emil_app`. Adding a cloud push is a new `event_type` and a new
-handler in the worker's job registry — not a new datastore.
+That last sentence is the deciding one for a till: the shop server's job is to
+not stop selling, and every service running on it is a thing that can stop.
+
+### 6.3 It is already built — here is the actual code
+
+Not a sketch. `postJournalEntry` writes the outbox row **inside the caller's
+transaction**, and passing `emitEvent` IS the enqueue — there is no helper to
+call and no second event type to invent (`packages/db/src/ledger.ts`):
 
 ```ts
-// apps/worker — sketch. Drains a batch, pushes, marks each row.
-async function pushToCloud(tx: Tx, ctx: WorkerContext): Promise<void> {
-  const batch = await claimOutboxBatch(tx, { eventType: 'SYNC_TO_CLOUD', limit: 100 });
+export interface PostOptions {
+  readonly idempotencyKey: string;
+  /** Emitted to the outbox after commit, e.g. 'invoice.issued'. */
+  readonly emitEvent?: { readonly type: string; readonly payload: unknown };
+  readonly reversalOfId?: string;
+}
 
-  for (const event of batch) {
-    try {
-      await cloud.upsert(event.aggregateType, event.payload);   // idempotent on aggregateId
-      await completeOutboxEvent(tx, event.id);
-    } catch (e) {
-      // available_at = now() + backoff(attempts). The row stays put; nothing is
-      // lost, and an ISP outage is just a long backoff.
-      await failOutboxEvent(tx, event.id, String(e));
-    }
-  }
+// ---- 8. Outbox ----------------------------------------------------------
+// Written in the SAME transaction as the ledger effect. If the commit fails
+// there is no job; if it succeeds the job exists.
+if (options.emitEvent) {
+  await tx`
+      INSERT INTO outbox_event (tenant_id, event_type, aggregate_type, aggregate_id, payload)
+      VALUES (
+          ${ctx.tenantId}, ${options.emitEvent.type}, 'journal_entry', ${entryId},
+          ${tx.json(options.emitEvent.payload as never)}
+      )
+  `;
 }
 ```
 
-The cloud endpoint must be **idempotent on `aggregate_id`**, because at-least-once
-delivery is the only guarantee a retry loop can give.
+The call site, issuing an invoice (`packages/db/src/invoice.ts`):
+
+```ts
+const posted = await postJournalEntry(tx, ctx, validated.value, {
+  idempotencyKey: `invoice:${input.idempotencyKey}`,
+  emitEvent: {
+    type: 'invoice.issued',
+    payload: { invoiceId, invoiceNo, total: doc.total.toDecimalString() },
+  },
+});
+```
+
+And the proof that it is one transaction — the controller opens exactly one, and
+threads it all the way down (`apps/api/src/modules/accounting.controller.ts`):
+
+```ts
+const ctx = this.ctx(request);
+return withTenant(this.sql, ctx, (tx) =>
+  issueInvoice(tx, ctx, { ...input, idempotencyKey }),
+);
+```
+
+`withTenant` is `sql.begin(...)`. One `BEGIN`, one `COMMIT`: the invoice row, the
+journal entry, its lines and the outbox event all land together or not at all.
+**That is the property a Redis enqueue cannot have**, and it is why an ISP outage
+is a delay here rather than a hole in the books.
+
+Money in a payload is a decimal string at the money scale — `"1060.0000"`, four
+places, never a JSON number. A cloud target parses it as a decimal, never a float.
+
+### The drain, also already built
+
+`claim_outbox_batch` (migration `0021_worker.sql`) is `SECURITY DEFINER`, uses
+`SELECT … FOR UPDATE SKIP LOCKED`, and is executable by `emil_worker` and **not**
+by the internet-facing `emil_app`. Claiming is a *lease*: it bumps `attempts` and
+pushes `available_at` forward in one statement, so a worker that dies mid-handle
+releases the event automatically.
+
+`fail_outbox_event` is the retry policy, and it is already what you would write:
+
+```sql
+-- 2^attempts seconds, capped at an hour, plus up to 10% jitter so a provider
+-- outage that fails a thousand events does not retry them in lockstep.
+v_delay := least(power(2, v_attempts)::INTEGER, 3600);
+```
+
+After eight attempts the row goes `FAILED` and is **never deleted** — an event
+that could not be dispatched is the evidence for why something downstream never
+happened. A week-long outage costs a long backoff and nothing else.
+
+### Adding a consumer
+
+The whole change is a `Handler` and one key in the registry. Cloud sync ships as
+a worked example, `apps/worker/src/handlers/cloud-sync.ts`, with the target
+behind an interface (`apps/worker/src/sync/cloud-target.ts`) so nothing
+half-built talks to a second copy of the books:
+
+```ts
+const syncToCloud = (target: CloudTarget): Handler =>
+  async ({ event, log }) => {
+    await target.push({
+      tenantId: event.tenantId,
+      eventType: event.eventType,
+      aggregateType: event.aggregateType,
+      aggregateId: event.aggregateId,   // the idempotency key, on every event
+      payload: event.payload,
+    });
+    log('synced', { target: target.name, aggregateId: event.aggregateId });
+    return handled({ target: target.name, aggregateId: event.aggregateId });
+  };
+```
+
+Two details that are load-bearing rather than stylistic:
+
+- **`aggregateId` is the idempotency key for every event type.** It is the
+  journal entry the event was emitted beside, it is on the row already, and it
+  is stable across redeliveries. `invoiceNo` is not: the payload shape differs
+  per event type and two tenants can both hold `INV-00001`. The far end must
+  upsert on `(tenantId, aggregateId)` — at-least-once is the only guarantee a
+  retry loop can give.
+- **With no target configured, the handlers are not registered at all**
+  (`cloudSyncHandlers(undefined)` returns `{}`). A handler that existed and
+  skipped would move those events from *unroutable* — the honest "nothing
+  consumes this" — to *skipped*, which reads as "considered and declined" while
+  no second copy of the books exists anywhere.
+
+Covered by `apps/worker/test/cloud-sync.test.ts` against real PostgreSQL: a
+rollback leaves no outbox row, an unreachable target leaves the event `PENDING`
+with `available_at` pushed forward, the queue drains by itself when the target
+returns, and a redelivery does not double a payment.
 
 ### 6.4 The part that will bite you: the audit log is a hash chain
 
@@ -536,14 +659,19 @@ FOR UPDATE SKIP LOCKED` against a database that is already running.
 1. **Leave the binding alone.** `0.0.0.0` is already the default; only `web` is
    published; the database is not on the LAN.
 2. **DHCP-reserve the shop server** at `192.168.1.10`, and put a `hosts` entry on
-   the cashier PC so `http://till:8080` needs no DNS.
+   the cashier PC so `http://till:8080` needs no DNS. `scripts/shop/lan-check.sh`
+   tells you the address, whether it can move, and whether the app answers on it.
 3. **Never point the till at Tailscale.** LAN address only.
 4. **Tailscale on the server** (tagged auth key) + `tailscale serve` for HTTPS;
    ACL to `tag:shop:8080` only; `TRUST_PROXY=1`; never `funnel`.
 5. **Set `PUBLIC_BASE_URL` to something a customer can reach**, and
    `DOCUMENT_SIGNING_KEY` so printed QR codes verify offline. Back that key up
    with the database — changing it invalidates every document already printed.
-6. **Pull the WAN cable and ring a real sale** before you trust any of it.
-7. **Skip the cloud sync** unless you have a second site. If you build it, extend
-   `outbox_event`; use logical replication for the ledger; keep BullMQ, if you
-   adopt it at all, strictly downstream of the outbox.
+6. **Run `scripts/shop/offline-acceptance.sh`** — pull the WAN cable and ring a
+   real sale — before you trust any of it. A `--simulate` run is not a sign-off
+   and says so in its own output.
+7. **Skip the cloud sync** unless you have a second site. The outbox and its
+   relay are already built; a consumer is one `Handler` and one registry key
+   (`apps/worker/src/handlers/cloud-sync.ts` is the worked example). Use logical
+   replication for the ledger, never row-by-row inserts. Adding Redis to the till
+   is adding a second thing that can stop the shop selling.
