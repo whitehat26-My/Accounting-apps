@@ -304,6 +304,39 @@ tbody tr:hover {
 }
 
 /* ---------------------------------------------------------------------------
+ * A row the machine filled in, settling.
+ *
+ * When the journal form's pairing engine writes the second line, the row
+ * appears fully formed with an account and an amount the user did not type.
+ * Without a moment of colour that reads as an edit somebody else's hand made
+ * while you were not looking — the accountant's eye is on the first line, and
+ * the change below it is silent.
+ *
+ * So the ground starts at the soft-positive token and fades out over a second
+ * and a half. Long enough to catch peripherally and be traced back to; short
+ * enough that the row is in its resting state before anyone reaches it. It
+ * ENDS transparent rather than at a colour, so the row is genuinely a normal
+ * row afterwards and nothing has to clean up after the animation.
+ *
+ * `bg-positive-soft` rather than a green literal: the palette guard fails the
+ * build on a raw Tailwind colour, and rightly — a highlight tuned in daylight
+ * that cannot follow the theme is a bar of light on an otherwise dark form.
+ * ------------------------------------------------------------------------ */
+
+@keyframes emil-settle {
+  from {
+    background-color: var(--color-positive-soft);
+  }
+  to {
+    background-color: transparent;
+  }
+}
+
+.emil-settle {
+  animation: emil-settle 1500ms ease-out both;
+}
+
+/* ---------------------------------------------------------------------------
  * Chart entrances.
  *
  * Bars grow from the baseline they are measured against, and horizontal bars
@@ -426,8 +459,17 @@ tbody tr:hover {
   .emil-rise,
   .emil-grow,
   .emil-widen,
+  .emil-settle,
   .emil-shimmer {
     animation: none;
+  }
+  /* `emil-settle` needs no undo: `both` holds the from-state, and its
+     from-state is the highlight. Switching the animation off would leave the
+     row permanently green, which is worse than never highlighting it — so the
+     ground is cleared explicitly. The suggestion is still announced; the
+     sparkle and its sr-only sentence do not depend on motion. */
+  .emil-settle {
+    background-color: transparent;
   }
   /* Without the animation these classes would leave their marks at zero —
      `both` holds the from-state, so the fallback has to undo it explicitly or

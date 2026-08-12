@@ -351,6 +351,15 @@ const ACCOUNTS = [
   { id: 'acc-6050', code: '6050', name: 'Internet & Phone', type: 'EXPENSE' },
   { id: 'acc-6100', code: '6100', name: 'Bank Charges', type: 'EXPENSE' },
   { id: 'acc-6200', code: '6200', name: 'Rent', type: 'EXPENSE' },
+  // The month-end adjustment accounts (migration 0054). Here so the journal
+  // screen's standard-adjustment suggestion has somewhere to point in the demo
+  // too — without them the feature is invisible to anyone trying the product.
+  { id: 'acc-1400', code: '1400', name: 'Prepayments', type: 'ASSET' },
+  { id: 'acc-1500', code: '1500', name: 'Fixed Assets — at Cost', type: 'ASSET' },
+  { id: 'acc-1590', code: '1590', name: 'Accumulated Depreciation', type: 'ASSET' },
+  { id: 'acc-2400', code: '2400', name: 'Accrued Expenses', type: 'LIABILITY' },
+  { id: 'acc-6300', code: '6300', name: 'Depreciation', type: 'EXPENSE' },
+  { id: 'acc-6400', code: '6400', name: 'Bank Charges (adjustments)', type: 'EXPENSE' },
 ];
 
 const DEMO_BANK: DemoBankAccount[] = [
@@ -1416,17 +1425,74 @@ export function demoApi(
   }
 
   if (p === '/v1/journals/suggest-pair') {
-    // The demo has no real posting history to mine, so it answers with the
-    // one pairing the seeded sample data actually shows — Rent paid from
-    // Cash and Bank — and nothing for any other account, same honesty as the
-    // real endpoint returning null when it has never seen the pair.
+    // Both halves of the real endpoint, in the same order it uses them.
+    //
+    // HISTORY first: the demo has no real posting history to mine, so it
+    // answers with the one pairing the seeded sample data actually shows —
+    // Rent paid from Cash and Bank — and nothing else.
+    //
+    // Then the STANDARD ADJUSTMENTS, which are the same table the server
+    // consults and are reproduced here rather than imported because this file
+    // is a fixture, not a second implementation: `@emil/domain` would pull the
+    // whole barrel into the static bundle for six rows.
     const accountId = url.searchParams.get('accountId');
     const side = url.searchParams.get('side');
     if (accountId === 'acc-6200' && side === 'DEBIT') {
-      return { suggestion: { accountId: 'acc-1000', code: '1000', name: 'Cash and Bank', occurrences: 3 } };
+      return {
+        suggestion: {
+          accountId: 'acc-1000', code: '1000', name: 'Cash and Bank',
+          occurrences: 3, source: 'HISTORY',
+        },
+      };
     }
     if (accountId === 'acc-1000' && side === 'CREDIT') {
-      return { suggestion: { accountId: 'acc-6200', code: '6200', name: 'Rent', occurrences: 3 } };
+      return {
+        suggestion: {
+          accountId: 'acc-6200', code: '6200', name: 'Rent',
+          occurrences: 3, source: 'HISTORY',
+        },
+      };
+    }
+
+    const STANDARD: Record<string, { to: string; because: string }> = {
+      'acc-6300/DEBIT': {
+        to: 'acc-1590',
+        because: 'Depreciation charged for the period accumulates against the asset.',
+      },
+      'acc-1590/CREDIT': {
+        to: 'acc-6300',
+        because: 'Accumulated depreciation grows by the depreciation charged this period.',
+      },
+      'acc-6400/DEBIT': {
+        to: 'acc-1000',
+        because: 'A bank charge leaves the bank account it was taken from.',
+      },
+      'acc-1400/DEBIT': {
+        to: 'acc-1000',
+        because: 'Something paid in advance is paid out of the bank.',
+      },
+      'acc-1400/CREDIT': {
+        to: 'acc-6000',
+        because: 'A prepayment is released into expense as the period it covers is used up.',
+      },
+      'acc-6000/DEBIT': {
+        to: 'acc-2400',
+        because: 'An expense incurred but not yet billed is accrued as a liability.',
+      },
+      'acc-2400/DEBIT': {
+        to: 'acc-1000',
+        because: 'Settling an accrued expense once the bill arrives and is paid.',
+      },
+    };
+    const rule = STANDARD[`${accountId}/${side}`];
+    const counter = rule ? ACCOUNTS.find((a) => a.id === rule.to) : undefined;
+    if (rule && counter) {
+      return {
+        suggestion: {
+          accountId: counter.id, code: counter.code, name: counter.name,
+          occurrences: 0, source: 'STANDARD_ADJUSTMENT', because: rule.because,
+        },
+      };
     }
     return { suggestion: null };
   }

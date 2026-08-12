@@ -7,13 +7,30 @@
  * moment to adopt one — with this file as the shopping list.
  */
 
-import type { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode } from 'react';
+import type { ButtonHTMLAttributes, CSSProperties, InputHTMLAttributes, ReactNode, Ref } from 'react';
+
+/*
+ * `ref` IS A PROP HERE, AND THAT IS WHY THERE IS NO `forwardRef` IN THIS FILE.
+ *
+ * React 19 passes `ref` to a function component like any other prop, so the
+ * `{...props}` spread each primitive already does carries it onto the DOM node
+ * with nothing else required. What DOESN'T come for free is the type: the
+ * `*HTMLAttributes` interfaces deliberately omit `ref`, so a caller passing one
+ * is a compile error even though it would work perfectly at runtime — the worst
+ * combination, because the fix looks like it needs a refactor and needs a word.
+ *
+ * The journals screen moves focus to "Post journal" when the pairing engine
+ * completes an entry, which is what wanted this.
+ */
 
 export function Button({
   variant = 'primary',
   className = '',
   ...props
-}: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'danger' }) {
+}: ButtonHTMLAttributes<HTMLButtonElement> & {
+  variant?: 'primary' | 'ghost' | 'danger';
+  ref?: Ref<HTMLButtonElement>;
+}) {
   const styles = {
     primary:
       'bg-primary text-primary-ink shadow-sm shadow-primary/25 hover:brightness-110 active:brightness-95 disabled:bg-line disabled:text-ink-faint disabled:shadow-none',
@@ -64,7 +81,9 @@ export function Skeleton({ rows = 3 }: { rows?: number }) {
   );
 }
 
-export function Input(props: InputHTMLAttributes<HTMLInputElement>) {
+export function Input(
+  props: InputHTMLAttributes<HTMLInputElement> & { ref?: Ref<HTMLInputElement> },
+) {
   return (
     <input
       {...props}

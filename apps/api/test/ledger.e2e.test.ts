@@ -185,6 +185,72 @@ describe('journal counter-account suggestion', () => {
     });
     expect(suggestion.body['suggestion']).toBeNull();
   });
+
+  /*
+   * The standard-adjustment fallback, over the wire.
+   *
+   * It sits BEHIND history, so what is worth asserting through the API is the
+   * precedence and the labelling — a caller has to be able to tell "this shop
+   * has done it six times" apart from "this is what depreciation means", and
+   * the `source` field is the only thing that says which.
+   */
+  it('offers a standard adjustment for an account with no history at all', async () => {
+    const response = await call(api, {
+      method: 'GET',
+      // 6300 Depreciation: seeded by 0054, and nothing in this file posts to it.
+      ...as(`/v1/journals/suggest-pair?accountId=${tenant.accounts['6300']}&side=DEBIT`),
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body['suggestion']).toMatchObject({
+      accountId: tenant.accounts['1590'],
+      code: '1590',
+      source: 'STANDARD_ADJUSTMENT',
+      occurrences: 0,
+    });
+    // The reason travels with it: the form prints this, and a suggestion the
+    // accountant cannot evaluate is one they accept blindly or ignore.
+    expect(String(response.body['suggestion']?.['because'])).toMatch(/depreciation/i);
+  });
+
+  it('lets this shop’s own habit overrule the standard adjustment', async () => {
+    // 6400 Bank Charges pairs with 1000 Cash and Bank in the table. This shop
+    // posts theirs against Undeposited Funds — their gateway deducts before
+    // settlement — and after three entries that is the fact worth reporting.
+    const before = await call(api, {
+      method: 'GET',
+      ...as(`/v1/journals/suggest-pair?accountId=${tenant.accounts['6400']}&side=DEBIT`),
+    });
+    expect(before.body['suggestion']).toMatchObject({ code: '1000', source: 'STANDARD_ADJUSTMENT' });
+
+    for (let i = 0; i < 3; i++) {
+      const posted = await call(api, {
+        method: 'POST',
+        ...as('/v1/journals'),
+        body: {
+          entryDate: '2026-08-07',
+          description: 'Gateway deducted its charge before settling',
+          lines: [
+            { accountId: tenant.accounts['6400'], side: 'DEBIT', amount: '2.00' },
+            { accountId: tenant.accounts['1200'], side: 'CREDIT', amount: '2.00' },
+          ],
+        },
+      });
+      expect(posted.status).toBe(201);
+    }
+
+    const after = await call(api, {
+      method: 'GET',
+      ...as(`/v1/journals/suggest-pair?accountId=${tenant.accounts['6400']}&side=DEBIT`),
+    });
+    expect(after.body['suggestion']).toMatchObject({
+      code: '1200',
+      source: 'HISTORY',
+      occurrences: 3,
+    });
+    // No reason string: history does not explain itself, it counts.
+    expect(after.body['suggestion']?.['because']).toBeUndefined();
+  });
 });
 
 // ---------------------------------------------------------------------------

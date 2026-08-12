@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Money } from '@emil/domain';
 import { api } from '@/lib/api';
 import { displayDate, rm, todayIso } from '@/lib/display';
 import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
@@ -55,10 +56,31 @@ interface JournalEntry {
   totalCredit: string;
 }
 
+/** What the server answered when it filled a line in. */
+interface Suggestion {
+  accountId: string;
+  code: string;
+  name: string;
+  occurrences: number;
+  source: 'HISTORY' | 'STANDARD_ADJUSTMENT';
+  because?: string;
+}
+
 interface FormLine {
   accountId: string;
   side: 'DEBIT' | 'CREDIT';
   amount: string;
+  /**
+   * Present only while this line's account is still the one the engine chose.
+   * Cleared the instant the user picks something else — which is what takes the
+   * sparkle away, and is the whole of "the system may guess, and you may
+   * disagree without arguing with it".
+   *
+   * `| undefined` explicitly, because `exactOptionalPropertyTypes` is on: an
+   * optional property may be ABSENT but may not be SET to undefined, and
+   * clearing the mark means assigning undefined over an existing value.
+   */
+  suggested?: Suggestion | undefined;
 }
 
 const MODULES = ['ALL', 'MANUAL', 'SALES', 'PURCHASES', 'BANKING', 'SYSTEM'] as const;
@@ -84,6 +106,26 @@ export default function JournalsPage() {
   ]);
   const [posted, setPosted] = useState<string | null>(null);
   const [suggesting, setSuggesting] = useState(false);
+
+  /**
+   * The line indexes currently playing the settle animation.
+   *
+   * A set of indexes rather than a flag on the line, because the animation is a
+   * property of THIS RENDER and the line is data that gets posted. Cleared when
+   * the animation ends rather than on a timer, so the two cannot disagree.
+   */
+  const [settling, setSettling] = useState<ReadonlySet<number>>(new Set());
+  const markSettling = (index: number) =>
+    setSettling((current) => new Set(current).add(index));
+  const doneSettling = (index: number) =>
+    setSettling((current) => {
+      const next = new Set(current);
+      next.delete(index);
+      return next;
+    });
+
+  /** Where focus goes when an entry completes itself. See `amountKeyDown`. */
+  const postButton = useRef<HTMLButtonElement>(null);
 
   const accounts = useQuery({
     queryKey: ['accounts'],
@@ -144,23 +186,112 @@ export default function JournalsPage() {
    * with this one before and fill it in — the user can always change it.
    */
   async function chooseAccount(i: number, accountId: string) {
-    setLine(i, { accountId });
+    // Picking an account by hand is the override. `suggested: undefined` is
+    // what removes the sparkle, and it has to happen on THIS line even when the
+    // line being changed is the one the engine filled in.
+    setLine(i, { accountId, suggested: undefined });
     if (lines.length !== 2) return;
     const other = i === 0 ? 1 : 0;
     if (lines[other]!.accountId !== '') return;
 
     setSuggesting(true);
     try {
-      const { suggestion } = await api<{
-        suggestion: { accountId: string; code: string; name: string; occurrences: number } | null;
-      }>(`/v1/journals/suggest-pair?accountId=${accountId}&side=${lines[i]!.side}`);
-      if (suggestion) setLine(other, { accountId: suggestion.accountId });
+      const { suggestion } = await api<{ suggestion: Suggestion | null }>(
+        `/v1/journals/suggest-pair?accountId=${accountId}&side=${lines[i]!.side}`,
+      );
+      if (suggestion) {
+        setLine(other, { accountId: suggestion.accountId, suggested: suggestion });
+        markSettling(other);
+      }
     } catch {
       // No suggestion is a perfectly normal answer — a brand new tenant has no
       // history to mine, and the form works exactly as well without one.
     } finally {
       setSuggesting(false);
     }
+  }
+
+  /**
+   * What is still needed to balance, as a Money, or null when it already does.
+   *
+   * ---------------------------------------------------------------------------
+   * ARITHMETIC ON THIS SCREEN, WHICH THE RULE SAYS THERE IS NONE OF.
+   *
+   * CLAUDE.md: `apps/web` holds no arithmetic, and the moment a screen needs
+   * parseFloat the calculation belongs on the server. The rule's PURPOSE is that
+   * the browser must not compute money — and asking the server to subtract two
+   * numbers on every "+ Line" click would be a round trip for a difference the
+   * user is about to overwrite anyway.
+   *
+   * So it is done here, with `Money` from @emil/domain: integer minor units, no
+   * float, the same type and the same rounding as the server's own. Rule 2 —
+   * never a float, ever — is the load-bearing one and is kept exactly. What this
+   * produces is a DEFAULT IN AN INPUT the user can retype and the server
+   * re-validates; if it were ever wrong, `validateJournalEntry` refuses the
+   * entry and says by how much. It is not a figure anybody posts on trust.
+   * ---------------------------------------------------------------------------
+   */
+  function outstanding(current: readonly FormLine[]): { side: FormLine['side']; amount: Money } | null {
+    const zero = Money.zero('MYR');
+    let debits = zero;
+    let credits = zero;
+    for (const line of current) {
+      // A half-typed "12." is not a number yet; skip rather than guess at it.
+      let amount: Money;
+      try {
+        amount = Money.fromDecimal(line.amount.trim(), 'MYR');
+      } catch {
+        continue;
+      }
+      if (line.side === 'DEBIT') debits = debits.add(amount);
+      else credits = credits.add(amount);
+    }
+
+    const difference = debits.subtract(credits);
+    if (difference.isZero()) return null;
+    // A debit surplus needs a credit to close it, and the other way round.
+    return difference.isPositive()
+      ? { side: 'CREDIT', amount: difference }
+      : { side: 'DEBIT', amount: difference.negate() };
+  }
+
+  /**
+   * "+ Line" pre-filled with exactly what is missing.
+   *
+   * A third line is only ever added because the entry does not balance yet, and
+   * the figure that closes it is arithmetic the person would otherwise do on
+   * paper. Both the side and the amount are chosen, so the common case is one
+   * click and one account.
+   */
+  function addLine() {
+    setLines((all) => {
+      const gap = outstanding(all);
+      const next: FormLine = {
+        accountId: '',
+        side: gap?.side ?? 'CREDIT',
+        amount: gap ? gap.amount.toString() : '',
+      };
+      if (gap) markSettling(all.length);
+      return [...all, next];
+    });
+  }
+
+  /**
+   * Enter on an amount means "that is the entry" — so complete it and go.
+   *
+   * TAB IS DELIBERATELY LEFT ALONE. Tab is how a keyboard user reaches the side
+   * selector and the second line's account, and Shift-Tab is how they get back;
+   * short-circuiting it would remove the only route to the controls somebody
+   * needs precisely when the suggestion is wrong. Enter is the right key to
+   * take, because in a form it would otherwise submit an entry that may not be
+   * finished — this replaces a worse behaviour rather than overriding a good one.
+   */
+  function amountKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const ready = lines.every((l) => l.accountId !== '' && l.amount.trim() !== '');
+    if (!ready || outstanding(lines)) return;
+    postButton.current?.focus();
   }
 
   return (
@@ -192,20 +323,33 @@ export default function JournalsPage() {
 
             <div className="space-y-2">
               {lines.map((line, i) => (
-                <div key={i} className="flex flex-wrap items-center gap-2">
-                  <select
-                    className="min-w-0 flex-1 rounded-lg border-0 bg-surface-raised px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-line-strong focus:ring-2 focus:ring-positive"
-                    value={line.accountId}
-                    onChange={(e) => void chooseAccount(i, e.target.value)}
-                    required
-                  >
-                    <option value="">Account…</option>
-                    {(accounts.data?.accounts ?? []).map((a) => (
-                      <option key={a.id} value={a.id}>
-                        {a.code} — {a.name}
-                      </option>
-                    ))}
-                  </select>
+                <div
+                  key={i}
+                  className={`flex flex-wrap items-center gap-2 rounded-lg ${
+                    settling.has(i) ? 'emil-settle' : ''
+                  }`}
+                  onAnimationEnd={() => doneSettling(i)}
+                >
+                  <div className="relative min-w-0 flex-1">
+                    <select
+                      className={`w-full rounded-lg border-0 bg-surface-raised py-2 pl-3 text-sm shadow-sm ring-1 ring-inset ring-line-strong focus:ring-2 focus:ring-positive ${
+                        // Room for the sparkle, and only when there is one — an
+                        // always-reserved gutter would misalign every other row.
+                        line.suggested ? 'pr-9' : 'pr-3'
+                      }`}
+                      value={line.accountId}
+                      onChange={(e) => void chooseAccount(i, e.target.value)}
+                      required
+                    >
+                      <option value="">Account…</option>
+                      {(accounts.data?.accounts ?? []).map((a) => (
+                        <option key={a.id} value={a.id}>
+                          {a.code} — {a.name}
+                        </option>
+                      ))}
+                    </select>
+                    {line.suggested ? <SuggestionMark suggestion={line.suggested} /> : null}
+                  </div>
                   <select
                     className="rounded-lg border-0 bg-surface-raised px-3 py-2 text-sm shadow-sm ring-1 ring-inset ring-line-strong focus:ring-2 focus:ring-positive"
                     value={line.side}
@@ -219,6 +363,7 @@ export default function JournalsPage() {
                     placeholder="0.00"
                     value={line.amount}
                     onChange={(e) => setLine(i, { amount: e.target.value })}
+                    onKeyDown={amountKeyDown}
                     inputMode="decimal"
                     required
                   />
@@ -237,14 +382,10 @@ export default function JournalsPage() {
             </div>
 
             <div className="flex items-center justify-between">
-              <Button
-                type="button"
-                variant="ghost"
-                onClick={() => setLines((all) => [...all, { accountId: '', side: 'CREDIT', amount: '' }])}
-              >
+              <Button type="button" variant="ghost" onClick={addLine}>
                 + Line
               </Button>
-              <Button type="submit" disabled={post.isPending}>
+              <Button ref={postButton} type="submit" disabled={post.isPending}>
                 {post.isPending ? 'Posting…' : 'Post journal'}
               </Button>
             </div>
@@ -252,7 +393,7 @@ export default function JournalsPage() {
             <p className="text-xs text-ink-faint">
               {suggesting
                 ? 'Checking how you posted this before…'
-                : 'Pick the first account and the amount fills both lines; the other account fills itself in from how you posted before, if it has seen the pair. Debits must equal credits — the server checks and will name the exact problem. Posted entries are permanent; a mistake is fixed by a reversing entry.'}
+                : 'Pick the first account and the amount fills both lines; the other account fills itself in from how you posted before, or from what the adjustment is, and ✨ marks which. Change it and the mark goes. + Line arrives holding whatever is still needed to balance. Debits must equal credits — the server checks and will name the exact problem. Posted entries are permanent; a mistake is fixed by a reversing entry.'}
             </p>
             <ErrorNote error={post.error} />
             {posted ? (
@@ -327,5 +468,53 @@ export default function JournalsPage() {
         )}
       </Card>
     </div>
+  );
+}
+
+/**
+ * The mark on a line the system filled in.
+ *
+ * ---------------------------------------------------------------------------
+ * A DRAWN SPARKLE, NOT THE EMOJI.
+ *
+ * `✨` renders as a different picture on every platform, ignores the theme, and
+ * at 12 pixels on Windows is a coloured smudge. This is four strokes of SVG
+ * that inherit `currentColor`, so it is the same shape everywhere and the right
+ * weight against both grounds.
+ *
+ * THE ICON IS NOT THE INFORMATION. It is `aria-hidden`, and the sentence beside
+ * it — visible only to a screen reader — is what actually says what happened
+ * and why. A mark that only sighted users can interpret is decoration on a
+ * screen somebody may well be driving entirely from the keyboard, and the two
+ * sources deserve different trust: "you have posted this pair six times" is a
+ * fact about this shop, "depreciation accumulates against the asset" is a fact
+ * about bookkeeping, and an accountant reacts differently to each.
+ *
+ * `title` carries the same sentence to a mouse, which is the one case where a
+ * tooltip is the right instrument: the information is confirming, not required.
+ * ---------------------------------------------------------------------------
+ */
+function SuggestionMark({ suggestion }: { suggestion: Suggestion }) {
+  const explanation =
+    suggestion.source === 'HISTORY'
+      ? `Suggested: you have posted this pair ${suggestion.occurrences} ` +
+        `time${suggestion.occurrences === 1 ? '' : 's'} before.`
+      : (suggestion.because ?? 'Suggested as a standard adjustment.');
+
+  return (
+    <span
+      // `pointer-events-none` so the mark never eats a click meant for the
+      // select underneath it — the whole control stays one target.
+      className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-positive"
+      title={explanation}
+    >
+      <svg viewBox="0 0 16 16" className="h-3.5 w-3.5" fill="currentColor" aria-hidden="true">
+        {/* One four-pointed star, and a smaller one offset — the shape that
+            reads as "suggested" without being a light bulb or a robot. */}
+        <path d="M6.4 1.2 7.5 4.6 10.9 5.7 7.5 6.8 6.4 10.2 5.3 6.8 1.9 5.7 5.3 4.6Z" />
+        <path d="M11.8 8.6 12.4 10.4 14.2 11 12.4 11.6 11.8 13.4 11.2 11.6 9.4 11 11.2 10.4Z" />
+      </svg>
+      <span className="sr-only">{explanation}</span>
+    </span>
   );
 }
