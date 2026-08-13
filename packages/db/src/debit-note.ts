@@ -566,12 +566,16 @@ export async function debitFromBill(
   ctx: TenantContext,
   input: DebitFromBillInput,
 ): Promise<IssuedDebitNote> {
+  // Locked before `already_debited` is summed below, for the reason set out
+  // at the head of `creditFromInvoice` — this path had the identical race, as
+  // it had the identical per-line counting bug before it.
   const [bill] = await tx<
     { id: string; supplier_id: string; currency: string; tax_point_date: Date; status: string }[]
   >`
       SELECT id, supplier_id, currency, tax_point_date, status
         FROM bill
        WHERE tenant_id = ${ctx.tenantId} AND id = ${input.billId}
+         FOR UPDATE
   `;
 
   // 404-shaped, and indistinguishable from another tenant's bill — RLS has

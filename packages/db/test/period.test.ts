@@ -332,3 +332,78 @@ describe('the chart of accounts', () => {
     expect(after[0]!.count).toBe(before[0]!.count);
   });
 });
+
+/*
+ * CLOSED IS STRICTER THAN LOCKED, SO CLOSED -> LOCKED IS A LOOSENING.
+ *
+ * Migration 0017 settled the three states: CLOSED refuses every posting and
+ * has NO override path, LOCKED admits anyone holding `period.override`. The
+ * reason requirement keyed on the TARGET being OPEN, so moving a period from
+ * CLOSED to LOCKED handed that permission the run of a period that had been
+ * final a moment earlier — with no reason recorded, and a `PERIOD_LOCKED`
+ * event in the log implying the opposite had happened.
+ */
+describe('CLOSED to LOCKED is a loosening, not a tightening', () => {
+  it('demands a reason and records it as an unlock', async () => {
+    // Close forward from the first period, so the out-of-order guard is happy
+    // whatever the tests above left behind.
+    for (let month = 1; month <= 6; month += 1) {
+      const p = await periodFor(month);
+      if (p.status !== 'CLOSED') {
+        await withTenant(sql, ctx, (tx) =>
+          changePeriodStatus(tx, ctx, {
+            periodId: p.id,
+            status: 'CLOSED',
+            reason: 'Closing forward for this scenario',
+          }),
+        );
+      }
+    }
+
+    const period = await periodFor(6);
+
+    await expect(
+      withTenant(sql, ctx, (tx) =>
+        changePeriodStatus(tx, ctx, { periodId: period.id, status: 'LOCKED' }),
+      ),
+    ).rejects.toThrow(/needs a reason/);
+
+    const loosened = await withTenant(sql, ctx, (tx) =>
+      changePeriodStatus(tx, ctx, {
+        periodId: period.id,
+        status: 'LOCKED',
+        reason: 'One late supplier bill, to be posted under override',
+      }),
+    );
+    expect(loosened.status).toBe('LOCKED');
+
+    const [event] = await admin<
+      { event_type: string; detail: { from: string; to: string; reason: string } }[]
+    >`
+        SELECT event_type, detail FROM financial_event_log
+         WHERE tenant_id = ${ctx.tenantId} AND entity_id = ${period.id}
+         ORDER BY id DESC LIMIT 1
+    `;
+
+    expect(event!.event_type).toBe('PERIOD_UNLOCKED');
+    expect(event!.detail.from).toBe('CLOSED');
+    expect(event!.detail.to).toBe('LOCKED');
+    expect(event!.detail.reason).toMatch(/late supplier bill/);
+  });
+
+  it('still asks nothing of the tightening direction', async () => {
+    const period = await periodFor(6);
+
+    const tightened = await withTenant(sql, ctx, (tx) =>
+      changePeriodStatus(tx, ctx, { periodId: period.id, status: 'CLOSED' }),
+    );
+    expect(tightened.status).toBe('CLOSED');
+
+    const [event] = await admin<{ event_type: string }[]>`
+        SELECT event_type FROM financial_event_log
+         WHERE tenant_id = ${ctx.tenantId} AND entity_id = ${period.id}
+         ORDER BY id DESC LIMIT 1
+    `;
+    expect(event!.event_type).toBe('PERIOD_LOCKED');
+  });
+});

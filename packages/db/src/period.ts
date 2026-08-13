@@ -147,10 +147,28 @@ export async function changePeriodStatus(
 
   const reopening = input.status === 'OPEN';
 
-  if (reopening && (input.reason === undefined || input.reason.trim().length === 0)) {
+  /*
+   * CLOSED IS STRICTER THAN LOCKED, SO CLOSED -> LOCKED IS A LOOSENING.
+   *
+   * The reason requirement used to key on `reopening`, i.e. on the target
+   * being OPEN — which reads as "only a full reopen is an event". It is not
+   * the only one. Migration 0017 settled what the three states mean: CLOSED
+   * refuses every posting with NO override path, while LOCKED admits anyone
+   * holding `period.override`. Moving a period from CLOSED to LOCKED
+   * therefore hands a permission the power to write into a period that was
+   * final a moment ago, and it did so with no reason recorded and a
+   * `PERIOD_LOCKED` event implying the opposite had happened.
+   *
+   * Strictness, not the state name, is what decides. The rank below is the
+   * only place that ordering is written down.
+   */
+  const strictness: Record<string, number> = { OPEN: 0, LOCKED: 1, CLOSED: 2 };
+  const loosening = (strictness[input.status] ?? 0) < (strictness[period.status] ?? 0);
+
+  if (loosening && (input.reason === undefined || input.reason.trim().length === 0)) {
     throw new PeriodError(
       'INVALID_TRANSITION',
-      'Reopening a period needs a reason. Figures for a closed period may already ' +
+      'Loosening a period needs a reason. Figures for a closed period may already ' +
         'have been reported, and why they are being changed is the one thing nobody ' +
         'can reconstruct later.',
     );
@@ -211,7 +229,7 @@ export async function changePeriodStatus(
           tenant_id, event_type, actor_user_id, permission, entity_type, entity_id, detail
       ) VALUES (
           ${ctx.tenantId},
-          ${reopening ? 'PERIOD_UNLOCKED' : 'PERIOD_LOCKED'},
+          ${loosening ? 'PERIOD_UNLOCKED' : 'PERIOD_LOCKED'},
           ${ctx.userId ?? null}, 'period.lock', 'fiscal_period', ${updated!.id},
           ${tx.json({
             from: period.status,

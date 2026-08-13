@@ -588,12 +588,31 @@ export async function creditFromInvoice(
   ctx: TenantContext,
   input: CreditFromInvoiceInput,
 ): Promise<IssuedCreditNote> {
+  /*
+   * THE LOCK IS TAKEN HERE, BEFORE ANYTHING IS COUNTED.
+   *
+   * `issueCreditNote` locks the invoice further down, but the `already_credited`
+   * sum below was read BEFORE that lock. Under READ COMMITTED — which is what
+   * `withTenant` runs at — two concurrent full credits of one invoice therefore
+   * both saw nothing credited yet and both approved the full quantity.
+   *
+   * The database guard does not catch it either: `assert_invoice_not_over_credited`
+   * fires on `credit_note_allocation`, and the second transaction re-reads
+   * `amountDue` as zero after the first commits, so it allocates nothing and
+   * inserts no allocation row. The trigger never runs. Two ISSUED credit notes,
+   * revenue and output tax reversed twice for one sale.
+   *
+   * `FOR UPDATE` here serialises the pair. The second transaction blocks until
+   * the first commits, and its next statement — a new snapshot — then sees the
+   * lines the first one wrote.
+   */
   const [invoice] = await tx<
     { id: string; contact_id: string; currency: string; tax_point_date: Date; status: string }[]
   >`
       SELECT id, contact_id, currency, tax_point_date, status
         FROM invoice
        WHERE tenant_id = ${ctx.tenantId} AND id = ${input.invoiceId}
+         FOR UPDATE
   `;
 
   // 404-shaped, and indistinguishable from another tenant's invoice — RLS has

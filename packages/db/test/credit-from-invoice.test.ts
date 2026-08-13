@@ -593,3 +593,64 @@ describe('debit notes had the identical defect', () => {
     expect(stored!.source_bill_line_id).toBe(line!.id);
   });
 });
+
+/*
+ * TWO CLERKS, ONE INVOICE, THE SAME SECOND.
+ *
+ * `creditFromInvoice` summed `already_credited` from `credit_note_line` before
+ * anything held a lock on the invoice, and `issueCreditNote` did not take one
+ * until much further down. At READ COMMITTED both transactions therefore saw
+ * nothing credited and both approved the full quantity.
+ *
+ * The database guard does not cover it: `assert_invoice_not_over_credited`
+ * fires on `credit_note_allocation`, and the loser re-reads `amountDue` as
+ * zero after the winner commits, so it allocates nothing and inserts no
+ * allocation row for the trigger to see. The result was two ISSUED credit
+ * notes reversing one sale — revenue and output tax out by the whole invoice.
+ */
+describe('two credits of one invoice at the same moment', () => {
+  it('lets exactly one through and refuses the other', async () => {
+    const inv = await invoice();
+
+    const both = await Promise.allSettled([
+      run((tx) =>
+        creditFromInvoice(tx, ctx(), {
+          invoiceId: inv.id,
+          creditDate: '2026-08-06',
+          reason: 'RETURN',
+          idempotencyKey: randomUUID(),
+        }),
+      ),
+      run((tx) =>
+        creditFromInvoice(tx, ctx(), {
+          invoiceId: inv.id,
+          creditDate: '2026-08-06',
+          reason: 'RETURN',
+          idempotencyKey: randomUUID(),
+        }),
+      ),
+    ]);
+
+    expect(both.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
+
+    const refused = both.find((r) => r.status === 'rejected');
+    expect(String((refused as PromiseRejectedResult).reason)).toMatch(
+      /already been credited in full|remains uncredited/,
+    );
+
+    // One credit note against this invoice, and the invoice is credited once.
+    const [counted] = await run((tx) =>
+      tx<{ notes: string; credited: string }[]>`
+          SELECT count(*)::text AS notes,
+                 (SELECT amount_credited::text FROM invoice
+                   WHERE tenant_id = ${tenant.tenantId} AND id = ${inv.id}) AS credited
+            FROM credit_note
+           WHERE tenant_id = ${tenant.tenantId} AND invoice_id = ${inv.id}
+             AND status <> 'VOIDED'
+      `,
+    );
+
+    expect(counted!.notes).toBe('1');
+    expect(counted!.credited).toBe(inv.total);
+  });
+});

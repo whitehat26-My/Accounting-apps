@@ -449,10 +449,30 @@ export async function issueTrackedStockForInvoice(
     itemId: string;
     units: bigint;
     cost: Money;
-    pool: StockPool;
     serials: string[] | null;
     itemCode: string;
   }[] = [];
+
+  /*
+   * ONE INVOICE CAN NAME THE SAME ITEM TWICE, AND THE POOL HAS TO REMEMBER.
+   *
+   * The pools are saved AFTER the COGS entry is posted, because the movement
+   * rows carry its id. That deferral used to mean `lockPool` re-read
+   * `item_stock` on every line and, with nothing written yet, handed each line
+   * of the same item the IDENTICAL starting pool — so a shelf of 10 sold as
+   * 2 + 3 was saved as 7 rather than 5, inventing two units and RM 560 of
+   * value, and the `INSUFFICIENT_STOCK` refusal compared each line against
+   * the full shelf instead of what the earlier lines had left.
+   *
+   * Two lines of one SKU is not exotic: two scans at the till, or one line at
+   * a discount and one at list. Nothing on the path merges them — `pos.ts`
+   * and `invoice.ts` both pass the lines through as typed.
+   *
+   * So the running pool is carried here. `lockPool` still takes the row lock
+   * on first sight of an item; every later line of that item continues from
+   * where the previous one left off.
+   */
+  const pools = new Map<string, StockPool>();
 
   for (const line of sorted) {
     const units = quantityToUnits(line.quantity);
@@ -465,7 +485,7 @@ export async function issueTrackedStockForInvoice(
       ? settleSerials(flag.code, units, line.serialNumbers, 'sold')
       : null;
 
-    const pool = await lockPool(tx, ctx, line.itemId, baseCurrency);
+    const pool = pools.get(line.itemId) ?? (await lockPool(tx, ctx, line.itemId, baseCurrency));
     const result = issueStock(pool, units);
 
     if (isErr(result)) {
@@ -487,11 +507,11 @@ export async function issueTrackedStockForInvoice(
 
     const cost = result.value.movementValue.negate();
     totalCost = totalCost.add(cost);
+    pools.set(line.itemId, result.value.pool);
     applied.push({
       itemId: line.itemId,
       units,
       cost,
-      pool: result.value.pool,
       serials,
       itemCode: flag?.code ?? line.itemId,
     });
@@ -541,8 +561,14 @@ export async function issueTrackedStockForInvoice(
     cogsEntryId = posted.id;
   }
 
+  // One save per ITEM, from the pool the last line of that item left behind —
+  // not one per line, which would write an item's pools in sequence and leave
+  // whichever landed last standing.
+  for (const [itemId, pool] of pools) {
+    await savePool(tx, ctx, itemId, pool);
+  }
+
   for (const a of applied) {
-    await savePool(tx, ctx, a.itemId, a.pool);
     const movementId = await writeMovement(tx, ctx, {
       itemId: a.itemId,
       movementType: 'ISSUE',
@@ -906,8 +932,27 @@ export async function detectStockDrift(
 ): Promise<
   { itemId: string; cachedQuantity: string; actualQuantity: string; cachedValue: string; actualValue: string }[]
 > {
+  /*
+   * BOTH SIDES ARE SCOPED IN CTEs, AND NEITHER IN THE `WHERE`.
+   *
+   * The same asymmetry `detectRollupDrift` carries a note about: under a FULL
+   * OUTER JOIN, `s.tenant_id` is NULL exactly where the cache row is MISSING,
+   * which is the drift case this exists to catch. Scoping in the `WHERE` would
+   * therefore trade a cross-tenant leak for a blind spot on the one row that
+   * matters. Scoping each side before the join gives neither.
+   *
+   * `emil_app` and `emil_worker` are both NOBYPASSRLS and `item_stock` is
+   * FORCE ROW LEVEL SECURITY, so the leak is unreachable through the running
+   * application. It is reachable from a migration or a maintenance script,
+   * which is where somebody runs a drift check by hand at two in the morning.
+   */
   return tx`
-      WITH actual AS (
+      WITH cached AS (
+          SELECT item_id, quantity_on_hand, stock_value
+            FROM item_stock
+           WHERE tenant_id = ${ctx.tenantId}
+      ),
+      actual AS (
           SELECT item_id,
                  SUM(quantity)    AS quantity,
                  SUM(value_delta) AS value
@@ -920,7 +965,7 @@ export async function detectStockDrift(
              COALESCE(a.quantity, 0)::text           AS "actualQuantity",
              COALESCE(s.stock_value, 0)::text        AS "cachedValue",
              COALESCE(a.value, 0)::text              AS "actualValue"
-        FROM item_stock s
+        FROM cached s
         FULL OUTER JOIN actual a ON a.item_id = s.item_id
        WHERE COALESCE(s.quantity_on_hand, 0) IS DISTINCT FROM COALESCE(a.quantity, 0)
           OR COALESCE(s.stock_value, 0)      IS DISTINCT FROM COALESCE(a.value, 0)
