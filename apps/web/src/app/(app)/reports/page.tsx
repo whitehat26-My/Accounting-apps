@@ -122,8 +122,14 @@ export default function ReportsPage() {
       const a = document.createElement('a');
       a.href = url;
       a.download = filename;
+      // Appended, and the revoke deferred by a frame — `apiDownload` in
+      // `src/lib/api.ts` documents both, and this copy had neither: a revoke
+      // in the same tick races Safari's download and nothing reaches the
+      // Downloads folder.
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 0);
     } catch (e) {
       setExportError(e);
     }
@@ -159,7 +165,7 @@ export default function ReportsPage() {
               <p className="text-sm text-ink-muted">Nothing was earned or spent in this period.</p>
             )
           ) : (
-            <Loading />
+            <Loading query={sopl} />
           )}
         </Card>
         <Card title="What the money is in">
@@ -170,17 +176,17 @@ export default function ReportsPage() {
               <p className="text-sm text-ink-muted">No assets recorded yet.</p>
             )
           ) : (
-            <Loading />
+            <Loading query={sofp} />
           )}
         </Card>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Profit or loss">
-          {sopl.data ? <Statement lines={sopl.data.lines} /> : <Loading />}
+          {sopl.data ? <Statement lines={sopl.data.lines} /> : <Loading query={sopl} />}
         </Card>
         <Card title="Financial position">
-          {sofp.data ? <Statement lines={sofp.data.lines} /> : <Loading />}
+          {sofp.data ? <Statement lines={sofp.data.lines} /> : <Loading query={sofp} />}
         </Card>
       </div>
 
@@ -279,8 +285,10 @@ export default function ReportsPage() {
               </div>
             ) : null}
           </>
-        ) : (
+        ) : margins.data ? (
           <p className="text-sm text-ink-muted">No sales in this period.</p>
+        ) : (
+          <Loading query={margins} />
         )}
       </Card>
 
@@ -365,7 +373,7 @@ export default function ReportsPage() {
               ) : null}
             </div>
           ) : (
-            <Loading />
+            <Loading query={cashFlow} />
           )}
         </Card>
 
@@ -404,7 +412,7 @@ export default function ReportsPage() {
               ) : null}
             </div>
           ) : (
-            <Loading />
+            <Loading query={equity} />
           )}
         </Card>
       </div>
@@ -453,7 +461,7 @@ export default function ReportsPage() {
             ) : null}
           </div>
         ) : (
-          <Loading />
+          <Loading query={tb} />
         )}
       </Card>
 
@@ -685,7 +693,7 @@ function TimeMachineCard({
         </div>
 
         {since === '' ? null : diff.isPending ? (
-          <Loading />
+          <Loading query={diff} />
         ) : diff.data?.unchanged ? (
           <p className="rounded-lg bg-positive-soft px-3 py-2 text-sm text-positive ring-1 ring-inset ring-positive/30">
             Nothing has changed since then. The figures you reported are still the figures in
@@ -830,6 +838,31 @@ function Statement({ lines }: { lines: StatementLine[] }) {
   );
 }
 
-function Loading() {
+/*
+ * A CARD THAT FAILED MUST NOT LOOK LIKE A CARD THAT IS STILL THINKING.
+ *
+ * Every card on this page rendered `<Skeleton />` whenever `data` was
+ * undefined, which is also what a REJECTED query looks like — so an expired
+ * token or a brief outage left the page shimmering for ever with nothing to
+ * click and nothing to read. Worse, the margin card fell through to "No sales
+ * in this period", asserting a fact about a month that had sales.
+ *
+ * Passing the query in costs one prop and makes the three states distinct.
+ */
+function Loading({
+  query,
+}: {
+  query?: { isError: boolean; error: unknown; refetch: () => unknown };
+}) {
+  if (query?.isError) {
+    return (
+      <div>
+        <ErrorNote error={query.error} />
+        <Button className="mt-2" variant="ghost" onClick={() => void query.refetch()}>
+          Try again
+        </Button>
+      </div>
+    );
+  }
   return <Skeleton />;
 }

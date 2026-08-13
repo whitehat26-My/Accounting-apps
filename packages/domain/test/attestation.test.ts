@@ -94,7 +94,61 @@ describe('the attestation carried inside the QR', () => {
       { numRuns: 300 },
     );
   });
+
+  /*
+   * The decoder used to answer where it should have refused, and this module's
+   * whole contract is that every failure is a refusal rather than a best
+   * guess — it runs in front of a person deciding whether a document is real.
+   */
+  it('refuses a length no encoder can produce', () => {
+    // Four characters carry three bytes; a remainder of one carries six bits
+    // and no whole byte. These used to decode to 0, 3 and 6 bytes.
+    for (const impossible of ['A', 'AAAAA', 'AAAAAAAAA']) {
+      expect(() => fromBase64Url(impossible)).toThrow(/no whole byte/);
+    }
+  });
+
+  it('refuses a final character that sets bits carrying no data', () => {
+    // One byte is `AQ`; the last character's low four bits are padding the
+    // encoder always leaves zero. `AR` differs only in that padding, so it
+    // used to decode to the identical byte — which made a typo verify.
+    expect(fromBase64Url('AQ')).toEqual(new Uint8Array([0x01]));
+    expect(() => fromBase64Url('AR')).toThrow(/carry no data/);
+
+    // Two bytes: `AQI` has two padding bits, so three of the sixty-three
+    // possible typos in that position used to collide with it.
+    expect(fromBase64Url('AQI')).toEqual(new Uint8Array([0x01, 0x02]));
+    for (const collision of ['AQJ', 'AQK', 'AQL']) {
+      expect(() => fromBase64Url(collision)).toThrow(/carry no data/);
+    }
+  });
+
+  it('accepts every string it produces, and no neighbour of one', () => {
+    fc.assert(
+      fc.property(fc.uint8Array({ minLength: 1, maxLength: 60 }), (bytes) => {
+        const encoded = toBase64Url(bytes);
+        expect(fromBase64Url(encoded)).toEqual(bytes);
+
+        // No other character in the last position decodes to the same bytes:
+        // either it is refused, or it means something different.
+        const stem = encoded.slice(0, -1);
+        for (const character of ALPHABET) {
+          if (character === encoded[encoded.length - 1]) continue;
+          let decoded: Uint8Array | null = null;
+          try {
+            decoded = fromBase64Url(stem + character);
+          } catch {
+            continue; // refused, which is the honest answer
+          }
+          expect(decoded).not.toEqual(bytes);
+        }
+      }),
+      { numRuns: 100 },
+    );
+  });
 });
+
+const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
 
 describe('the whole QR still fits a QR code', () => {
   /**

@@ -539,6 +539,36 @@ export function Donut({
     return { i, length, offset, share: v / total };
   });
 
+  /*
+   * THE PERCENTAGES ARE APPORTIONED, NOT ROUNDED INDEPENDENTLY.
+   *
+   * Arc lengths are pixels and the carve-out at the top of this file covers
+   * them. The percentage beside each label is not a pixel — it is a FIGURE
+   * somebody reads off a report — and rounding each share on its own made the
+   * column fail to add up: three equal assets printed 33% / 33% / 33%, and a
+   * reader is entitled to ask where the missing one per cent went.
+   *
+   * Largest remainder: floor everything, then hand the leftover points to the
+   * slices with the biggest fractions. The column now sums to 100 by
+   * construction, and no slice moves by more than one point.
+   */
+  const percentages = ((): number[] => {
+    const exact = values.map((v) => (v / total) * 100);
+    const floored = exact.map((p) => Math.floor(p));
+    let leftover = 100 - floored.reduce((a, b) => a + b, 0);
+
+    const byRemainder = exact
+      .map((p, i) => ({ i, remainder: p - Math.floor(p) }))
+      .sort((a, b) => b.remainder - a.remainder);
+
+    for (const { i } of byRemainder) {
+      if (leftover <= 0) break;
+      floored[i] = floored[i]! + 1;
+      leftover -= 1;
+    }
+    return floored;
+  })();
+
   return (
     <div className="flex flex-wrap items-center gap-x-5 gap-y-4">
       <svg
@@ -595,7 +625,7 @@ export function Donut({
             <span className="min-w-0 flex-1 text-ink-muted">{s.label}</span>
             <span className="shrink-0 tabular-nums font-semibold text-ink">{rm(s.value)}</span>
             <span className="w-11 shrink-0 text-right tabular-nums text-xs text-ink-faint">
-              {(arcs[i]!.share * 100).toFixed(0)}%
+              {percentages[i]}%
             </span>
           </li>
         ))}

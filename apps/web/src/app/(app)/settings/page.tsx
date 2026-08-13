@@ -20,7 +20,13 @@ interface Organisation {
   name: string;
   baseCurrency: string;
   reportingFramework: string;
+  /** Null means the product default, which is what documents then print. */
+  brandColour: string | null;
 }
+
+/** Matches `DEFAULT_BRAND` in `apps/api/src/pdf/render.ts`, lowercased for
+ *  `<input type="color">`, which only ever reports lowercase hex. */
+const DEFAULT_BRAND_COLOUR = '#1875be';
 
 interface GlAccount {
   id: string;
@@ -106,7 +112,7 @@ function LetterheadCard({ canEdit }: { canEdit: boolean }) {
   const fileInput = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
-  const [colour, setColour] = useState('#1875be');
+  const [saved, setSaved] = useState(false);
 
   const logo = useQuery({
     queryKey: ['organisation-logo'],
@@ -116,15 +122,38 @@ function LetterheadCard({ canEdit }: { canEdit: boolean }) {
     queryFn: () => apiBlobUrl('/v1/organisations/logo').catch(() => null),
   });
 
-  const save = async (logoBase64: string | null, contentType: 'image/png' | 'image/jpeg') => {
+  /*
+   * THE STORED COLOUR IS READ, NOT ASSUMED.
+   *
+   * This was a `useState('#1875be')` that nothing ever loaded, and every logo
+   * change sent it — so a shop that had picked its own accent lost it the next
+   * time it replaced its mark, silently, on every document printed afterwards.
+   * `/v1/organisation` now returns `brandColour` so there is something to read.
+   */
+  const org = useQuery({
+    queryKey: ['organisation'],
+    queryFn: () => api<Organisation>('/v1/organisation'),
+  });
+
+  const stored = org.data?.brandColour ?? DEFAULT_BRAND_COLOUR;
+  const [draft, setDraft] = useState<string | null>(null);
+  const colour = draft ?? stored;
+  const unsaved = draft !== null && draft !== stored;
+
+  const save = async (body: {
+    logoBase64?: string | null;
+    logoContentType?: 'image/png' | 'image/jpeg';
+    brandColour?: string;
+  }) => {
     setError(null);
+    setSaved(false);
     setBusy(true);
     try {
-      await api('/v1/organisations/brand', {
-        method: 'PUT',
-        body: { logoBase64, logoContentType: contentType, brandColour: colour },
-      });
+      await api('/v1/organisations/brand', { method: 'PUT', body });
       void queryClient.invalidateQueries({ queryKey: ['organisation-logo'] });
+      void queryClient.invalidateQueries({ queryKey: ['organisation'] });
+      setDraft(null);
+      setSaved(true);
     } catch (e) {
       setError(e);
     } finally {
@@ -139,7 +168,10 @@ function LetterheadCard({ canEdit }: { canEdit: boolean }) {
     // The same downscale-and-re-encode the repair camera uses, so a 4MB phone
     // photo of a signboard arrives as a letterhead-sized JPEG.
     const prepared = await preparePhoto(file);
-    await save(prepared.base64, prepared.contentType as 'image/png' | 'image/jpeg');
+    await save({
+      logoBase64: prepared.base64,
+      logoContentType: prepared.contentType as 'image/png' | 'image/jpeg',
+    });
   }
 
   return (
@@ -170,7 +202,11 @@ function LetterheadCard({ canEdit }: { canEdit: boolean }) {
                 {busy ? 'Saving…' : logo.data ? 'Replace logo' : 'Upload a logo'}
               </Button>
               {logo.data ? (
-                <Button variant="ghost" disabled={busy} onClick={() => void save(null, 'image/png')}>
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => void save({ logoBase64: null })}
+                >
                   Remove
                 </Button>
               ) : null}
@@ -180,9 +216,22 @@ function LetterheadCard({ canEdit }: { canEdit: boolean }) {
               <input
                 type="color"
                 value={colour}
-                onChange={(e) => setColour(e.target.value.toLowerCase())}
+                onChange={(e) => setDraft(e.target.value.toLowerCase())}
                 className="h-7 w-10 cursor-pointer rounded border border-line"
               />
+              {/* The picker only holds a draft. Nothing used to send it at all
+                  unless a logo happened to change in the same visit, so a
+                  colour chosen on its own was lost on navigation. */}
+              {unsaved ? (
+                <Button
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => void save({ brandColour: colour })}
+                >
+                  {busy ? 'Saving…' : 'Save colour'}
+                </Button>
+              ) : null}
+              {saved && !unsaved ? <span className="text-positive">Saved.</span> : null}
             </label>
           </div>
         ) : (

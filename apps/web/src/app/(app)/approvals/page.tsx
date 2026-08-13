@@ -63,15 +63,25 @@ function ApprovalRow({ bill, onDecided }: { bill: PendingBill; onDecided: () => 
   const nextStep = bill.outstanding[0];
 
   const decide = useMutation({
-    mutationFn: (decision: 'APPROVE' | 'REJECT') =>
-      api(`/v1/bills/${bill.billId}/approval`, {
+    // The JSX below already treats `nextStep` as possibly absent; the mutation
+    // asserted it with `!` and turned a bill with an empty `outstanding` array
+    // into a TypeError in the error note. Say what is actually wrong instead.
+    mutationFn: (decision: 'APPROVE' | 'REJECT') => {
+      if (!nextStep) {
+        throw new Error(
+          'This bill has no step waiting for a decision. Refresh — somebody may have ' +
+            'just decided it.',
+        );
+      }
+      return api(`/v1/bills/${bill.billId}/approval`, {
         method: 'POST',
         body: {
-          sequence: nextStep!.sequence,
+          sequence: nextStep.sequence,
           decision,
           ...(comment.trim() !== '' ? { comment } : {}),
         },
-      }),
+      });
+    },
     onSuccess: onDecided,
   });
 
@@ -99,10 +109,16 @@ function ApprovalRow({ bill, onDecided }: { bill: PendingBill; onDecided: () => 
           placeholder="Comment (kept with the decision)"
           className="w-64"
         />
-        <Button onClick={() => decide.mutate('APPROVE')} disabled={decide.isPending}>
+        <Button
+          onClick={() => decide.mutate('APPROVE')}
+          disabled={decide.isPending || !nextStep}
+        >
           Approve
         </Button>
-        <Button onClick={() => decide.mutate('REJECT')} disabled={decide.isPending}>
+        <Button
+          onClick={() => decide.mutate('REJECT')}
+          disabled={decide.isPending || !nextStep}
+        >
           Reject
         </Button>
       </div>

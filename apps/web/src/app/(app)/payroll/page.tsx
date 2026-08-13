@@ -1323,8 +1323,21 @@ function YearEndCard() {
     queryFn: () => api<FormE>(`/v1/payroll/years/${showYear}/form-e`),
   });
 
+  /*
+   * THE YEAR SELECTOR OUTLIVES AN EMPTY YEAR.
+   *
+   * This card used to `return null` when the year had no confirmed runs — and
+   * the ← previous year button lives inside it. Opened in January or February,
+   * before the first run of the new year, the whole card vanished and with it
+   * the only route to LAST year's EA sheets and C.P.8D rows: exactly the two
+   * months in which EA is due to staff by the end of February and Form E to
+   * LHDN by 31 March.
+   *
+   * Only the figures and the downloads depend on there being data. The way
+   * back to a year that has some does not.
+   */
   const data = formE.data;
-  if (!data || data.employeeCount === 0) return null;
+  const empty = !data || data.employeeCount === 0;
 
   const download = async (path: string, fallbackName: string) => {
     setError(null);
@@ -1339,15 +1352,27 @@ function YearEndCard() {
     <Card title={`Year-end — ${showYear}`}>
       <div className="space-y-3">
         <div className="flex flex-wrap items-center gap-4 text-sm">
-          <span>
-            <span className="font-semibold">{data.employeeCount}</span> staff paid
-          </span>
-          <span>
-            Gross <span className="font-semibold">{rm(data.totals.grossRemuneration)}</span>
-          </span>
-          <span>
-            PCB remitted <span className="font-semibold">{rm(data.totals.pcb)}</span>
-          </span>
+          {data && !empty ? (
+            <>
+              <span>
+                <span className="font-semibold">{data.employeeCount}</span> staff paid
+              </span>
+              <span>
+                Gross <span className="font-semibold">{rm(data.totals.grossRemuneration)}</span>
+              </span>
+              <span>
+                PCB remitted <span className="font-semibold">{rm(data.totals.pcb)}</span>
+              </span>
+            </>
+          ) : (
+            <span className="text-ink-muted">
+              {formE.isPending
+                ? 'Loading…'
+                : formE.isError
+                  ? 'That year could not be loaded.'
+                  : `No confirmed pay run in ${showYear} yet.`}
+            </span>
+          )}
           <Button variant="ghost" onClick={() => setShowYear((y) => y - 1)}>
             ← {showYear - 1}
           </Button>
@@ -1358,7 +1383,7 @@ function YearEndCard() {
           ) : null}
         </div>
 
-        <div className="flex flex-wrap gap-2">
+        <div className={`flex flex-wrap gap-2 ${empty ? 'hidden' : ''}`}>
           <Button
             onClick={() =>
               void download(`/v1/payroll/years/${showYear}/ea/pdf`, `ea-sheets-${showYear}.pdf`)

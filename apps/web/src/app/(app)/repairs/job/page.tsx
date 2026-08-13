@@ -5,7 +5,7 @@ import { useSearchParams } from 'next/navigation';
 import { Suspense, useState } from 'react';
 import { api, apiBlobUrl, apiDownload } from '@/lib/api';
 import { displayDate, qty, rm, todayIso } from '@/lib/display';
-import { Badge, Button, Card, ErrorNote, Field, Input } from '@/components/ui';
+import { Badge, Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { RepairPhotos } from '@/components/repair-photos';
 import { RepairSignatures } from '@/components/signature-pad';
 import { useNotice } from '@/components/notice';
@@ -122,8 +122,35 @@ function RepairDetail() {
     onError: setError,
   });
 
+  /*
+   * A FAILED FETCH IS NOT AN EMPTY PAGE.
+   *
+   * This was `if (!j) return null`, which rendered white space under the nav
+   * rail for every failure the query can have — a job belonging to another
+   * tenant (a 404 by rule 9), a cancelled job, an expired token, no network.
+   * Indistinguishable from a broken build, and the ErrorNote further down is
+   * wired to the local mutation, not to this query, so it never fired.
+   */
   const j = job.data;
-  if (!j) return null;
+  if (!j) {
+    return (
+      <div className="mx-auto max-w-2xl space-y-4">
+        {job.isError ? (
+          <Card title="Repair job">
+            <ErrorNote error={job.error} />
+            <p className="mt-2 text-sm text-ink-muted">
+              If this job was cancelled, or belongs to another shop, it will not open here.
+            </p>
+            <Button className="mt-3" variant="ghost" onClick={() => void job.refetch()}>
+              Try again
+            </Button>
+          </Card>
+        ) : (
+          <Skeleton />
+        )}
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">

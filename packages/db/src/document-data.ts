@@ -257,21 +257,45 @@ export async function sellerBlock(tx: Tx, ctx: TenantContext): Promise<SellerBlo
  * Clearing is passing `logo: null` — a tenant that decides its mark prints
  * badly needs a way back to the name-only letterhead, and "upload a white
  * square" is not that way.
+ *
+ * ---------------------------------------------------------------------------
+ * NULL CLEARS. UNDEFINED LEAVES ALONE. THE TWO ARE NOT THE SAME REQUEST.
+ *
+ * Both fields used to be written on every call, so changing one meant sending
+ * the other — and the Settings screen, which never read the stored colour,
+ * sent a hardcoded default with every logo change. A shop that had chosen its
+ * own accent lost it the next time it replaced its mark, on every invoice,
+ * receipt and payslip printed afterwards.
+ *
+ * Distinguishing the two also gives the colour a way to be saved on its own,
+ * which is what the picker in Settings needed and did not have.
+ * ---------------------------------------------------------------------------
  */
 export async function setOrganisationBrand(
   tx: Tx,
   ctx: TenantContext,
   input: {
-    readonly logo: Buffer | null;
-    readonly logoContentType: 'image/png' | 'image/jpeg' | null;
-    readonly brandColour: string | null;
+    /** `null` clears the mark; omit to leave whatever is stored. */
+    readonly logo?: Buffer | null;
+    readonly logoContentType?: 'image/png' | 'image/jpeg' | null;
+    /** `null` returns to the product default; omit to leave it. */
+    readonly brandColour?: string | null;
   },
 ): Promise<void> {
+  const touchesLogo = input.logo !== undefined;
+  const touchesColour = input.brandColour !== undefined;
+  if (!touchesLogo && !touchesColour) return;
+
   await tx`
       UPDATE organisation
-         SET logo              = ${input.logo},
-             logo_content_type = ${input.logo === null ? null : input.logoContentType},
-             brand_colour      = ${input.brandColour}
+         SET logo              = CASE WHEN ${touchesLogo}
+                                      THEN ${input.logo ?? null}::bytea ELSE logo END,
+             logo_content_type = CASE WHEN ${touchesLogo}
+                                      THEN ${
+                                        input.logo == null ? null : input.logoContentType ?? null
+                                      }::text ELSE logo_content_type END,
+             brand_colour      = CASE WHEN ${touchesColour}
+                                      THEN ${input.brandColour ?? null}::text ELSE brand_colour END
        WHERE id = ${ctx.tenantId}
   `;
 }

@@ -1016,6 +1016,73 @@ describe('two companies, two letterheads', () => {
     expect(stillWorks.status).toBe(200);
   });
 
+  it('changes the accent colour ALONE, without disturbing the logo', async () => {
+    /*
+     * `logo` and `brand_colour` used to be written on every call, so changing
+     * one meant sending the other — and Settings had no way to READ the stored
+     * colour. It seeded a hardcoded default and sent that default back with
+     * every logo change, so a shop that had chosen its own accent lost it the
+     * next time it replaced its mark, on every document printed afterwards.
+     */
+    await call(api, {
+      method: 'PUT',
+      ...asAlpha('/v1/organisations/brand'),
+      body: { logoBase64: PNG_1PX, logoContentType: 'image/png', brandColour: '#8b1a2b' },
+    });
+
+    const colourOnly = await call(api, {
+      method: 'PUT',
+      ...asAlpha('/v1/organisations/brand'),
+      body: { brandColour: '#2f6f3e' },
+    });
+    expect(colourOnly.status).toBe(200);
+
+    // The mark is still there — this request never mentioned it.
+    const logo = await callRaw(api, { method: 'GET', ...asAlpha('/v1/organisations/logo') });
+    expect(logo.status).toBe(200);
+
+    // And the screen can now read what it saved, which is what it never could.
+    const org = await call(api, { method: 'GET', ...asAlpha('/v1/organisation') });
+    expect(org.body['brandColour']).toBe('#2f6f3e');
+
+    // A logo change that says nothing about the colour leaves it standing.
+    await call(api, {
+      method: 'PUT',
+      ...asAlpha('/v1/organisations/brand'),
+      body: { logoBase64: PNG_2PX, logoContentType: 'image/png' },
+    });
+    const after = await call(api, { method: 'GET', ...asAlpha('/v1/organisation') });
+    expect(after.body['brandColour']).toBe('#2f6f3e');
+  });
+
+  it('refuses a request that names neither a logo nor a colour', async () => {
+    const nothing = await call(api, {
+      method: 'PUT',
+      ...asAlpha('/v1/organisations/brand'),
+      body: {},
+    });
+    expect(nothing.status).toBe(422);
+  });
+
+  it('refuses a PUT with no Idempotency-Key, which is why the web app must send one', async () => {
+    /*
+     * `apps/web/src/lib/api.ts` stamped the key on POST, PATCH and DELETE
+     * only, while the comment above that line already claimed PUT was
+     * included. The letterhead is the app's ONE PUT, so Settings answered 400
+     * every time it was ever pressed and no tenant has printed on its own
+     * letterhead. Pinned here so the interceptor's list and the client's rule
+     * cannot drift apart silently again.
+     */
+    const refused = await callRaw(api, {
+      method: 'PUT',
+      ...asAlpha('/v1/organisations/brand'),
+      body: { brandColour: '#123456' },
+      idempotencyKey: null,
+    });
+    expect(refused.status).toBe(422);
+    expect(String(refused.body)).toMatch(/Idempotency-Key header is required/);
+  });
+
   it('is org.manage to change and tax.read to look at', async () => {
     const clerk = await makeUser(api, { tenantId: alpha.tenantId, role: 'SALES' });
     const { accessToken } = await accessTokenFor(api, clerk.refreshToken, alpha.tenantId);

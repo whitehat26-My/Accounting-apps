@@ -3,7 +3,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
 import { api, apiDownload } from '@/lib/api';
-import { displayDate, qty, rm, todayIso } from '@/lib/display';
+import { displayDate, qty, quantityDelta, rm, todayIso } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input } from '@/components/ui';
 import { useNotice } from '@/components/notice';
 
@@ -122,7 +122,10 @@ export default function StockPage() {
           ) : (
             <p className="text-sm text-ink-muted">Select an item to see its trail.</p>
           )}
-          {selected ? <CountForm level={selected} /> : null}
+          {/* Keyed by item: without it, `counted`, `reason` and the green
+              confirmation survived a change of selection, so a count typed
+              against one item could be POSTED against the next one clicked. */}
+          {selected ? <CountForm key={selected.itemId} level={selected} /> : null}
         </Card>
       </div>
       <AgeingCard />
@@ -146,8 +149,11 @@ function CountForm({ level }: { level: Level }) {
   const variance = (() => {
     if (counted.trim() === '' || !/^\d+(\.\d{1,4})?$/.test(counted.trim())) return null;
     // Display only — the server does the real arithmetic on the posted count.
-    const diff = Number(counted) - Number(level.quantityOnHand);
-    return diff === 0 ? 'matches the book' : diff > 0 ? `+${diff} found` : `${diff} missing`;
+    // Exact, on strings: `Number(a) - Number(b)` printed +0.10000000000000009
+    // on the sentence whose whole job is to make somebody look twice.
+    const diff = quantityDelta(counted.trim(), level.quantityOnHand);
+    if (diff === '0') return 'matches the book';
+    return diff.startsWith('-') ? `${diff} missing` : `+${diff} found`;
   })();
 
   const count = useMutation({

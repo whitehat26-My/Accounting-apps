@@ -146,8 +146,16 @@ export class OnboardingController {
     const input = parse(brandSchema, body);
     const ctx = tenantContextOf(request);
 
-    const logo = input.logoBase64 === null ? null : Buffer.from(input.logoBase64, 'base64');
-    if (logo !== null && !isPrintableImage(logo)) {
+    // `undefined` means the request does not touch the logo at all; `null`
+    // means clear it. Only bytes get validated.
+    const logo =
+      input.logoBase64 === undefined
+        ? undefined
+        : input.logoBase64 === null
+          ? null
+          : Buffer.from(input.logoBase64, 'base64');
+
+    if (logo != null && !isPrintableImage(logo)) {
       /*
        * Refused HERE rather than at the moment somebody prints an invoice.
        * A logo is accepted once and embedded in every document afterwards, so
@@ -160,7 +168,7 @@ export class OnboardingController {
           'format that cannot be embedded in a PDF — save it as PNG or JPEG and try again.',
       );
     }
-    if (logo !== null && (logo.byteLength === 0 || logo.byteLength > LOGO_MAX_BYTES)) {
+    if (logo != null && (logo.byteLength === 0 || logo.byteLength > LOGO_MAX_BYTES)) {
       throw new ValidationError(
         `A logo must be between 1 byte and ${LOGO_MAX_BYTES} bytes; this one is ` +
           `${logo.byteLength}. It is embedded in every document this organisation ` +
@@ -170,9 +178,10 @@ export class OnboardingController {
 
     await withTenant(this.sql, ctx, (tx) =>
       setOrganisationBrand(tx, ctx, {
-        logo,
-        logoContentType: logo === null ? null : input.logoContentType,
-        brandColour: input.brandColour,
+        ...(logo !== undefined
+          ? { logo, logoContentType: logo === null ? null : input.logoContentType ?? null }
+          : {}),
+        ...(input.brandColour !== undefined ? { brandColour: input.brandColour } : {}),
       }),
     );
     return { updated: true };
@@ -182,18 +191,38 @@ export class OnboardingController {
 /** 256 KB, matching the CHECK in 0050. A letterhead, not a photograph. */
 const LOGO_MAX_BYTES = 256 * 1024;
 
-const brandSchema = z.object({
-  /** Null clears the mark; omitted is not allowed, so clearing is deliberate. */
-  logoBase64: z
-    .string()
-    .min(1)
-    .max(Math.ceil((LOGO_MAX_BYTES * 4) / 3) + 8)
-    .regex(/^[A-Za-z0-9+/]+={0,2}$/, 'Not valid base64')
-    .nullable(),
-  logoContentType: z.enum(['image/png', 'image/jpeg']),
-  /** Lowercase hex, matching the CHECK in 0050. Null is the product default. */
-  brandColour: z.string().regex(/^#[0-9a-f]{6}$/).nullable(),
-});
+/*
+ * NULL CLEARS. OMITTED LEAVES ALONE. THEY ARE DIFFERENT REQUESTS.
+ *
+ * `logoBase64` still cannot be omitted ACCIDENTALLY — clearing the mark is
+ * `null` and stays deliberate. What is now expressible is a request that
+ * touches only the colour, which the accent picker in Settings needs; before
+ * this, changing the colour meant re-sending the logo, and the screen had no
+ * way to read the stored colour, so it sent a default and overwrote the shop's
+ * choice on every logo change.
+ *
+ * A request naming neither field is refused rather than silently doing nothing.
+ */
+const brandSchema = z
+  .object({
+    logoBase64: z
+      .string()
+      .min(1)
+      .max(Math.ceil((LOGO_MAX_BYTES * 4) / 3) + 8)
+      .regex(/^[A-Za-z0-9+/]+={0,2}$/, 'Not valid base64')
+      .nullable()
+      .optional(),
+    logoContentType: z.enum(['image/png', 'image/jpeg']).optional(),
+    /** Lowercase hex, matching the CHECK in 0050. Null is the product default. */
+    brandColour: z.string().regex(/^#[0-9a-f]{6}$/).nullable().optional(),
+  })
+  .refine((v) => v.logoBase64 !== undefined || v.brandColour !== undefined, {
+    message: 'Name a logo or a brand colour — this request changes nothing.',
+  })
+  .refine((v) => v.logoBase64 == null || v.logoContentType !== undefined, {
+    message: 'A logo needs its content type.',
+    path: ['logoContentType'],
+  });
 
 const createOrganisationSchema = z.object({
   refreshToken: z.string().min(1),

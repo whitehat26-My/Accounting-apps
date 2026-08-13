@@ -1004,6 +1004,9 @@ export function demoApi(
     return {
       id: 'demo-tenant', name: store.orgName ?? 'Shah G Tech',
       baseCurrency: 'MYR', reportingFramework: 'MPERS',
+      // Null is "the product default", which is what the real server returns
+      // for an organisation that has never chosen one.
+      brandColour: null,
     };
   }
   if (p === '/v1/tax-codes' && method === 'GET') {

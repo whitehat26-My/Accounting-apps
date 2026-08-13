@@ -224,7 +224,12 @@ export async function callRaw(api: TestApi, options: Call) {
   if (options.tenantId) headers['x-tenant-id'] = options.tenantId;
   if (options.body !== undefined) {
     headers['content-type'] = 'application/json';
-    headers['idempotency-key'] = options.idempotencyKey ?? randomUUID();
+    // `null` means "send none", matching `call`. Without this the helper could
+    // not express a request that OMITS the key, so no test could pin the
+    // interceptor's refusal on a route whose response is not JSON.
+    if (options.idempotencyKey !== null) {
+      headers['idempotency-key'] = options.idempotencyKey ?? randomUUID();
+    }
   }
 
   const response = await api.app.getHttpAdapter().getInstance().inject({

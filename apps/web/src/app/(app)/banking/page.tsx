@@ -3,7 +3,7 @@
 import { useMemo, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, loadSession } from '@/lib/api';
-import { displayDate, rm } from '@/lib/display';
+import { displayDate, rm, todayIso } from '@/lib/display';
 import { Button, Card, ErrorNote, Field, Input, Skeleton } from '@/components/ui';
 import { can, useMe } from '@/lib/me';
 
@@ -270,7 +270,11 @@ function ImportCard({
     [account.bankName, dateFormat, delimiter],
   );
 
-  const statementDate = new Date().toISOString().slice(0, 10);
+  // The shop's date, not UTC's. Between midnight and 08:00 in Kuala Lumpur
+  // the UTC date is still yesterday, so an import stamped this way carried the
+  // previous day for the whole of an early-morning session. `todayIso()`
+  // exists for exactly this and every other screen already uses it.
+  const statementDate = todayIso();
   const parseBody =
     format === 'ADVICE'
       ? { content, format, statementDate }
@@ -696,7 +700,11 @@ interface ReconciliationView {
  * "reconciled with a RM 12 difference" is not a thing this system records.
  */
 function ReconcileCard({ account }: { account: BankAccount }) {
-  const [asOf, setAsOf] = useState(new Date().toISOString().slice(0, 10));
+  // Same reason as `statementDate` above — and worse here, because "As at"
+  // seeds the sign-off. On the first of the month before 08:00 this defaulted
+  // to the last day of the PREVIOUS month, so pressing Sign off closed a
+  // period the user believed they had already finished.
+  const [asOf, setAsOf] = useState(todayIso());
   const [signedOff, setSignedOff] = useState(false);
 
   const recon = useQuery({

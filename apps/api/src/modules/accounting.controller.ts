@@ -443,8 +443,13 @@ export class AccountingController {
   async organisation(@Req() request: FastifyRequest) {
     const ctx = this.ctx(request);
     const [row] = await withTenant(this.sql, ctx, (tx) =>
-      tx<{ id: string; name: string; base_currency: string; reporting_framework: string }[]>`
-          SELECT id, name, base_currency, reporting_framework
+      tx<
+        {
+          id: string; name: string; base_currency: string; reporting_framework: string;
+          brand_colour: string | null;
+        }[]
+      >`
+          SELECT id, name, base_currency, reporting_framework, brand_colour
             FROM organisation WHERE id = ${ctx.tenantId}
       `,
     );
@@ -454,6 +459,14 @@ export class AccountingController {
       name: row.name,
       baseCurrency: row.base_currency,
       reportingFramework: row.reporting_framework,
+      /*
+       * The letterhead accent. Returned because Settings had no way to READ
+       * it: the screen seeded a hardcoded default and sent that default back
+       * with every logo change, so a shop that had chosen its own colour lost
+       * it the next time it replaced its mark — silently, and on every invoice,
+       * receipt and payslip printed afterwards.
+       */
+      brandColour: row.brand_colour,
     };
   }
 }

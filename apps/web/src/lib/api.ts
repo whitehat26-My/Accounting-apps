@@ -91,15 +91,27 @@ export async function api<T = Record<string, unknown>>(
       headers['authorization'] = `Bearer ${session.accessToken}`;
       headers['x-tenant-id'] = session.tenantId;
     }
-    // Every mutating method, DELETE included — the API's idempotency
-    // interceptor treats POST, PUT, PATCH and DELETE alike and refuses any of
-    // them without a key.
-    if (options.method === 'POST' || options.method === 'PATCH' || options.method === 'DELETE') {
+    /*
+     * Every mutating method, DELETE included — the API's idempotency
+     * interceptor treats POST, PUT, PATCH and DELETE alike and refuses any of
+     * them without a key.
+     *
+     * PUT was missing from this list while the sentence above already claimed
+     * it was there, and the app has exactly one PUT route: the letterhead.
+     * Settings → Upload a logo answered 400 every time it was ever pressed, so
+     * no tenant has ever printed on its own letterhead. The demo build hides
+     * it, because `api()` short-circuits before the interceptor.
+     *
+     * Derived from the METHOD rather than listed, so the next verb added
+     * cannot repeat this.
+     */
+    const method = options.method ?? 'GET';
+    if (method !== 'GET') {
       headers['idempotency-key'] = uuid();
     }
 
     return fetch(`/api${path}`, {
-      method: options.method ?? 'GET',
+      method,
       headers,
       ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : {}),
     });

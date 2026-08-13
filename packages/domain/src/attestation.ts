@@ -281,11 +281,38 @@ export function toBase64Url(bytes: Uint8Array<ArrayBufferLike>): string {
   return out;
 }
 
+/*
+ * DECODING IS A REFUSAL OR AN ANSWER, NEVER A BEST GUESS.
+ *
+ * This ran in front of someone deciding whether a piece of paper is real, and
+ * it accepted two kinds of string it should not have.
+ *
+ * IMPOSSIBLE LENGTHS. Every group of four characters carries three bytes, so a
+ * remainder of two characters means one byte and three means two. A remainder
+ * of ONE encodes six bits and no whole byte — no encoder can produce it. The
+ * old loop simply dropped the orphan and returned the rest, so `"A"` decoded
+ * to zero bytes and `"AAAAA"` to three.
+ *
+ * LEFTOVER BITS NOBODY WROTE. The trailing characters of a short group carry
+ * padding bits that the encoder always leaves zero, and the loop ignored them.
+ * Measured on a real attestation payload: of the 63 possible single-character
+ * typos in the LAST position, three decoded to a byte-identical attestation —
+ * `…DAwNDI`, `…DAwNDJ`, `…DAwNDK` and `…DAwNDL` all read back as PAY-00042 for
+ * RM 1,234.50. A mistyped code that verifies is worse than one that fails,
+ * because the failure is the part that tells somebody to look again.
+ *
+ * Neither was a forgery path — the signature is computed over the DECODED
+ * bytes, so a collision here gains an attacker nothing. Both are refusals this
+ * module claims to make and did not.
+ */
 export function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
   const clean = text.trim();
   if (clean === '') return new Uint8Array(0);
   if (!/^[A-Za-z0-9_-]+$/.test(clean)) {
     throw new TypeError('Not base64url');
+  }
+  if (clean.length % 4 === 1) {
+    throw new TypeError('Not base64url: a trailing character encodes no whole byte');
   }
 
   const bytes: number[] = [];
@@ -299,5 +326,12 @@ export function fromBase64Url(text: string): Uint8Array<ArrayBuffer> {
       bytes.push((buffer >> bits) & 0xff);
     }
   }
+
+  // 0, 2 or 4 bits are left over, and an encoder writes them as zero. Anything
+  // else is a string this decoder did not produce.
+  if (bits > 0 && (buffer & ((1 << bits) - 1)) !== 0) {
+    throw new TypeError('Not base64url: the final character sets bits that carry no data');
+  }
+
   return Uint8Array.from(bytes);
 }

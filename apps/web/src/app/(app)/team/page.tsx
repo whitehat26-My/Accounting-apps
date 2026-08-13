@@ -63,13 +63,26 @@ export default function TeamPage() {
    * runs the server. This mints a code the owner can pass on, bound to that
    * address so it cannot be handed around.
    */
-  const [invite, setInvite] = useState<{ code: string; expiresAt: string } | null>(null);
+  /*
+   * The address is captured WITH the code, not read from the live field.
+   *
+   * The panel interpolated the current `email` state, while the code is bound
+   * to whatever the field held when the mutation fired. Type a second address
+   * afterwards and the panel instructed you to send the new person a code that
+   * only works for the old one.
+   */
+  const [invite, setInvite] = useState<
+    { code: string; expiresAt: string; email: string } | null
+  >(null);
   const inviteThem = useMutation({
-    mutationFn: () =>
-      api<{ code: string; expiresAt: string }>('/v1/auth/invites', {
+    mutationFn: async () => {
+      const issuedFor = email;
+      const minted = await api<{ code: string; expiresAt: string }>('/v1/auth/invites', {
         method: 'POST',
-        body: { email },
-      }),
+        body: { email: issuedFor },
+      });
+      return { ...minted, email: issuedFor };
+    },
     onSuccess: setInvite,
   });
 
@@ -178,7 +191,7 @@ export default function TeamPage() {
             {invite ? (
               <div className="rounded-xl bg-positive-soft p-3 ring-1 ring-inset ring-positive/30">
                 <p className="text-xs text-positive">
-                  Send this code to {email}. It works once, only for that address, and
+                  Send this code to {invite.email}. It works once, only for that address, and
                   expires {displayDate(invite.expiresAt.slice(0, 10))}.
                 </p>
                 {/*

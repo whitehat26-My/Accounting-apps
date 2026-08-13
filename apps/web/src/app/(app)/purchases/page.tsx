@@ -207,7 +207,17 @@ function BillRow({
       </div>
 
       <div className="mt-2 flex flex-wrap gap-2">
-        <Button onClick={() => setPaying(!paying)}>{paying ? 'Cancel' : 'Pay'}</Button>
+        {/* Re-seeded each time the panel OPENS — see the note on the same
+            button in `sales/page.tsx`. Seeded once at mount, a part payment
+            left the field holding an amount the bill no longer owes. */}
+        <Button
+          onClick={() => {
+            if (!paying) setAmount(bill.amountDue);
+            setPaying(!paying);
+          }}
+        >
+          {paying ? 'Cancel' : 'Pay'}
+        </Button>
         {canDebit ? (
           <Button
             variant="ghost"

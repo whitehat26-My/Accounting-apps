@@ -196,7 +196,17 @@ function InvoiceRow({
         >
           PDF
         </Button>
-        <Button onClick={() => setPaying(!paying)}>
+        {/* Re-seeded each time the panel OPENS. It was seeded once at mount,
+            and the row is keyed by invoice id, so after a part payment the
+            header updated to the new balance while the field still held the
+            old figure — press Record twice and the second receipt repeats the
+            first amount instead of clearing the invoice. */}
+        <Button
+          onClick={() => {
+            if (!paying) setAmount(invoice.amountDue);
+            setPaying(!paying);
+          }}
+        >
           {paying ? 'Cancel' : 'Record payment'}
         </Button>
         <Button
