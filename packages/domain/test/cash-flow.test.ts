@@ -361,3 +361,58 @@ describe('presentation', () => {
     expect(build([cashEntry, zeroCash]).entryCount).toBe(1);
   });
 });
+
+describe('an entry that moved no cash', () => {
+  /*
+   * `touchedCash` was computed here and then not used to gate the bucketing, so
+   * a non-cash entry handed to this function was still decomposed into the
+   * sections — moving the operating figure while `reconciles` stayed true,
+   * because the entry balances on its own.
+   *
+   * `packages/db/src/cash-flow.ts` already selects only entries with a line
+   * against a cash account, so this was defence in depth rather than a live
+   * wrong figure — except for an entry whose cash line is for ZERO, which that
+   * query happily selects and which moved no money.
+   */
+  const REAL = entry('JE-1', '2026-03-01', [
+    ['1000', '1080.00'],
+    ['4000', '-1080.00'],
+  ]);
+
+  it('leaves the sections alone when the cash line is for zero', () => {
+    const control = build([REAL]);
+
+    const zeroCash = entry('JE-ZERO', '2026-03-02', [
+      // References a cash account, so the SQL selects it; moves nothing.
+      ['1000', '0.00'],
+      ['6000', '0.00'],
+    ]);
+    const withZero = build([REAL, zeroCash], {
+      closing: control.closingCash.toDecimalString(),
+    });
+
+    expect(withZero.netCashFlow.equals(control.netCashFlow)).toBe(true);
+    for (const activity of ['OPERATING', 'INVESTING', 'FINANCING'] as const) {
+      expect(
+        section(withZero, activity).subtotal.equals(section(control, activity).subtotal),
+        activity,
+      ).toBe(true);
+    }
+  });
+
+  it('ignores an entry with no cash line at all, rather than bucketing it', () => {
+    // The reachable version of the same bug, if the query above ever loosened:
+    // a depreciation charge shifting "the single figure a lender looks at".
+    const control = build([REAL]);
+    const nonCash = entry('JE-DEP', '2026-03-03', [
+      ['6000', '5000.00'],
+      ['1500', '-5000.00'],
+    ]);
+
+    const withNonCash = build([REAL, nonCash], {
+      closing: control.closingCash.toDecimalString(),
+    });
+    expect(section(withNonCash, 'OPERATING').subtotal.equals(section(control, 'OPERATING').subtotal))
+      .toBe(true);
+  });
+});

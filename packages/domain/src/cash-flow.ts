@@ -222,6 +222,31 @@ export function buildCashFlowStatement(options: BuildCashFlowOptions): CashFlowS
   const movingEntries = new Set<string>();
 
   for (const entry of options.entries) {
+    /*
+     * AN ENTRY THAT MOVED NO CASH CONTRIBUTES NOTHING, AND THAT WAS COMPUTED
+     * BUT NOT ACTED ON.
+     *
+     * `touchedCash` was worked out here and then used only to populate
+     * `movingEntries` for the entry count — the bucketing below ran for every
+     * entry the caller supplied, whether or not any cash had moved. So a
+     * depreciation charge handed to this function would be decomposed into the
+     * operating and unclassified buckets and shift `operatingCashFlow()`, while
+     * `checkCashFlow(...).reconciles` still answered `true`, because the entry
+     * balances. A wrong figure that looks sound.
+     *
+     * Not reachable through the API today: `packages/db/src/cash-flow.ts`
+     * selects only entries with a line against a cash account, so the contract
+     * this type documents — "an entry that touched cash" — is already met by the
+     * one real caller. What that query does NOT exclude is an entry whose cash
+     * line is for ZERO, which passes the SQL and fails the test below, and that
+     * is the seam this closes. A module that computes a fact and ignores it is
+     * one refactor away from the reachable version of the same bug.
+     */
+    const movedCash = entry.lines.some(
+      (line) => cashAccountIds.has(line.accountId) && !line.amount.isZero(),
+    );
+    if (!movedCash) continue;
+
     let touchedCash = false;
 
     for (const line of entry.lines) {

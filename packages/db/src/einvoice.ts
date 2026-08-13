@@ -30,6 +30,18 @@ import { toIsoDate } from './internal.js';
  * touching the network.
  */
 
+/**
+ * The statuses from which a re-queue is refused: LHDN has already accepted the
+ * document, so sending it again would submit a validated invoice twice.
+ * `REJECTION_REQUESTED` is included because the document is still VALID at
+ * LHDN while the buyer's request is outstanding.
+ */
+const REQUEUE_REFUSED: ReadonlySet<SubmissionStatus> = new Set([
+  'VALID',
+  'REJECTION_REQUESTED',
+  'CANCELLED',
+]);
+
 export class EInvoiceError extends Error {
   constructor(
     readonly code:
@@ -312,6 +324,59 @@ export async function queueSubmission(
       'DOCUMENT_INVALID',
       `Document ${document.documentNo} cannot be submitted`,
       validated.error,
+    );
+  }
+
+  /*
+   * A RE-QUEUE IS A TRANSITION, AND IT HAS TO ASK THE STATE MACHINE.
+   *
+   * The upsert below used to move any existing submission to QUEUED
+   * unconditionally, without ever calling `transition()`. The machine in
+   * `@emil/domain` allows `→ QUEUED` only from INVALID — a document LHDN
+   * rejected, corrected and sent again. `VALID → QUEUED` and
+   * `CANCELLED → QUEUED` are ILLEGAL_TRANSITION, and CANCELLED is documented as
+   * terminal.
+   *
+   * Nothing else stopped it. `forbid_validated_submission_rewrite` guards
+   * `lhdn_uuid` and `validated_at` against CHANGING, and the upsert left both
+   * alone, so `IS DISTINCT FROM` was false and the trigger stayed quiet. Posting
+   * to the route twice therefore reset an accepted document to QUEUED with its
+   * LHDN uuid still attached, and the worker submitted to LHDN a document LHDN
+   * had already validated.
+   *
+   * Asked here rather than reimplemented: a second copy of the rule beside the
+   * machine is how the two come to disagree.
+   */
+  const [current] = await tx<{ status: SubmissionStatus }[]>`
+      SELECT status FROM einvoice_submission
+       WHERE tenant_id = ${ctx.tenantId}
+         AND document_type = ${document.documentType}
+         AND document_id = ${documentId}
+  `;
+
+  /*
+   * The line is drawn at LHDN HAVING SEEN IT, not at the machine's letter.
+   *
+   * `transition(status, RETRY)` is legal only from INVALID, but re-queueing a
+   * submission that is still QUEUED or in flight as SUBMITTED is harmless — the
+   * worker sends it once either way, and an existing test covers the caller who
+   * queues twice before anything has left. Refusing those would break a working
+   * flow to satisfy a rule about a different hazard.
+   *
+   * The hazard is a document LHDN has ACCEPTED. Past that point a re-queue
+   * makes the worker submit an already-validated document a second time, and
+   * the correction LHDN expects is a cancellation or a credit note, not another
+   * submission of the same invoice.
+   */
+  if (current && REQUEUE_REFUSED.has(current.status)) {
+    throw new EInvoiceError(
+      'ILLEGAL_TRANSITION',
+      `Document ${document.documentNo} is ${current.status} and cannot be queued again. ` +
+        (current.status === 'CANCELLED'
+          ? 'A cancelled submission is final; the correction is a credit note.'
+          : 'LHDN has already validated it; cancel it within the cancellation window, ' +
+            'or correct it with a credit note.'),
+      { code: 'ILLEGAL_TRANSITION', from: current.status, event: 'RETRY' },
     );
   }
 

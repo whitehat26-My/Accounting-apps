@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { validateForSubmission } from '@emil/domain';
+import { validateForSubmission, type SubmissionEvent } from '@emil/domain';
 import { withTenant, type Sql } from '../src/client.js';
 import { issueInvoice } from '../src/invoice.js';
 import { issueCreditNote } from '../src/credit-note.js';
@@ -545,5 +545,79 @@ describe('issuance is never blocked by LHDN', () => {
         return queueSubmission(tx, ctx(), doc, invoice.id);
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe('a re-queue asks the state machine', () => {
+  /*
+   * `queueSubmission` ran an unconditional `ON CONFLICT DO UPDATE SET status =
+   * 'QUEUED'` and never called `transition()`. The machine allows `→ QUEUED`
+   * only from INVALID — rejected, corrected, sent again. VALID and the terminal
+   * CANCELLED are ILLEGAL_TRANSITION.
+   *
+   * Nothing else caught it: `forbid_validated_submission_rewrite` guards
+   * lhdn_uuid and validated_at against CHANGING, and the upsert left both
+   * alone, so the trigger stayed quiet. Posting the route twice reset an
+   * accepted document to QUEUED with its LHDN uuid still attached, and the
+   * worker re-submitted a document LHDN had already validated.
+   */
+  const queue = async (invoiceId: string) =>
+    withTenant(sql, ctx(), async (tx) => {
+      const doc = await buildInvoiceDocument(tx, ctx(), invoiceId);
+      return queueSubmission(tx, ctx(), doc, invoiceId);
+    });
+
+  const drive = async (submissionId: string, events: SubmissionEvent[]) => {
+    for (const event of events) {
+      await withTenant(sql, ctx(), (tx) => applyEvent(tx, ctx(), submissionId, event));
+    }
+  };
+
+  it('refuses to re-queue a document LHDN has already validated', async () => {
+    const invoice = await issue();
+    const queued = await queue(invoice.id);
+
+    await drive(queued.id, [
+      { type: 'SUBMIT' },
+      { type: 'VALIDATED', lhdnUuid: 'LHDN-TEST-0001', longId: 'LONG-0001', validatedAt: '2026-08-06T02:00:00Z' },
+    ]);
+
+    await expect(queue(invoice.id)).rejects.toThrow(/already validated it/i);
+
+    // And the row is untouched: still VALID, still carrying its uuid.
+    const [row] = await withTenant(sql, ctx(), (tx) =>
+      tx<{ status: string; lhdn_uuid: string | null }[]>`
+          SELECT status, lhdn_uuid FROM einvoice_submission
+           WHERE tenant_id = ${tenant.tenantId} AND id = ${queued.id}
+      `,
+    );
+    expect(row!.status).toBe('VALID');
+    expect(row!.lhdn_uuid).toBe('LHDN-TEST-0001');
+  });
+
+  it('refuses to re-queue a cancelled submission, which is terminal', async () => {
+    const invoice = await issue();
+    const queued = await queue(invoice.id);
+
+    await drive(queued.id, [
+      { type: 'SUBMIT' },
+      { type: 'VALIDATED', lhdnUuid: 'LHDN-TEST-0002', longId: 'LONG-0002', validatedAt: '2026-08-06T02:00:00Z' },
+      { type: 'CANCELLED', reason: 'Wrong buyer' },
+    ]);
+
+    await expect(queue(invoice.id)).rejects.toThrow(/cancelled submission is final/i);
+  });
+
+  it('still allows the legal retry, from INVALID', async () => {
+    const invoice = await issue();
+    const queued = await queue(invoice.id);
+
+    await drive(queued.id, [
+      { type: 'SUBMIT' },
+      { type: 'REJECTED_BY_VALIDATION', errorCode: 'DS302', detail: 'Bad TIN' },
+    ]);
+
+    const again = await queue(invoice.id);
+    expect(again.status).toBe('QUEUED');
   });
 });

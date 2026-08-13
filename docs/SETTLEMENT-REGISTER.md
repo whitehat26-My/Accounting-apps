@@ -577,6 +577,49 @@ to do here next.
 document was later cancelled. The printed reference under the QR remains how a
 reader asks the live system, and the page says which check it ran.
 
+### 4.13 The failure mode this repository keeps producing — AGREEING WITH ITSELF
+
+Three defects found so far share one root cause, and it is worth naming here because
+the next one will look exactly like them: **the code and its test agreed on a convention
+the outside world does not share.** Every suite was green throughout.
+
+1. **QR format information** written least-significant-bit first, and the test read it
+   back the same way. Every QR the product had ever drawn was unscannable.
+2. **DuitNow TLV lengths and the CRC** counted UTF-16 code units while the symbol carries
+   UTF-8 bytes. `parseTlv` and `verifyQr` walk the same JavaScript string, so they agreed
+   with the builder; a merchant name with one accent produced a symbol that
+   desynchronised at the name and failed its own checksum. `fc.string()` generates
+   printable ASCII by default, so the property test could never reach it.
+3. **The idempotency replay** answered with the request's totals rather than the ledger's,
+   and the test replayed the *same* entry twice — so the two coincided and the bug was
+   invisible.
+
+The common shape: a test written by the same hand as the code, exercising the same
+assumption. What broke each of them open was leaving the module — decoding a rendered
+symbol with an outside reader, walking the payload's bytes, posting twice through the
+running API. Where a format or a protocol is involved, **the test has to come from
+outside**: `qr-golden.test.ts` compares whole symbols against a separate implementation,
+and `duitnow-qr.test.ts` now walks bytes rather than characters.
+
+A fourth of the same family is recorded in §4.12: `Date.parse` was trusted to validate a
+calendar date and does not, so `2026-02-30` posted to 2 March.
+
+**Also fixed 2026-08-13, found in the same sweep:** raw PostgreSQL messages, SQLSTATEs and
+DETAIL lines echoed to clients as 422 (the filter's own rule 2 said the opposite; the
+signal separating a deliberate trigger refusal from an incidental error turned out to be
+`routine = exec_stmt_raise`, not the SQLSTATE, since this repository raises its own rules
+with `ERRCODE = 'check_violation'`); an unvalidated `limit` reaching SQL as `LIMIT NaN`;
+a PCB chargeable income landing in the seam between two bands being taxed at **zero**;
+`queueSubmission` re-queueing a document LHDN had already validated, bypassing the state
+machine that forbids it; a base-currency journal line whose two amounts differed passing
+validation; and `cash-flow.ts` computing `touchedCash` and never using it.
+
+**Recorded, not fixed** — none is reachable today and each is a rule violation rather than
+a wrong answer: `detectRollupDrift`'s outer join relies on RLS where its sibling CTE does
+not; `journalSchema.lines` has no `.max()` where `openingBalancesSchema` has one; and
+three `Number(x) !== 0` comparisons on `NUMERIC` columns in `ledger.ts` and `item.ts`
+technically breach rule 2 without being able to produce a wrong result.
+
 **FIXED 2026-08-12 — every QR this system had ever drawn was unscannable.**
 Two defects in `packages/domain/src/qr.ts`, found while photographing the till for
 the DuitNow feature and confirmed by decoding the screenshots rather than by
