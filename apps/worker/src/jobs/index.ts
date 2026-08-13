@@ -28,6 +28,35 @@ export interface JobContext {
 export type Job = (context: JobContext) => Promise<Record<string, unknown>>;
 
 /**
+ * The shop's calendar date at an instant — CLAUDE.md rule 8.
+ *
+ * ---------------------------------------------------------------------------
+ * `now.toISOString().slice(0, 10)` IS THE UTC DATE, AND THAT IS A BUG HERE.
+ *
+ * Malaysia is UTC+8 with no daylight saving, so from midnight to eight in the
+ * morning Kuala Lumpur time the UTC date is still YESTERDAY — and the nightly
+ * jobs run at 03:00 local, squarely inside that window.
+ *
+ * `weeklyDigest` did the conversion; `paymentReminders` did not, and its
+ * `today` is not decoration — it is the date arithmetic. `runFollowUpPass`
+ * computes `(today::date - due_date)` and filters `due_date < today::date`, so
+ * a day short means an invoice due on the 12th is not seven days overdue until
+ * the 20th. Every tier of every reminder slipped by a day, and
+ * `payment_reminder.queued_on` recorded the day before the one it was
+ * composed on.
+ *
+ * `businessToday()` in `@emil/db` answers the same question for the API, but
+ * it reads the real clock; jobs take their instant from `JobContext.now` so a
+ * test can drive them at a chosen moment, and that instant is what has to be
+ * converted.
+ * ---------------------------------------------------------------------------
+ */
+export function shopDate(now: Date): string {
+  // The offset is fixed, so the arithmetic is safe and needs no zone database.
+  return new Date(now.getTime() + 8 * 3_600_000).toISOString().slice(0, 10);
+}
+
+/**
  * Every tenant, for the jobs that ask a question of all of them.
  *
  * ---------------------------------------------------------------------------
@@ -242,7 +271,7 @@ export const outboxSweep: Job = async ({ sql, log }) => {
  */
 export const paymentReminders: Job = async ({ sql, log, now }) => {
   const tenants = await everyTenant(sql);
-  const today = now.toISOString().slice(0, 10);
+  const today = shopDate(now);
 
   let queued = 0;
   let cancelled = 0;
@@ -278,12 +307,12 @@ export const paymentReminders: Job = async ({ sql, log, now }) => {
  * this file. A worker down over the weekend catches up on its first run back,
  * with no missed-week special case.
  *
- * The KL offset is fixed (+08:00, no DST), so the arithmetic is safe; the
- * digest week must roll over on the shop's Monday, not UTC's.
+ * The digest week must roll over on the shop's Monday, not UTC's — see
+ * `shopDate` at the top of this file, which every job now shares.
  */
 export const weeklyDigest: Job = async ({ sql, log, now }) => {
   const tenants = await everyTenant(sql);
-  const klToday = new Date(now.getTime() + 8 * 3_600_000).toISOString().slice(0, 10);
+  const klToday = shopDate(now);
 
   let stored = 0;
   let warnings = 0;

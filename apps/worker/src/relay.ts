@@ -53,10 +53,17 @@ export interface RelayPass {
   readonly unroutable: number;
   readonly retried: number;
   readonly deadLettered: number;
+  /**
+   * Claimed, but neither handled nor settled — the settle call itself failed.
+   * The event keeps its lease and comes back when the lease expires. Counted
+   * rather than thrown, so one bad event cannot cost the rest of the batch.
+   */
+  readonly abandoned: number;
 }
 
 const EMPTY: RelayPass = {
   claimed: 0, handled: 0, skipped: 0, unroutable: 0, retried: 0, deadLettered: 0,
+  abandoned: 0,
 };
 
 /**
@@ -83,20 +90,48 @@ export async function relayPass(
   const tally = { ...EMPTY, claimed: events.length };
 
   for (const event of events) {
-    const outcome = await dispatch(sql, handlers, log, event, options);
+    /*
+     * ONE EVENT'S SETTLE FAILURE COSTS ONE EVENT, NOT THE BATCH.
+     *
+     * `dispatch` catches what the HANDLER throws, but the three settle calls
+     * — the two `completeOutboxEvent`s and the `failOutboxEvent` inside
+     * `settleFailure` — sat outside any `try`. A throw there propagated out of
+     * the loop, so the remaining events of a batch of 25 were left claimed:
+     * `attempts` already incremented and `available_at` already pushed a full
+     * lease into the future by the claim, but never handled and never settled.
+     * They went quiet for five minutes and the pass reported nothing at all.
+     *
+     * It is not a remote path either. `settleFailure` runs BECAUSE a handler
+     * threw, and the commonest reason a handler throws is that the database is
+     * unhappy — which is the same condition that makes the settle throw.
+     */
+    let outcome: Outcome;
+    try {
+      outcome = await dispatch(sql, handlers, log, event, options);
+    } catch (error) {
+      log.error('outbox: could not settle an event; it will be redelivered', {
+        id: event.id,
+        eventType: event.eventType,
+        attempts: event.attempts,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      outcome = 'ABANDONED';
+    }
+
     switch (outcome) {
       case 'HANDLED': tally.handled += 1; break;
       case 'SKIPPED': tally.skipped += 1; break;
       case 'UNROUTABLE': tally.unroutable += 1; break;
       case 'RETRY': tally.retried += 1; break;
       case 'DEAD': tally.deadLettered += 1; break;
+      case 'ABANDONED': tally.abandoned += 1; break;
     }
   }
 
   return tally;
 }
 
-type Outcome = 'HANDLED' | 'SKIPPED' | 'UNROUTABLE' | 'RETRY' | 'DEAD';
+type Outcome = 'HANDLED' | 'SKIPPED' | 'UNROUTABLE' | 'RETRY' | 'DEAD' | 'ABANDONED';
 
 async function dispatch(
   sql: Sql,
@@ -202,6 +237,16 @@ async function settleFailure(
   if (outcome === 'FAILED') {
     log.error('outbox: dead-lettered', detail);
     return 'DEAD';
+  }
+
+  if (outcome === 'SETTLED') {
+    // The row was no longer PENDING. Another worker finished it while this one
+    // was failing — the lease-expiry redelivery this design accepts — so its
+    // success stands and this failure is recorded nowhere but the log. Before
+    // migration 0055 this branch did not exist and the failure OVERWROTE the
+    // dispatched row, turning completed work into a dead letter.
+    log.warn('outbox: failed an event that was already settled elsewhere', detail);
+    return 'SKIPPED';
   }
 
   log.warn('outbox: will retry', detail);

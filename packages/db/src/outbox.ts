@@ -78,7 +78,13 @@ export async function completeOutboxEvent(
   return row?.complete_outbox_event ?? false;
 }
 
-export type FailOutcome = 'RETRY' | 'FAILED' | 'UNKNOWN';
+/**
+ * `SETTLED` means the row was no longer PENDING when the failure arrived —
+ * another worker completed it after this one's lease expired, or an operator
+ * intervened. Migration 0055 has the interleaving; the short version is that a
+ * failure must never overwrite somebody else's success.
+ */
+export type FailOutcome = 'RETRY' | 'FAILED' | 'SETTLED' | 'UNKNOWN';
 
 /**
  * Record a failure. Returns whether the event will be retried or is dead.

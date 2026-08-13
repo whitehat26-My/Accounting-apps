@@ -3,6 +3,7 @@ import type { FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import {
   auditTrail,
+  businessToday,
   entityHistory,
   verifyAuditChain,
   withTenant,
@@ -145,7 +146,11 @@ export class AuditController {
 
 const proofWindowSchema = z.object({
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
-  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default(() => new Date().toISOString().slice(0, 10)),
+  // The shop's today, not UTC's. Between midnight and 08:00 in Kuala Lumpur
+  // the UTC date is still yesterday, and a proof pack that silently ends a day
+  // early is one that omits the very entries somebody is about to be asked
+  // about. `businessToday()` carries the full argument.
+  to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).default(() => businessToday()),
 });
 
 const auditQuerySchema = z.object({

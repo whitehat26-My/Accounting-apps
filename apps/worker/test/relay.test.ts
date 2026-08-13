@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { withTenant, type Sql } from '@emil/db';
+import { failOutboxEvent, withTenant, type Sql } from '@emil/db';
 import { relayPass } from '../src/relay.js';
 import { handlers } from '../src/handlers/index.js';
 import { createTestLogger } from '../src/logger.js';
@@ -337,5 +337,113 @@ describe('two workers', () => {
     expect(a!.claimed + b!.claimed).toBe(20);
     expect(new Set(seen).size).toBe(seen.length);
     expect(seen).toHaveLength(20);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Settling
+// ---------------------------------------------------------------------------
+
+describe('a failure never overwrites another worker\'s success', () => {
+  it('returns SETTLED and leaves a DISPATCHED row alone', async () => {
+    /*
+     * The lease-expiry redelivery this design accepts, played out:
+     *
+     *   A claims the event and its handler outlives the lease.
+     *   B claims it, succeeds, and marks it DISPATCHED.
+     *   A's push finally rejects and A reports the failure.
+     *
+     * `fail_outbox_event` had no status predicate, so A's late failure
+     * overwrote B's success — status FAILED with `dispatched_at` still set, a
+     * state nothing else can produce. `queueHealth` then counted completed
+     * work as a dead letter, and resetting the row re-ran it.
+     */
+    const t = await seedTenant(admin, 'Late Failure Sdn Bhd');
+    const id = await emit(t, 'test.settled-elsewhere');
+
+    await admin`
+        UPDATE outbox_event
+           SET status = 'DISPATCHED', dispatched_at = now(), attempts = 9
+         WHERE tenant_id = ${t.tenantId} AND id = ${id}
+    `;
+
+    const outcome = await failOutboxEvent(worker, t.tenantId, id, 'ECONNRESET', 8);
+    expect(outcome).toBe('SETTLED');
+
+    const [row] = await outboxRows(admin, t.tenantId);
+    expect(row!.status).toBe('DISPATCHED');
+    expect(row!.lastError).toBeNull();
+  });
+
+  it('backs off at an attempt count that used to overflow int4', async () => {
+    /*
+     * `least(power(2, v_attempts)::INTEGER, 3600)` casts BEFORE the cap, so
+     * the cap never protected it: 2^31 is one past int4 and PostgreSQL raised
+     * `integer out of range`. `WORKER_MAX_ATTEMPTS` is validated in [1, 50],
+     * so 32 or more reaches it — and the failure to RECORD the failure meant
+     * the event was never dead-lettered, stayed PENDING, and came back for
+     * ever.
+     */
+    const t = await seedTenant(admin, 'Overflow Sdn Bhd');
+    const id = await emit(t, 'test.deep-retry');
+
+    await admin`
+        UPDATE outbox_event SET attempts = 31
+         WHERE tenant_id = ${t.tenantId} AND id = ${id}
+    `;
+
+    const outcome = await failOutboxEvent(worker, t.tenantId, id, 'still failing', 50);
+    expect(outcome).toBe('RETRY');
+
+    const [row] = await outboxRows(admin, t.tenantId);
+    expect(row!.status).toBe('PENDING');
+    expect(row!.lastError).toBe('still failing');
+  });
+
+  it('costs one event, not the batch, when the settle call itself fails', async () => {
+    /*
+     * `dispatch` catches what the HANDLER throws; the settle calls sat outside
+     * any `try`, so a throw there propagated out of the loop and left the rest
+     * of the batch claimed — `attempts` incremented and `available_at` pushed
+     * a lease into the future — but never handled and never settled.
+     *
+     * Not a remote path: `settleFailure` runs BECAUSE a handler threw, and the
+     * commonest reason a handler throws is an unhappy database, which is the
+     * same condition that makes the settle throw.
+     */
+    const t = await seedTenant(admin, 'Brittle Settle Sdn Bhd');
+    await emit(t, 'test.settle-explodes');
+    await emit(t, 'test.settle-explodes');
+
+    // A connection that works for everything except recording a failure.
+    const brittle = new Proxy(worker as unknown as (...a: unknown[]) => unknown, {
+      apply(target, thisArg, args) {
+        const strings = args[0];
+        if (Array.isArray(strings) && strings.join(' ').includes('fail_outbox_event')) {
+          throw new Error('pool is closed');
+        }
+        return Reflect.apply(target, thisArg, args);
+      },
+    }) as unknown as Sql;
+
+    const registry: HandlerRegistry = {
+      'test.settle-explodes': async () => {
+        throw new Error('handler failed, and so will the settle');
+      },
+    };
+
+    const pass = await relayPass(brittle, registry, log);
+
+    expect(pass.claimed).toBe(2);
+    // BOTH events accounted for. Before the fix the first one threw out of the
+    // loop and the second was never even attempted.
+    expect(pass.abandoned).toBe(2);
+
+    const rows = await outboxRows(admin, t.tenantId);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.status).toBe('PENDING');
+      expect(row.lastError).toBeNull();
+    }
   });
 });
