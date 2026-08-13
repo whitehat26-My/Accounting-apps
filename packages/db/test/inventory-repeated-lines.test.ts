@@ -66,7 +66,11 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  await drop();
+  // `drop?.()` rather than `drop()`: when `beforeAll` fails — a database that
+  // is not running, say — this hook still runs, and calling an unassigned
+  // binding buries the real cause under "drop is not a function". The other
+  // suites here use the same guard.
+  await drop?.();
 });
 
 describe('the same tracked item on two lines of one invoice', () => {
