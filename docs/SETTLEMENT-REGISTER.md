@@ -1939,3 +1939,205 @@ An app marketplace with a thousand integrations, twenty years of edge cases,
 and every Malaysian accountant already knowing the tool. These are Xero's real
 moat and no amount of code closes them. The counter-argument is that none of
 them help a computer shop run its workshop.
+
+---
+
+## 9. The fourth bug hunt — worker, `packages/db` services, and the web screens
+
+Three areas that no earlier sweep had opened. Every finding below was
+re-verified against the tree by hand before it was written down, and the two
+worst were reproduced against a real PostgreSQL BEFORE their fix, because
+§4.13 is about exactly the failure of taking a plausible reading for a proven
+one. Two candidates were dropped: credit-note restocking (§5.4 records it as a
+deliberate deferral) and two workers overlapping on one scheduled job (the
+`payment_reminder` unique constraint makes the overlap harmless).
+
+### 9.1 Stock invented by a repeated line — `packages/db/src/inventory.ts`
+
+`issueTrackedStockForInvoice` saves its pools AFTER the COGS entry is posted,
+because the movement rows carry that entry's id. `lockPool` re-read
+`item_stock` on every line, and with nothing written yet, two lines of the same
+item received the identical starting pool; the deferred save loop then wrote
+both and the last one stood.
+
+Reproduced: a shelf of 10 units at RM 2,800, one invoice with lines of 2 and 3,
+left `item_stock` holding **7 units and RM 1,960** where 5 and RM 1,400 is
+correct. Two units and RM 560 out of nothing. The movements were right, so
+`detectStockDrift` reports it and the invariant "the inventory GL balance IS
+the stock valuation" breaks.
+
+The `INSUFFICIENT_STOCK` refusal had the same root: checked per line against
+the stale pool, never against the running total. Lines of 4 and 4 sold eight
+units off a shelf of five, which is the refusal `inventory.test.ts:175` exists
+to prove. Serialised items were shielded by `takeSerialsOut`; plain tracked
+goods were not.
+
+Two lines of one SKU is not exotic — two scans at the till, or one line at a
+discount and one at list. Nothing on the path merges them.
+
+**Fixed** by carrying the running pool across the loop and saving once per
+item. `packages/db/test/inventory-repeated-lines.test.ts` fails without it.
+
+### 9.2 One invoice credited twice — `credit-note.ts`, `debit-note.ts`
+
+`creditFromInvoice` summed `already_credited` before anything held a lock;
+`issueCreditNote` does not lock until much further down. At READ COMMITTED —
+what `withTenant` runs at — two concurrent full credits both saw nothing
+credited and both approved the full quantity.
+
+The database guard does not cover it. `assert_invoice_not_over_credited` fires
+on `credit_note_allocation`, and the loser re-reads `amountDue` as zero after
+the winner commits, so it allocates nothing and inserts no allocation row for
+the trigger to see. `validateCreditNote` is handed the invoice's GROSS total,
+never total-minus-credited. Two ISSUED credit notes, revenue and output tax
+reversed twice for one sale.
+
+`debitFromBill` had the identical hole, as it had the identical per-line
+counting bug before it. Both now take `FOR UPDATE` first. The test drives two
+`creditFromInvoice` calls concurrently and fails without the lock.
+
+### 9.3 CLOSED → LOCKED loosened a period silently — `period.ts`
+
+Migration 0017 settled the three states: CLOSED refuses every posting with NO
+override path, LOCKED admits anyone holding `period.override`. The reason
+requirement keyed on the TARGET being OPEN, so moving a period from CLOSED to
+LOCKED handed that permission the run of a period that had been final a moment
+earlier — with no reason recorded, and a `PERIOD_LOCKED` event in the log
+saying the opposite of what happened.
+
+It now keys on STRICTNESS. That ordering is written down in exactly one place.
+
+### 9.4 `detectStockDrift` left `item_stock` unscoped
+
+The identical asymmetry already fixed in `detectRollupDrift`, whose note
+claimed it was "the only such asymmetry in packages/db" — which this made
+false. Unreachable under `emil_app`/`emil_worker` (both NOBYPASSRLS,
+`item_stock` FORCE RLS); reachable from a migration or a maintenance script,
+which is where a drift check gets run by hand at two in the morning. Scoped in
+a CTE, not a `WHERE`, for the reason that note gives: under a FULL OUTER JOIN a
+`WHERE` trades a leak for a blind spot on the missing-row case.
+
+### 9.5 The outbox settle path — migration `0055`
+
+`complete_outbox_event` has always ended with `AND status = 'PENDING'` and
+returned false when it lost the race. `fail_outbox_event` never did. After a
+lease expiry the redelivering worker can succeed while the original is still
+pushing, so the original's late failure overwrote a DISPATCHED row with FAILED:
+completed work recorded as a dead letter, counted by `queueHealth`, reported by
+the outbox sweep, and re-run by whoever resets it. The tell is a row with
+`status = 'FAILED'` and `dispatched_at IS NOT NULL`, which nothing else can
+produce.
+
+Same function: `least(power(2, v_attempts)::INTEGER, 3600)` casts BEFORE the
+cap, so at 31 attempts it raises `integer out of range` — confirmed against
+PostgreSQL 16 rather than reasoned about. `WORKER_MAX_ATTEMPTS` is validated in
+`[1, 50]`, so 32 or more reaches it, and failing to RECORD the failure meant
+the event was never dead-lettered and came back for ever. The exponent is
+clamped before it is raised.
+
+`relayPass` wrapped only the handler in a `try`. The three settle calls sat
+outside it, so one throw abandoned the rest of a 25-event batch mid-lease with
+nothing reported — and `settleFailure` runs BECAUSE a handler threw, which is
+usually an unhappy database, which is the same condition that makes the settle
+throw. One event's settle failure now costs one event, and the pass counts it
+as `abandoned`.
+
+### 9.6 The shop's date, again — `apps/worker/src/jobs/index.ts`
+
+`paymentReminders` derived today from `now.toISOString()` while `weeklyDigest`
+twenty lines below converted to Kuala Lumpur and explained why. The nightly
+slot is 03:00 local, which is 19:00 UTC the day before, so `days_overdue` was
+one short and every dunning tier fired a day late — with
+`payment_reminder.queued_on` recording the day before the reminder was written.
+
+`packages/db/src/internal.ts` already carries a note reading "`new
+Date().toISOString().slice(0, 10)` IS A BUG, NOT A SHORTCUT", written when the
+server did this in four places and two were wrong. This was a fifth. Both jobs
+now share `shopDate`; the audit proof pack's default end date had the same edge
+and uses `businessToday`.
+
+### 9.7 The letterhead was never once uploaded — `apps/web/src/lib/api.ts`
+
+The client stamped the Idempotency-Key on POST, PATCH and DELETE. The comment
+immediately above that line already said the API "treats POST, PUT, PATCH and
+DELETE alike and refuses any of them without a key" — which is true, and PUT
+was missing from the code under it. The app has exactly one PUT route, so the
+whole cost landed on one screen: **Settings → Upload a logo answered 422 every
+time it was ever pressed, and no tenant has ever printed on its own
+letterhead.** It survived because the Pages demo short-circuits before the
+interceptor, and because a hand-written list of verbs looks complete.
+
+The condition now derives from the method. `apps/web/test/idempotency-key.test.ts`
+asserts there is no list at all, and reads the interceptor's own `MUTATING` set
+to prove the two cannot drift.
+
+Behind it: the accent colour was a `useState('#1875be')` that nothing ever
+loaded, re-sent with every logo change, so a shop that had chosen its own lost
+it the next time it replaced its mark. `/v1/organisation` now returns
+`brandColour`; `setOrganisationBrand` distinguishes "clear it" (null) from
+"leave it" (omitted); the picker has a save of its own.
+
+### 9.8 Figures the browser computed and got wrong
+
+- `qty()` trimmed trailing zeros with no decimal point to anchor the trim.
+  Correct for every 4dp string the server sends; the POS cart passes a
+  JavaScript integer, so ten items scanned read `1 × RM 12.00` beside a total
+  for ten. The sale posted correctly — only the line the cashier reads was
+  wrong, which is the worst place for it.
+- The stock count variance was `Number(a) - Number(b)` interpolated raw:
+  "Book says 1 — this count **+0.10000000000000009** found", on the one
+  sentence whose job is to make somebody look twice. Now `quantityDelta`,
+  exact on scaled integers, with the carve-out written down.
+- Donut percentages were rounded independently, so three equal assets printed
+  33 / 33 / 33. Apportioned by largest remainder, they sum to 100.
+- Banking took its dates from UTC while `todayIso()` sat unused two imports
+  away. Before 08:00 in Kuala Lumpur that stamped imports with yesterday and
+  seeded Reconcile's "As at" with the last day of the previous month — so Sign
+  off closed a period the user believed they had already finished.
+
+### 9.9 Screens that vanish, or state that goes stale
+
+| Screen | What it did |
+| --- | --- |
+| Payroll year-end | `return null` on an empty year took the ← previous year button with it — in January and February, the two months when EA is due to staff and Form E to LHDN. |
+| Repair job | `return null` on a failed fetch: a blank page under the nav rail, indistinguishable from a broken build. The ErrorNote below it was wired to a mutation, not the query. |
+| Reports | "No sales in this period." for a query that FAILED, and permanent skeletons on the other five cards. |
+| Sales / Purchases | The payment amount seeded at mount, so after a part payment the field still held the old figure — press Record twice and the second receipt repeats the first amount. |
+| Stock count | No `key`, so switching items kept the previous item's count and reason, and Post filed them against the new item. |
+| Team invite | Named the address in the field, not the one the code was minted for. |
+| Approvals | Asserted `nextStep!` in the mutation while the JSX around it already treats it as optional. |
+| Reports CSV | Revoked the blob URL in the same tick, which `api.ts` documents as racing Safari's download. |
+
+### 9.10 `fromBase64Url` answered where it should have refused
+
+`packages/domain/src/attestation.ts` accepted strings no encoder can produce —
+lengths ≡ 1 (mod 4), which carry six bits and no whole byte — and ignored the
+padding bits of a short final group. Measured on a real attestation payload:
+of the 63 possible single-character typos in the LAST position, **three decoded
+to a byte-identical attestation**, so `…DAwNDI`, `…DAwNDJ`, `…DAwNDK` and
+`…DAwNDL` all read back as PAY-00042 for RM 1,234.50.
+
+Not a forgery path — the signature is computed over the DECODED bytes, so a
+collision gains an attacker nothing. It is a mistyped code that VERIFIES, in
+front of a person deciding whether a piece of paper is real, from a module
+whose own docstring says every failure here is a refusal and never a best
+guess.
+
+### 9.11 What this round says about the shape of the bugs
+
+§4.13 named one pattern: code and its test agreeing on a convention the outside
+world does not share. This round adds a second, and it accounts for six of the
+findings above.
+
+**A comment stated the rule correctly and the code beside it did not.** The
+Idempotency-Key line, the KL date in `paymentReminders`, the "only such
+asymmetry" note above `detectRollupDrift`, the UTC dates in Banking with
+`todayIso()` two imports away, `businessToday()` unused in the one controller
+that needed it, and `savePool` inside the receive loop but not the issue loop.
+In every case the correct version existed IN THE REPOSITORY, sometimes within
+twenty lines, and the wrong one was written anyway.
+
+A written rule is not a guard. Where the rule can be derived instead of
+restated — a method test rather than a list of verbs, one `shopDate`, one
+strictness ranking — it now is; where it cannot, a test reads BOTH sides and
+fails when they disagree.
