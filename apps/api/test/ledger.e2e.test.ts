@@ -799,3 +799,56 @@ describe('a database error the API did not anticipate', () => {
     expect(JSON.stringify(response.body)).not.toMatch(/bigint|22P02/i);
   });
 });
+
+describe('a journal entry has an upper bound on its lines', () => {
+  /*
+   * `postJournalEntry` issues one round trip per line to insert it and a second
+   * per line for the rollup upsert, all inside one transaction holding the
+   * per-tenant gapless-numbering advisory lock. So a single oversized entry
+   * does not merely take a long time — it stalls every other posting for that
+   * tenant behind it. Fastify's 1 MB body admits roughly ten thousand lines.
+   *
+   * `openingBalancesSchema` has bounded itself at 200 since it was written;
+   * this route, the one that actually posts, had no bound at all.
+   */
+  it('refuses 501 lines with a written message, not a stalled transaction', async () => {
+    const line = (i: number) => ({
+      accountId: tenant.accounts[i % 2 === 0 ? '6000' : '1000'],
+      side: i % 2 === 0 ? 'DEBIT' : 'CREDIT',
+      amount: '1.00',
+    });
+
+    const response = await call(api, {
+      method: 'POST',
+      ...as('/v1/journals'),
+      body: {
+        entryDate: '2026-08-06',
+        description: 'Far too many lines',
+        lines: Array.from({ length: 501 }, (_, i) => line(i)),
+      },
+    });
+
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body)).toMatch(/500 lines/i);
+  });
+
+  it('still accepts a large but legitimate entry', async () => {
+    // A payroll accrual is tens of lines. 100 is comfortably inside the bound
+    // and proves the cap did not land on real usage.
+    const response = await call(api, {
+      method: 'POST',
+      ...as('/v1/journals'),
+      body: {
+        entryDate: '2026-08-06',
+        description: 'A hundred lines, which is fine',
+        lines: Array.from({ length: 100 }, (_, i) => ({
+          accountId: tenant.accounts[i % 2 === 0 ? '6000' : '1000'],
+          side: i % 2 === 0 ? 'DEBIT' : 'CREDIT',
+          amount: '1.00',
+        })),
+      },
+    });
+
+    expect(response.status).toBe(201);
+  });
+});

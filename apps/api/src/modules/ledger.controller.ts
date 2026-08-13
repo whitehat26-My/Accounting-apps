@@ -525,7 +525,27 @@ const journalSchema = z.object({
     )
     // Two lines is the minimum that can balance. One is always wrong, and
     // catching it here gives a better message than the trigger would.
-    .min(2),
+    .min(2)
+    /*
+     * AND AN UPPER BOUND, WHICH THE SIBLING SCHEMA BELOW ALREADY HAD.
+     *
+     * `postJournalEntry` issues one round trip per line to insert it and a
+     * second per line to upsert the rollup, all inside one transaction holding
+     * the gapless-numbering advisory lock. That lock is per tenant and is what
+     * makes entry numbers contiguous, so a single large entry does not merely
+     * take a long time — it stalls every other posting for that tenant behind
+     * it.
+     *
+     * Fastify's default 1 MB body cap admits roughly ten thousand lines, or
+     * about twenty thousand sequential statements under the lock. 500 is far
+     * above any real journal (the largest thing anyone keys by hand is a
+     * payroll accrual, tens of lines) and far below the point where one request
+     * becomes everyone else's outage.
+     *
+     * `openingBalancesSchema` below has bounded itself at 200 since it was
+     * written; this is the same reasoning, on the route that actually posts.
+     */
+    .max(500, 'A journal entry may not exceed 500 lines'),
 });
 
 const openingBalancesSchema = z.object({

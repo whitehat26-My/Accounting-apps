@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Money } from '@emil/domain';
 import type { Sql } from '../src/client.js';
 import { createTestDatabase } from './helpers.js';
+import { isZeroAmount } from '../src/internal.js';
 
 let sql: Sql;
 let drop: () => Promise<void>;
@@ -64,5 +65,50 @@ describe('NUMERIC never becomes a JS number', () => {
       `;
       expect(Money.fromDecimal(row!.value, 'MYR').equals(money)).toBe(true);
     }
+  });
+});
+
+describe('a zero test on an amount is still Money', () => {
+  /*
+   * Three call sites asked `Number(row.some_amount) !== 0` — one to decide
+   * which side a reversing line takes, two to refuse untracking an item that
+   * still has stock. None could be made to give a wrong answer: `!== 0`
+   * survives double rounding, because no non-zero decimal inside NUMERIC(19,4)
+   * rounds to exactly 0 in IEEE 754.
+   *
+   * They were replaced anyway. CLAUDE.md rule 2 is absolute, and a rule with
+   * three documented exceptions is one the next person reasonably assumes has
+   * four — the next `Number()` on an amount will not be a comparison against
+   * zero, and whoever waves it through will point at these.
+   */
+  it('agrees with the float comparison on every value that reaches it', () => {
+    const values = [
+      '0', '0.0000', '-0.0000', '0.0001', '-0.0001',
+      '1.0000', '-1.0000', '0.5000', '999999999999999.9999',
+      // The values a float would round: still not zero, and still not claimed to be.
+      '0.00005', '0.0000000001',
+    ];
+
+    for (const value of values) {
+      let expected: boolean;
+      try {
+        expected = Money.fromDecimal(value, 'MYR').isZero();
+      } catch {
+        // More than four decimals: Money refuses rather than rounding, which is
+        // itself the behaviour rule 2 wants. Nothing from NUMERIC(19,4) can
+        // look like this, so the call sites never see it.
+        expect(() => isZeroAmount(value)).toThrow();
+        continue;
+      }
+      expect(isZeroAmount(value), value).toBe(expected);
+    }
+  });
+
+  it('is exact where a float would not be', () => {
+    // The largest value NUMERIC(19,4) holds. As a double this loses its last
+    // digits entirely; as integer minor units it does not.
+    const huge = '999999999999999.9999';
+    expect(isZeroAmount(huge)).toBe(false);
+    expect(Money.fromDecimal(huge, 'MYR').toDecimalString()).toBe(huge);
   });
 });

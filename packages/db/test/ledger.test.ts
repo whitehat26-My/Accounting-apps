@@ -6,12 +6,14 @@ import { detectRollupDrift, postJournalEntry, trialBalance } from '../src/ledger
 import { createTestDatabase, seedTenant, type Tenant } from './helpers.js';
 
 let sql: Sql;
+let admin: Sql;
 let drop: () => Promise<void>;
 let tenant: Tenant;
 
 beforeAll(async () => {
   const db = await createTestDatabase('ledger');
   sql = db.sql; // unprivileged app role — subject to RLS
+  admin = db.admin; // owner/superuser — BYPASSES RLS, which is the point below
   drop = db.drop;
   tenant = await seedTenant(db.admin);
 }, 60_000);
@@ -441,5 +443,52 @@ describe('an idempotency key answers with the ledger, not with the request', () 
       `,
     );
     expect(summed!.debits).toBe(replay.totalDebit);
+  });
+});
+
+describe('rollup drift is a question about ONE tenant', () => {
+  /*
+   * `detectRollupDrift` joined `account_period_balance` unfiltered, so its
+   * correctness rested entirely on RLS while its sibling CTE carried a
+   * `tenant_id` predicate of its own. Under the app and worker roles, both
+   * NOBYPASSRLS, that is not exploitable — which is exactly why it survived.
+   *
+   * Run from a role that bypasses RLS, though, and every other tenant's rollup
+   * rows arrive as drift: the alarm this function exists to raise, for the
+   * wrong reason, on a nightly job somebody will be woken by.
+   *
+   * So the test runs it as the ADMIN connection, which is the one place the old
+   * query could be caught.
+   */
+  it('reports nothing for a clean tenant even from a role that bypasses RLS', async () => {
+    const other = await seedTenant(admin, 'Somebody Else Sdn Bhd');
+
+    // Give the other tenant a posting, so it HAS rollup rows to leak.
+    const otherCtx = { tenantId: other.tenantId, userId: other.userId };
+    const entry = unwrap(
+      validateJournalEntry(
+        {
+          entryDate: '2026-08-06',
+          description: 'Their entry, not ours',
+          sourceModule: 'MANUAL',
+          lines: [
+            { accountId: other.accounts['6000']!, side: 'DEBIT', amount: rm('40.00'), baseAmount: rm('40.00') },
+            { accountId: other.accounts['1000']!, side: 'CREDIT', amount: rm('40.00'), baseAmount: rm('40.00') },
+          ],
+        },
+        'MYR',
+      ),
+    );
+    await withTenant(sql, otherCtx, (tx) =>
+      postJournalEntry(tx, otherCtx, entry, { idempotencyKey: randomUUID() }),
+    );
+
+    const ctx = { tenantId: tenant.tenantId };
+    const drift = await withTenant(admin, ctx, (tx) => detectRollupDrift(tx, ctx));
+
+    expect(
+      drift,
+      'the other tenant’s rollup rows must not appear as this tenant’s drift',
+    ).toEqual([]);
   });
 });

@@ -12,6 +12,7 @@ import {
 } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
 import { loadBaseCurrency } from './invoice.js';
+import { isZeroAmount } from './internal.js';
 
 /**
  * The item catalogue — M8, persistence layer.
@@ -257,7 +258,7 @@ export async function updateItem(
         SELECT quantity_on_hand, stock_value FROM item_stock
          WHERE tenant_id = ${ctx.tenantId} AND item_id = ${id}
     `;
-    if (stock && (Number(stock.quantity_on_hand) !== 0 || Number(stock.stock_value) !== 0)) {
+    if (stock && (!isZeroAmount(stock.quantity_on_hand) || !isZeroAmount(stock.stock_value))) {
       throw new ItemError(
         'ITEM_HAS_STOCK',
         `Item ${current.code} still has ${stock.quantity_on_hand} on hand worth ` +
@@ -281,7 +282,7 @@ export async function updateItem(
         SELECT quantity_on_hand FROM item_stock
          WHERE tenant_id = ${ctx.tenantId} AND item_id = ${id}
     `;
-    if (stock && Number(stock.quantity_on_hand) !== 0) {
+    if (stock && !isZeroAmount(stock.quantity_on_hand)) {
       throw new ItemError(
         'ITEM_HAS_STOCK',
         `Item ${current.code} has ${stock.quantity_on_hand} on hand. Serial tracking can ` +

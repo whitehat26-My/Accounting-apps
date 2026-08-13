@@ -614,11 +614,30 @@ a PCB chargeable income landing in the seam between two bands being taxed at **z
 machine that forbids it; a base-currency journal line whose two amounts differed passing
 validation; and `cash-flow.ts` computing `touchedCash` and never using it.
 
-**Recorded, not fixed** — none is reachable today and each is a rule violation rather than
-a wrong answer: `detectRollupDrift`'s outer join relies on RLS where its sibling CTE does
-not; `journalSchema.lines` has no `.max()` where `openingBalancesSchema` has one; and
-three `Number(x) !== 0` comparisons on `NUMERIC` columns in `ledger.ts` and `item.ts`
-technically breach rule 2 without being able to produce a wrong result.
+**Also fixed 2026-08-13 — the three that were originally recorded as "not worth it".**
+Each was reachable only under conditions that do not arise today, which is precisely why
+each had survived:
+
+- `detectRollupDrift` joined `account_period_balance` with no `tenant_id` predicate while
+  its sibling CTE carried one — the only such asymmetry in `packages/db`. Harmless under
+  `emil_app` and `emil_worker` (both NOBYPASSRLS); run once from a role that bypasses RLS
+  and it reports every other tenant's rollup rows as drift, which is the alarm this
+  function exists to raise, for the wrong reason, on a nightly job. Scoped in a CTE rather
+  than a `WHERE`, because it is a FULL OUTER JOIN and a `WHERE b.tenant_id = …` would
+  discard exactly the drift case where a rollup row is MISSING — trading a leak for a
+  blind spot. A test now runs it as the admin connection, the one place the old query
+  could be caught, and it returned two leaked rows before the fix.
+- `journalSchema.lines` had `.min(2)` and no `.max()`, while the sibling
+  `openingBalancesSchema` has bounded itself at 200 since it was written. `postJournalEntry`
+  issues two round trips per line inside one transaction holding the per-tenant
+  gapless-numbering advisory lock, so a 1 MB body of ~10,000 lines stalls every other
+  posting for that tenant. Capped at 500 — far above a payroll accrual, far below an
+  outage.
+- Three `Number(x) !== 0` comparisons on `NUMERIC` columns replaced with `isZeroAmount`.
+  None could be made to give a wrong answer, since `!== 0` survives double rounding. They
+  went anyway: a rule with three documented exceptions is one the next person reasonably
+  assumes has four, and the next `Number()` on an amount will not be a comparison against
+  zero.
 
 **FIXED 2026-08-12 — every QR this system had ever drawn was unscannable.**
 Two defects in `packages/domain/src/qr.ts`, found while photographing the till for

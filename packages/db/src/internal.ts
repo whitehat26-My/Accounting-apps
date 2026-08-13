@@ -1,3 +1,5 @@
+import { Money } from '@emil/domain';
+
 /**
  * Small conversions shared across the services.
  *
@@ -81,4 +83,31 @@ export function businessToday(): string {
     month: '2-digit',
     day: '2-digit',
   }).format(new Date());
+}
+
+/**
+ * Is this `NUMERIC(19,4)` value zero?
+ *
+ * ---------------------------------------------------------------------------
+ * A ZERO TEST IS STILL MONEY, AND `Number()` IS STILL A FLOAT.
+ *
+ * Three call sites asked `Number(row.some_amount) !== 0` — one to decide which
+ * side a reversing line takes, two to refuse untracking an item that still has
+ * stock. None of them could actually be made to give a wrong answer: `!== 0`
+ * survives double rounding, because no non-zero decimal within NUMERIC(19,4)
+ * rounds to exactly 0 in IEEE 754.
+ *
+ * They are replaced anyway. CLAUDE.md rule 2 is absolute — money is `Money`,
+ * never a JavaScript number, ever — and a rule with three documented exceptions
+ * is a rule the next person reasonably assumes has four. The next `Number()` on
+ * an amount will not be a comparison against zero, and the reviewer who waves
+ * it through will point at these.
+ *
+ * The currency is immaterial to a zero test, and MYR is the base currency of
+ * every tenant here; `Money.fromDecimal` parses the exact decimal into integer
+ * minor units, so this is a `bigint` comparison with no float anywhere.
+ * ---------------------------------------------------------------------------
+ */
+export function isZeroAmount(value: string): boolean {
+  return Money.fromDecimal(value, 'MYR').isZero();
 }

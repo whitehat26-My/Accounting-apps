@@ -1,7 +1,7 @@
 import type { JournalEntryDraft, SourceModule, ValidatedJournalEntry } from '@emil/domain';
 import { isErr, Money, validateJournalEntry } from '@emil/domain';
 import type { TenantContext, Tx } from './client.js';
-import { toIsoDate } from './internal.js';
+import { isZeroAmount, toIsoDate } from './internal.js';
 
 /**
  * The ONE write path into the general ledger.
@@ -392,7 +392,7 @@ export async function reversePostedEntry(
     lines: lines.map((line) => {
       // The stored row has separate debit and credit columns; exactly one is
       // non-zero by CHECK. Reversing means taking the other side.
-      const wasDebit = line.debit !== '0' && Number(line.debit) !== 0;
+      const wasDebit = !isZeroAmount(line.debit);
 
       return {
         accountId: line.account_id,
@@ -489,13 +489,37 @@ export async function trialBalance(
  * This is the nightly canary for a posting bug. If it ever returns rows, the
  * journal is right and the rollup is wrong — rebuild the rollup, never "fix"
  * the journal to match.
+ *
+ * ---------------------------------------------------------------------------
+ * THE ROLLUP SIDE IS SCOPED IN A CTE, AND IT HAS TO BE A CTE.
+ *
+ * `account_period_balance` used to be joined unfiltered, so this query's
+ * correctness rested entirely on RLS while the sibling `actual` CTE carried its
+ * own `tenant_id` predicate — the only such asymmetry in packages/db. Under
+ * `emil_app` and `emil_worker`, both NOBYPASSRLS, it is not exploitable. Run
+ * once from a role that bypasses RLS — a migration, a psql session, some future
+ * maintenance script — and it reports every other tenant's rollup rows as
+ * drift: the exact alarm this function exists to raise, for the exact wrong
+ * reason.
+ *
+ * It cannot be a `WHERE b.tenant_id = …`. This is a FULL OUTER JOIN, and where
+ * `b` is absent `b.tenant_id` is NULL, so a WHERE clause would silently discard
+ * precisely the drift case where a rollup row is MISSING — turning a tenant
+ * leak into a blind spot.
+ * ---------------------------------------------------------------------------
  */
 export async function detectRollupDrift(
   tx: Tx,
   ctx: TenantContext,
 ): Promise<{ accountId: string; rollupDebit: string; actualDebit: string; rollupCredit: string; actualCredit: string }[]> {
   return tx`
-      WITH actual AS (
+      WITH rollup AS (
+          -- Scoped here, not in the WHERE. See the note above the function.
+          SELECT account_id, fiscal_period_id, debit_total, credit_total
+            FROM account_period_balance
+           WHERE tenant_id = ${ctx.tenantId}
+      ),
+      actual AS (
           SELECT l.account_id,
                  e.fiscal_period_id,
                  SUM(l.base_debit)  AS debit_total,
@@ -512,7 +536,7 @@ export async function detectRollupDrift(
              COALESCE(a.debit_total, 0)::text          AS "actualDebit",
              COALESCE(b.credit_total, 0)::text         AS "rollupCredit",
              COALESCE(a.credit_total, 0)::text         AS "actualCredit"
-        FROM account_period_balance b
+        FROM rollup b
         FULL OUTER JOIN actual a
           ON a.account_id = b.account_id
          AND a.fiscal_period_id = b.fiscal_period_id
