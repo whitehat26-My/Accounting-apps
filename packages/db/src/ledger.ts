@@ -50,21 +50,67 @@ export async function postJournalEntry(
   // ---- 1. Idempotency ------------------------------------------------------
   // A double-clicked "Record payment" must not post twice. The unique index on
   // (tenant_id, idempotency_key) is the backstop; this lookup is the fast path.
-  const existing = await tx<{ id: string; entry_no: string; entry_date: Date }[]>`
-      SELECT id, entry_no, entry_date
-        FROM journal_entry
-       WHERE tenant_id = ${ctx.tenantId}
-         AND idempotency_key = ${options.idempotencyKey}
+  /*
+   * THE TOTALS COME FROM THE LEDGER, NOT FROM THE REQUEST.
+   *
+   * This used to answer with `entry.totalDebit` — the totals of the entry that
+   * was NOT posted — while `id`, `entryNo` and `entryDate` came from the stored
+   * row. Nothing binds a key to a request, so a client reusing a key with a
+   * different body got the stored entry's identity and its own figures back:
+   *
+   *     POST … Idempotency-Key: K   100.00 → JE-00039 totalDebit "100.0000"
+   *     POST … Idempotency-Key: K  5000.00 → JE-00039 totalDebit "5000.0000"
+   *     the ledger:                          JE-00039 debits    100.0000
+   *
+   * Verified against the running API. A screen that renders the response then
+   * shows "Posted JE-00039 for RM 5,000.00" over books holding RM 100 — the
+   * failure this whole layer exists to make impossible.
+   *
+   * Summed from `journal_line` rather than read from a header column, because
+   * the header has none: the lines ARE the entry, and this is the same sum the
+   * trial balance takes.
+   */
+  const existing = await tx<
+    { id: string; entry_no: string; entry_date: Date; total_debit: string; total_credit: string }[]
+  >`
+      SELECT e.id, e.entry_no, e.entry_date,
+             COALESCE(SUM(l.debit), 0)::text  AS total_debit,
+             COALESCE(SUM(l.credit), 0)::text AS total_credit
+        FROM journal_entry e
+        LEFT JOIN journal_line l
+          ON l.tenant_id = e.tenant_id AND l.journal_entry_id = e.id
+       WHERE e.tenant_id = ${ctx.tenantId}
+         AND e.idempotency_key = ${options.idempotencyKey}
+       GROUP BY e.id, e.entry_no, e.entry_date
   `;
 
   if (existing.length > 0) {
     const row = existing[0]!;
+
+    /*
+     * And a key reused for a MATERIALLY DIFFERENT entry is refused rather than
+     * quietly answered. `inventory.ts` and `year-end.ts` already do exactly
+     * this — the hazard was known here, and this path was the one that let it
+     * through. A retry sends the same body and still replays silently, which is
+     * what the key is for; a different body is a bug in the caller, and telling
+     * them beats handing back somebody else's entry.
+     */
+    const supplied = entry.totalDebit.toDecimalString();
+    if (Money.fromDecimal(row.total_debit, entry.totalDebit.currency).toDecimalString() !== supplied) {
+      throw new LedgerError(
+        'IDEMPOTENCY_KEY_REUSED',
+        `Idempotency key "${options.idempotencyKey}" was already used for entry ` +
+          `${row.entry_no}, whose debits total ${row.total_debit} — not ${supplied}. ` +
+          'Use a new key for a new entry.',
+      );
+    }
+
     return {
       id: row.id,
       entryNo: row.entry_no,
       entryDate: toIsoDate(row.entry_date),
-      totalDebit: entry.totalDebit.toDecimalString(),
-      totalCredit: entry.totalCredit.toDecimalString(),
+      totalDebit: row.total_debit,
+      totalCredit: row.total_credit,
       replayed: true,
     };
   }
@@ -237,7 +283,15 @@ export async function postJournalEntry(
 
 export class LedgerError extends Error {
   constructor(
-    readonly code: 'NO_FISCAL_PERIOD' | 'PERIOD_LOCKED' | 'UNBALANCED' | 'ENTRY_NOT_FOUND',
+    readonly code:
+      | 'NO_FISCAL_PERIOD'
+      | 'PERIOD_LOCKED'
+      | 'UNBALANCED'
+      | 'ENTRY_NOT_FOUND'
+      // A key reused for a different entry. Named rather than folded into
+      // UNBALANCED so the API can answer 409 and the caller can tell the two
+      // apart: one is a bad entry, the other is a bad key on a fine entry.
+      | 'IDEMPOTENCY_KEY_REUSED',
     message: string,
   ) {
     super(message);

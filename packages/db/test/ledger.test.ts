@@ -357,3 +357,89 @@ async function accountBalances(sql: Sql, t: Tenant): Promise<Record<string, stri
   );
   return Object.fromEntries(rows.map((r) => [r.code, r.balance]));
 }
+
+describe('an idempotency key answers with the ledger, not with the request', () => {
+  /*
+   * The replay path returned `entry.totalDebit` — the totals of the entry that
+   * was NOT posted — while the identity fields came from the stored row. Since
+   * nothing binds a key to a request body, a client reusing a key got the
+   * stored entry's number with its own figures attached, and a screen
+   * rendering that response showed a total the books do not contain.
+   *
+   * The old test replayed the SAME entry object twice, so the two coincided and
+   * the bug was invisible. These replay a DIFFERENT one, which is the case that
+   * distinguishes them.
+   */
+  const ctx = () => ({ tenantId: tenant.tenantId, userId: tenant.userId });
+
+  const entryFor = (amount: string) =>
+    unwrap(
+      validateJournalEntry(
+        {
+          entryDate: '2026-08-06',
+          description: `Entry for ${amount}`,
+          sourceModule: 'MANUAL',
+          lines: [
+            {
+              accountId: tenant.accounts['6000']!,
+              side: 'DEBIT',
+              amount: rm(amount),
+              baseAmount: rm(amount),
+            },
+            {
+              accountId: tenant.accounts['1000']!,
+              side: 'CREDIT',
+              amount: rm(amount),
+              baseAmount: rm(amount),
+            },
+          ],
+        },
+        'MYR',
+      ),
+    );
+
+  it('refuses a key already used for a materially different entry', async () => {
+    const idempotencyKey = randomUUID();
+
+    const first = await withTenant(sql, ctx(), (tx) =>
+      postJournalEntry(tx, ctx(), entryFor('100.00'), { idempotencyKey }),
+    );
+    expect(first.totalDebit).toBe('100.0000');
+    expect(first.replayed).toBe(false);
+
+    // The same key, five thousand ringgit. It must not answer with the stored
+    // entry's number and the new entry's money.
+    await expect(
+      withTenant(sql, ctx(), (tx) =>
+        postJournalEntry(tx, ctx(), entryFor('5000.00'), { idempotencyKey }),
+      ),
+    ).rejects.toThrow(/already used for entry/i);
+  });
+
+  it('replays a genuine retry with the STORED totals', async () => {
+    const idempotencyKey = randomUUID();
+    const entry = entryFor('250.00');
+
+    const first = await withTenant(sql, ctx(), (tx) =>
+      postJournalEntry(tx, ctx(), entry, { idempotencyKey }),
+    );
+    const replay = await withTenant(sql, ctx(), (tx) =>
+      postJournalEntry(tx, ctx(), entry, { idempotencyKey }),
+    );
+
+    expect(replay.replayed).toBe(true);
+    expect(replay.entryNo).toBe(first.entryNo);
+    expect(replay.totalDebit).toBe('250.0000');
+    expect(replay.totalCredit).toBe('250.0000');
+
+    // And those totals are the ledger's own sum, not an echo of the input.
+    const [summed] = await withTenant(sql, ctx(), (tx) =>
+      tx<{ debits: string }[]>`
+          SELECT SUM(debit)::text AS debits
+            FROM journal_line
+           WHERE tenant_id = ${ctx().tenantId} AND journal_entry_id = ${replay.id}
+      `,
+    );
+    expect(summed!.debits).toBe(replay.totalDebit);
+  });
+});

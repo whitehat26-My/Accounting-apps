@@ -69,6 +69,13 @@ export type JournalEntryViolation =
   | { readonly code: 'NON_POSITIVE_BASE_AMOUNT'; readonly lineIndex: number; readonly amount: string }
   | { readonly code: 'MIXED_BASE_CURRENCY'; readonly expected: Currency; readonly found: Currency; readonly lineIndex: number }
   | { readonly code: 'MISSING_ACCOUNT'; readonly lineIndex: number }
+  /** A base-currency line whose two amounts differ. The rate is 1; they cannot. */
+  | {
+      readonly code: 'BASE_AMOUNT_MISMATCH';
+      readonly lineIndex: number;
+      readonly amount: string;
+      readonly baseAmount: string;
+    }
   | { readonly code: 'INVALID_ENTRY_DATE'; readonly value: string };
 
 
@@ -121,6 +128,33 @@ export function validateJournalEntry(
         expected: baseCurrency,
         found: line.baseAmount.currency,
         lineIndex: index,
+      });
+    }
+    /*
+     * A LINE ALREADY IN THE BASE CURRENCY HAS NOTHING TO CONVERT.
+     *
+     * `amount` was never inspected here at all — only `baseAmount` was — so an
+     * MYR 100 transaction could be recorded against MYR 90 of base and the
+     * entry validated, because it still balanced in base. Nothing downstream
+     * catches it either: the database ties `base_debit` to nothing, and
+     * `fx_rate` is merely required to be positive.
+     *
+     * The deliberate multi-currency latitude in the note at the top of this
+     * file is about entries that do NOT balance in each transaction currency,
+     * which is a real and intended case. This is different: when the two
+     * currencies are the same, the rate is 1 and the two figures are the same
+     * figure. A difference is a mistake, not a policy.
+     */
+    if (
+      line.amount.currency === baseCurrency &&
+      line.baseAmount.currency === baseCurrency &&
+      !line.amount.equals(line.baseAmount)
+    ) {
+      violations.push({
+        code: 'BASE_AMOUNT_MISMATCH',
+        lineIndex: index,
+        amount: line.amount.toDecimalString(),
+        baseAmount: line.baseAmount.toDecimalString(),
       });
     }
   });

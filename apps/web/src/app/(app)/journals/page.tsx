@@ -186,12 +186,32 @@ export default function JournalsPage() {
    * with this one before and fill it in — the user can always change it.
    */
   async function chooseAccount(i: number, accountId: string) {
-    // Picking an account by hand is the override. `suggested: undefined` is
-    // what removes the sparkle, and it has to happen on THIS line even when the
-    // line being changed is the one the engine filled in.
-    setLine(i, { accountId, suggested: undefined });
-    if (lines.length !== 2) return;
+    /*
+     * A MARK BELONGS TO A PAIRING, NOT TO A LINE.
+     *
+     * Clearing only `i` was wrong, and the wrongness was in the explanation —
+     * the part meant to be trustworthy. Pick 6300 and line 2 fills with 1590
+     * and "Depreciation charged for the period accumulates against the asset."
+     * Change line 1 to 6400 Bank Charges: the early return below fires because
+     * line 2 is no longer blank, so line 2 kept the account AND the sentence,
+     * and the form asserted it had endorsed a pairing it never suggested.
+     *
+     * The suggestion was derived from the OTHER line's account, so changing
+     * either end invalidates it. Both are cleared, and the one the engine
+     * re-answers gets a fresh mark below.
+     */
     const other = i === 0 ? 1 : 0;
+    setLines((all) =>
+      all.map((line, j) =>
+        j === i
+          ? { ...line, accountId, suggested: undefined }
+          : j === other
+            ? { ...line, suggested: undefined }
+            : line,
+      ),
+    );
+
+    if (lines.length !== 2) return;
     if (lines[other]!.accountId !== '') return;
 
     setSuggesting(true);
@@ -288,9 +308,24 @@ export default function JournalsPage() {
    */
   function amountKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key !== 'Enter') return;
-    event.preventDefault();
+
+    /*
+     * `preventDefault` USED TO COME FIRST, AND THAT KILLED THE KEY.
+     *
+     * The guard ran before the readiness check, so on an entry that did not yet
+     * balance, Enter did nothing whatsoever: no submit, no message, no
+     * movement. The form's own help text a few lines below promises "the server
+     * checks and will name the exact problem" — and this had quietly removed
+     * the keyboard route to that answer.
+     *
+     * Now the default is suppressed ONLY when there is something better to do
+     * with the key. An unfinished or unbalanced entry submits, and the server
+     * says by how much, which is what the screen said it would do.
+     */
     const ready = lines.every((l) => l.accountId !== '' && l.amount.trim() !== '');
     if (!ready || outstanding(lines)) return;
+
+    event.preventDefault();
     postButton.current?.focus();
   }
 

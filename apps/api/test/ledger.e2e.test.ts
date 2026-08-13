@@ -743,3 +743,59 @@ describe('closing a fiscal year', () => {
     expect(response.status).toBe(404);
   });
 });
+
+// ---------------------------------------------------------------------------
+// What an incidental database error is allowed to say
+// ---------------------------------------------------------------------------
+
+describe('a database error the API did not anticipate', () => {
+  /*
+   * The filter's own rule 2: "An unrecognised error is a 500 with NO detail. A
+   * stack trace or a raw PostgreSQL message tells an attacker the schema, the
+   * column names, and often the query."
+   *
+   * It did the opposite. `mapServiceError` bailed out only when `code` was
+   * undefined, and postgres.js sets `.code` to the SQLSTATE and `.detail` to the
+   * server's DETAIL line — so a foreign-key violation answered with the
+   * constraint name, the table name and the SQLSTATE, to anybody able to post a
+   * journal.
+   */
+  it('does not hand the caller a constraint name, a table name or a SQLSTATE', async () => {
+    const response = await call(api, {
+      method: 'POST',
+      ...as('/v1/journals'),
+      body: {
+        entryDate: '2026-08-06',
+        lines: [
+          // Well-formed UUID, no such account: passes Zod and the domain
+          // validator, and dies on the composite foreign key.
+          { accountId: '11111111-1111-4111-8111-111111111111', side: 'DEBIT', amount: '10.00' },
+          { accountId: tenant.accounts['1000'], side: 'CREDIT', amount: '10.00' },
+        ],
+      },
+    });
+
+    expect(response.status).toBe(500);
+    const body = JSON.stringify(response.body);
+    expect(body).not.toMatch(/journal_line|foreign key|constraint|23503/i);
+    expect(response.body['detail']).toBeUndefined();
+    expect(response.body['code']).toBeUndefined();
+    // It still has to be reportable.
+    expect(response.body['requestId']).toBeTruthy();
+  });
+
+  it('still relays a rule a trigger refuses on purpose', async () => {
+    // The other half: dozens of triggers raise deliberately, with messages
+    // written for a person. Those must not become "something went wrong".
+    // Covered in full by the period-close tests above; this pins the shape.
+    const response = await call(api, {
+      method: 'GET',
+      ...as('/v1/credit-notes?limit=abc'),
+    });
+
+    // And an unparseable list bound is now a written validation message rather
+    // than PostgreSQL's "invalid input syntax for type bigint".
+    expect(response.status).toBe(422);
+    expect(JSON.stringify(response.body)).not.toMatch(/bigint|22P02/i);
+  });
+});

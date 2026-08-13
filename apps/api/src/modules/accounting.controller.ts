@@ -177,10 +177,22 @@ export class AccountingController {
   @Requires('invoice.read')
   @Get('credit-notes')
   async listCreditNotes(@Query('limit') limit: string | undefined, @Req() request: FastifyRequest) {
+    /*
+     * PARSED THROUGH A SCHEMA, like every other input on this controller.
+     *
+     * This was the one parameter that went straight into `Number()`. The
+     * service guards it with `Math.min(options.limit ?? 100, 500)`, and `??`
+     * catches null and undefined but NOT NaN — so `?limit=abc` reached
+     * PostgreSQL as `LIMIT NaN` and came back as a raw driver error, and
+     * `?limit=-5` as "LIMIT must not be negative". Both were then echoed to the
+     * caller verbatim by the exception filter, which is the other half of this
+     * fix.
+     */
+    const parsed = parse(listLimitSchema, { limit });
     const ctx = this.ctx(request);
     return {
       creditNotes: await withTenant(this.sql, ctx, (tx) =>
-        listCreditNotes(tx, ctx, limit === undefined ? {} : { limit: Number(limit) }),
+        listCreditNotes(tx, ctx, parsed.limit === undefined ? {} : { limit: parsed.limit }),
       ),
     };
   }
@@ -663,4 +675,18 @@ const creditFromInvoiceSchema = z.object({
     .array(z.object({ invoiceLineId: uuidParam, quantity: quantity.optional() }))
     .min(1)
     .optional(),
+});
+
+/**
+ * A list bound, from a query string.
+ *
+ * `z.coerce.number()` rather than a hand-rolled `Number()`: coercion inside the
+ * schema means a value that will not become a number fails validation and is
+ * answered as a 422 with a written message, instead of becoming `NaN` and
+ * travelling into `LIMIT NaN`. `.int().positive().max(500)` states the bound
+ * the service was already applying, at the edge where the caller can be told
+ * about it.
+ */
+const listLimitSchema = z.object({
+  limit: z.coerce.number().int().positive().max(500).optional(),
 });

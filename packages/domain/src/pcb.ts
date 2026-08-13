@@ -234,13 +234,49 @@ function applyDeductionThreshold(amount: Money): Money {
 // The pieces of P
 // ---------------------------------------------------------------------------
 
+/**
+ * The band a chargeable income falls in.
+ *
+ * ---------------------------------------------------------------------------
+ * THE SCHEDULE HAS SEAMS, AND FALLING THROUGH ONE PRODUCED NO TAX AT ALL.
+ *
+ * LHDN writes its bands in sen: `… – 100,000` then `100,000.01 – 400,000`.
+ * `Money` holds four decimal places, so the open interval between them —
+ * (100000.0000, 100000.0100) — is representable, and a P landing inside it
+ * matched neither test. `findBand` returned undefined, and `annualTax` reads
+ * undefined as "below the first band, therefore no tax":
+ *
+ *     P = 100,000.0000  →  MTD 783.35
+ *     P = 100,000.0050  →  MTD   0.00     ← half a sen, and the deduction vanishes
+ *     P = 100,000.0100  →  MTD 783.35
+ *
+ * Sub-sen P is reachable: EPF Part F (non-citizens, flat 2%, no ceiling) yields
+ * a four-decimal employee share — a wage of 2,150.55 gives 43.0110 — and that
+ * flows into P through the deductions total.
+ *
+ * The fix reads the schedule as the partition LHDN intends rather than as a set
+ * of independent tests: the answer is the last band the income has reached.
+ * A value in a seam belongs to the band below it, which is the conservative
+ * direction — it taxes at the lower rate rather than not at all, and never
+ * invents a band above the one the income actually reached.
+ *
+ * `undefined` still means what it meant: below the first band, where the
+ * absence IS the rule. Only the hole in the middle is closed.
+ * ---------------------------------------------------------------------------
+ */
 function findBand(bands: readonly MtdBand[], p: Money): MtdBand | undefined {
+  let reached: MtdBand | undefined;
+
   for (const band of bands) {
     if (p.compare(Money.fromDecimal(band.pFrom, p.currency)) < 0) continue;
     if (band.pTo === null) return band;
     if (p.compare(Money.fromDecimal(band.pTo, p.currency)) <= 0) return band;
+    // Above this band's ceiling. Remember it: if nothing covers `p`, it fell in
+    // a seam and this is the highest band it genuinely reached.
+    reached = band;
   }
-  return undefined;
+
+  return reached;
 }
 
 function bFor(band: MtdBand, category: MtdCategory, currency: Money['currency']): Money {

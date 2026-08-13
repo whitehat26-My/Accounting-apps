@@ -85,6 +85,79 @@ function mapServiceError(exception: unknown): Mapped | undefined {
 
   if (code === undefined) return undefined;
 
+  /*
+   * A `code` IS NOT PROOF THAT WE THREW IT.
+   *
+   * `mapServiceError` bailed out only when `code` was undefined, on the
+   * assumption that a code means one of ours. `postgres.js` builds its
+   * PostgresError with `Object.assign(this, serverFields)` — so `.code` is the
+   * SQLSTATE and `.detail` is the server's DETAIL line, and both sailed through
+   * the fall-through below into the response body. The filter's own rule 2, at
+   * the top of this file, says the exact opposite: "An unrecognised error is a
+   * 500 with NO detail. A stack trace or a raw PostgreSQL message tells an
+   * attacker the schema, the column names, and often the query."
+   *
+   * Observed against the running API before this guard existed:
+   *
+   *   422 {"message":"insert or update on table \"journal_line\" violates
+   *        foreign key constraint \"journal_line_tenant_id_account_id_fkey\"",
+   *        "code":"23503","detail":"Key is not present in table \"account\"."}
+   *
+   * — constraint name, table name and SQLSTATE, to anybody who can post a
+   * journal. And with the database down, `Errors.connection()` produces
+   * `write ECONNREFUSED <host>:<port>`, handing out the database's address.
+   *
+   * Recognised STRUCTURALLY rather than by code shape, because a Node system
+   * code (`ECONNREFUSED`) is uppercase and underscore-free exactly like ours.
+   * postgres.js always copies `severity` and `routine` from the server; Node
+   * system errors always carry `syscall` or `errno`. Neither is a field any
+   * error in `packages/db` sets.
+   */
+  const fields = exception as unknown as Record<string, unknown>;
+  const fromDatabase =
+    typeof fields['severity'] === 'string' || typeof fields['routine'] === 'string';
+  const fromSystem = typeof fields['syscall'] === 'string' || typeof fields['errno'] === 'number';
+  // Belt and braces: a bare five-character SQLSTATE, in case a driver version
+  // stops copying the fields above.
+  const looksLikeSqlstate = /^[0-9][0-9A-Z]{4}$/.test(code);
+
+  /*
+   * ONE CLASS OF DATABASE ERROR IS DELIBERATE, AND MUST STILL REACH THE CALLER.
+   *
+   * Dozens of trigger functions here refuse things on purpose — the ledger is
+   * append-only, a closed period will not accept a posting, an allocation may
+   * not exceed the document. Those rules live in the database because that is
+   * the only place nothing can walk past them, and each raises a message
+   * somebody wrote for a person: "Fiscal period is CLOSED; reopen it before
+   * posting entry JE-00042". Answering those with "Something went wrong" would
+   * turn a clear refusal into a mystery.
+   *
+   * They cannot be told apart by SQLSTATE. This repository's convention is
+   * `USING ERRCODE = 'check_violation'`, which is 23514 — the same code a real
+   * CHECK constraint produces, and one digit away from the foreign-key
+   * violation that was leaking the schema. The errcode is in fact a small lie:
+   * no CHECK was violated.
+   *
+   * What DOES separate them is where the error came from. PostgreSQL reports
+   * the C function that raised it, and `RAISE` inside PL/pgSQL is always
+   * `exec_stmt_raise`, while the constraint machinery is `ExecConstraints`,
+   * `ri_ReportViolation` and friends. That is a fact about the server, not
+   * about our wording, so it survives every rewording of every message.
+   *
+   * `detail` is still dropped: our RAISEs carry none, and one that did would
+   * not have been written for a stranger.
+   */
+  const isDeliberateRaise = fields['routine'] === 'exec_stmt_raise';
+
+  if (isDeliberateRaise) {
+    return {
+      status: HttpStatus.UNPROCESSABLE_ENTITY,
+      body: { error: 'validation_failed', message: exception.message },
+    };
+  }
+
+  if (fromDatabase || fromSystem || looksLikeSqlstate) return undefined;
+
   // Anything the services report as "not found" — including a contact or
   // document belonging to another tenant, which RLS already made invisible.
   if (/_NOT_FOUND$/.test(code) || code === 'NOT_A_MEMBER') {
@@ -126,6 +199,16 @@ function mapServiceError(exception: unknown): Mapped | undefined {
     return {
       status: HttpStatus.CONFLICT,
       body: { error: 'period_locked', message: exception.message },
+    };
+  }
+
+  // A key reused for a different entry. 409 rather than 422: the entry is
+  // fine, the key is the thing that is wrong, and the caller fixes it by
+  // generating a new one rather than by editing the body.
+  if (code === 'IDEMPOTENCY_KEY_REUSED') {
+    return {
+      status: HttpStatus.CONFLICT,
+      body: { error: 'idempotency_key_reused', message: exception.message },
     };
   }
 

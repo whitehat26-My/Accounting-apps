@@ -497,3 +497,65 @@ describe('properties', () => {
     expect(Number.isFinite(Number(result.mtd.toDecimalString()))).toBe(true);
   });
 });
+
+describe('a chargeable income landing in a seam between two bands', () => {
+  /*
+   * LHDN writes bands in sen — "… – 100,000" then "100,000.01 – 400,000" — and
+   * Money holds four decimals, so the open interval between them exists. A P
+   * inside it matched no band at all, and `annualTax` reads "no band" as
+   * "below the first band, no tax": half a sen wiped out the whole monthly
+   * deduction, moving the annual figure by RM 9,400.
+   *
+   * Reachable in practice — EPF Part F is a flat 2% with no ceiling, so a wage
+   * of 2,150.55 gives an employee share of 43.0110 and P inherits the decimals.
+   *
+   * The seam is placed around whatever P this month actually produces, rather
+   * than at a hardcoded figure, so the test states the RELATIONSHIP (a value in
+   * a seam is taxed as the band below) and cannot drift if the arithmetic
+   * upstream of P is ever refined.
+   */
+  const month = (gross: string): MtdMonth => ({
+    month: 12,
+    accumulatedGross: '0',
+    accumulatedEpf: '0',
+    grossThisMonth: gross,
+    epfThisMonth: '0',
+  });
+
+  const seamedAround = (pAtSeam: string): MtdSchedule => ({
+    ...SCHEDULE,
+    bands: [
+      { pFrom: '5000.01', pTo: pAtSeam, m: '5000', rateBp: 100, bCategory13: '0', bCategory2: '0' },
+      {
+        pFrom: Money.fromDecimal(pAtSeam, 'MYR').add(Money.fromDecimal('0.01', 'MYR')).toDecimalString(),
+        pTo: null,
+        m: pAtSeam,
+        rateBp: 2500,
+        bCategory13: '9400',
+        bCategory2: '9400',
+      },
+    ],
+  });
+
+  it('is taxed as the band it reached, rather than not at all', () => {
+    // A P comfortably above the first band's floor, then a seam opened at it.
+    const atSeam = chargeableIncome(EMPLOYEE, month('120000'), SCHEDULE, {
+      includeAdditional: false,
+    }).p;
+    const schedule = seamedAround(atSeam.toDecimalString());
+
+    // Half a sen more gross puts P inside the seam: above band 1's ceiling and
+    // below band 2's floor.
+    const insideGross = Money.fromDecimal('120000', 'MYR')
+      .add(Money.fromDecimal('0.005', 'MYR'))
+      .toDecimalString();
+
+    const below = monthlyTaxDeduction(EMPLOYEE, month('120000'), schedule).mtd;
+    const inside = monthlyTaxDeduction(EMPLOYEE, month(insideGross), schedule).mtd;
+
+    expect(below.isZero(), 'the control must be taxed, or the test proves nothing').toBe(false);
+    expect(inside.isZero(), 'a P inside the seam must still be taxed').toBe(false);
+    // It belongs to the band below: never more than a sen more gross could owe.
+    expect(inside.compare(below)).toBeGreaterThanOrEqual(0);
+  });
+});
